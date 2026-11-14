@@ -1,0 +1,85 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kopilot_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kopilot}
+      POSTGRES_USER: ${POSTGRES_USER:-kopilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - kopilot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kopilot} -d ${POSTGRES_DB:-kopilot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kopilot_internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: kopilot_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - kopilot_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - kopilot_internal
+
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: kopilot_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kopilot}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kopilot}
+      REDIS_ENABLED: "true"
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["https://kp.kkdes.co.ke"]}
+    ports:
+      - "127.0.0.1:8440:8000"
+    networks:
+      - kopilot_internal
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: kopilot_nginx
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/kopilot.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
+    networks:
+      - kopilot_internal
+
+volumes:
+  kopilot_pgdata:
+    name: kopilot_pgdata
+  kopilot_redisdata:
+    name: kopilot_redisdata
+
+networks:
+  kopilot_internal:
+    name: kopilot_internal
+    driver: bridge

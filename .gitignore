@@ -1,0 +1,33 @@
+# Secrets & local environment
+.env
+*.env
+!deploy/.env.example
+*.jks
+*.keystore
+keystore.properties
+local.properties
+
+# Android build outputs
+android/.gradle/
+android/build/
+android/*/build/
+android/*/*/build/
+*.apk
+*.aab
+*.ap_
+
+# Python / Backend
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

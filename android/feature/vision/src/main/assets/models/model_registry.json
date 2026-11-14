@@ -1,0 +1,28 @@
+[
+  {
+    "modelId": "kopilot_ke_signs",
+    "version": "1.0.0-baseline",
+    "assetPath": "models/kopilot_ke_signs_v1.tflite",
+    "inputSize": 64,
+    "classes": [
+      "BACKGROUND",
+      "SPEED_LIMIT_30",
+      "SPEED_LIMIT_50",
+      "SPEED_LIMIT_60",
+      "SPEED_LIMIT_80",
+      "SPEED_LIMIT_100",
+      "SPEED_LIMIT_110",
+      "STOP",
+      "GIVE_WAY",
+      "NO_ENTRY",
+      "PEDESTRIAN_CROSSING",
+      "SCHOOL_ZONE",
+      "ROADWORKS",
+      "DANGEROUS_BEND",
+      "SPEED_BUMP",
+      "NO_OVERTAKING"
+    ],
+    "validationStatus": "UNVALIDATED_BASELINE",
+    "knownLimitations": "Baseline classifier architecture not yet fine-tuned or field-validated on Kenyan road footage under daylight, rain, glare, and nighttime conditions. Observations are strictly advisory."
+  }
+]
