@@ -59,6 +59,8 @@ docker compose up -d postgres redis api
 docker image prune -f
 
 echo "[5/7] Configuring Apache reverse proxy for ${DOMAIN}..."
+mkdir -p /var/www/kopilot-acme/.well-known/acme-challenge
+chown -R www-data:www-data /var/www/kopilot-acme
 a2enmod proxy proxy_http headers rewrite ssl >/dev/null
 cp "${DEPLOY_DIR}/apache/kp.kkdes.co.ke.conf" "/etc/apache2/sites-available/${DOMAIN}.conf"
 sed -i "s|kp.kkdes.co.ke|${DOMAIN}|g" "/etc/apache2/sites-available/${DOMAIN}.conf"
@@ -68,7 +70,10 @@ systemctl reload apache2
 
 echo "[6/7] Configuring SSL with Certbot..."
 if [[ ! -d "/etc/letsencrypt/live/${DOMAIN}" ]]; then
-  certbot --apache \
+  certbot \
+    --authenticator webroot \
+    --installer apache \
+    -w /var/www/kopilot-acme \
     -d "$DOMAIN" \
     --non-interactive \
     --agree-tos \
