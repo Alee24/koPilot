@@ -298,9 +298,9 @@ private fun TelemetryAndControlsColumn(
                     )
                 }
                 OutlinedButton(onClick = viewModel::toggleVoiceConnection) {
-                    Text(
-                        if (state.voiceState.connectionState == VoiceConnectionState.CONNECTED) "Stop" else "Talk",
-                    )
+                    val stopVisible = state.voiceState.connectionState == VoiceConnectionState.CONNECTED ||
+                        (state.voiceState.connectionState == VoiceConnectionState.LOCAL_FALLBACK && state.voiceState.isListening)
+                    Text(if (stopVisible) "Stop" else "Talk")
                 }
             }
         }

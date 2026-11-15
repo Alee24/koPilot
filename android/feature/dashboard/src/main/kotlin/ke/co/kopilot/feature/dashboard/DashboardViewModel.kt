@@ -252,9 +252,10 @@ class DashboardViewModel @Inject constructor(
 
     fun toggleVoiceConnection() {
         val voiceState = uiState.value.voiceState
-        if (voiceState.connectionState == ke.co.kopilot.feature.voice.VoiceConnectionState.CONNECTED ||
-            voiceState.connectionState == ke.co.kopilot.feature.voice.VoiceConnectionState.CONNECTING
-        ) {
+        val isActive = voiceState.connectionState == ke.co.kopilot.feature.voice.VoiceConnectionState.CONNECTED ||
+            voiceState.connectionState == ke.co.kopilot.feature.voice.VoiceConnectionState.CONNECTING ||
+            (voiceState.connectionState == ke.co.kopilot.feature.voice.VoiceConnectionState.LOCAL_FALLBACK && voiceState.isListening)
+        if (isActive) {
             voiceClient.disconnect()
         } else {
             val s = uiState.value.settings

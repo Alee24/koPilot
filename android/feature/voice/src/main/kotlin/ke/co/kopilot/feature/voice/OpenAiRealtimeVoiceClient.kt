@@ -9,6 +9,7 @@ import ke.co.kopilot.core.network.api.KoPilotApiService
 import ke.co.kopilot.core.network.connectivity.ConnectivityObserver
 import ke.co.kopilot.core.network.dto.VoiceSessionRequestDto
 import ke.co.kopilot.core.security.SecureTokenStore
+import ke.co.kopilot.feature.alerts.SpeechSink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +46,7 @@ enum class VoiceConnectionState {
     DISCONNECTED,
     CONNECTING,
     CONNECTED,
+    LOCAL_FALLBACK,
     OFFLINE_UNAVAILABLE,
     ERROR,
 }
@@ -67,6 +69,8 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
     private val tokenStore: SecureTokenStore,
     private val connectivityObserver: ConnectivityObserver,
     private val toolExecutor: VoiceToolExecutor,
+    private val localVoiceEngine: LocalVoiceCommandEngine,
+    private val speechSink: SpeechSink,
     private val okHttpClient: OkHttpClient,
     private val dispatchers: DispatcherProvider,
 ) {
@@ -107,10 +111,7 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
             return
         }
         if (!connectivityObserver.isCurrentlyOnline()) {
-            _state.value = _state.value.copy(
-                connectionState = VoiceConnectionState.OFFLINE_UNAVAILABLE,
-                statusMessage = "Offline: cloud voice conversation unavailable",
-            )
+            startLocalVoiceFallback(language, "Offline: using local voice")
             return
         }
         if (_state.value.connectionState == VoiceConnectionState.CONNECTING ||
@@ -121,7 +122,7 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
 
         _state.value = _state.value.copy(
             connectionState = VoiceConnectionState.CONNECTING,
-            statusMessage = "Starting voice session...",
+            statusMessage = "Connecting voice...",
         )
 
         scope.launch {
@@ -139,14 +140,41 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
                     callsUrl = session.webrtcCallsUrl,
                     language = language,
                 )
-            }.onFailure { err ->
-                _state.value = _state.value.copy(
-                    connectionState = VoiceConnectionState.ERROR,
-                    isListening = false,
-                    statusMessage = "Voice unavailable: ${err.localizedMessage ?: "connection failed"}",
-                )
+            }.onFailure {
+                startLocalVoiceFallback(language, "Cloud voice unavailable; listening locally")
             }
         }
+    }
+
+    private fun startLocalVoiceFallback(language: String, reason: String) {
+        _state.value = _state.value.copy(
+            connectionState = VoiceConnectionState.LOCAL_FALLBACK,
+            isListening = true,
+            statusMessage = reason,
+        )
+        localVoiceEngine.startListening(
+            language = language,
+            onListeningChanged = { listening ->
+                _state.value = _state.value.copy(isListening = listening)
+            },
+            onResultSpoken = { spoken, reply ->
+                _state.value = _state.value.copy(
+                    connectionState = VoiceConnectionState.LOCAL_FALLBACK,
+                    isSpeaking = true,
+                    lastTranscript = "\"$spoken\" -> $reply",
+                    statusMessage = "Local voice ready",
+                )
+                speechSink.speak(reply, flushQueue = true, speechRate = 1.0f, languageTag = language)
+                _state.value = _state.value.copy(isSpeaking = false)
+            },
+            onError = { errMsg ->
+                _state.value = _state.value.copy(
+                    connectionState = VoiceConnectionState.DISCONNECTED,
+                    isListening = false,
+                    statusMessage = errMsg,
+                )
+            },
+        )
     }
 
     private fun configureAudioRouting() {
@@ -291,6 +319,7 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
     }
 
     fun disconnect() {
+        localVoiceEngine.stop()
         runCatching {
             dataChannel?.close()
             peerConnection?.close()
@@ -309,6 +338,9 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
 
     private suspend fun createOfferSuspend(pc: PeerConnection): SessionDescription =
         suspendCoroutine { cont ->
+            val constraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            }
             pc.createOffer(
                 object : SdpObserver {
                     override fun onCreateSuccess(sdp: SessionDescription) = cont.resume(sdp)
@@ -316,7 +348,7 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
                     override fun onSetSuccess() = Unit
                     override fun onSetFailure(error: String?) = Unit
                 },
-                MediaConstraints(),
+                constraints,
             )
         }
 
