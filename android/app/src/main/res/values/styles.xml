@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.KoPilot.Splash" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/kopilot_splash_bg</item>
+    </style>
+    <color name="kopilot_splash_bg">#0A1016</color>
+</resources>
