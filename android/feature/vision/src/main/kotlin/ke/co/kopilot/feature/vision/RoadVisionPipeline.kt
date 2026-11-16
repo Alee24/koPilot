@@ -42,6 +42,7 @@ data class VisionPipelineState(
     val trafficLightSignal: TrafficLightSignal = TrafficLightSignal.NONE,
     val isDarkScene: Boolean = false,
     val averageLuminance: Float = 128f,
+    val recommendedZoomRatio: Float = 1.2f,
     val trackedObjects: List<TrackedRoadObject> = emptyList(),
     val lastInferenceLatencyMs: Long = 0L,
     val statusMessage: String = "Initializing offline vision...",
@@ -59,6 +60,7 @@ class RoadVisionPipeline @Inject constructor(
     private var textRecognizer: TextRecognizer? = null
     private var brakeLightStreak = 0
     private var darkStreak = 0
+    private var lastAutoZoomAdjustMs = 0L
 
     fun initializeIfNeeded() {
         if (objectDetector != null && textRecognizer != null) return
@@ -154,8 +156,9 @@ class RoadVisionPipeline @Inject constructor(
                 for (block in textResult.textBlocks) {
                     val box = block.boundingBox ?: continue
                     val hasBorder = SignCandidateParser.hasSignBorderColor(bitmap, box)
+                    val whiteInterior = SignCandidateParser.hasWhiteInterior(bitmap, box)
                     val centerX = box.centerX() / w
-                    SignCandidateParser.parseSignFromText(block.text, hasBorder, centerX)?.let {
+                    SignCandidateParser.parseSignFromText(block.text, hasBorder, centerX, whiteInterior)?.let {
                         signCandidates.add(it)
                     }
                     if (detectedPlate == null) {
@@ -170,8 +173,32 @@ class RoadVisionPipeline @Inject constructor(
                 nowMillis = timestampMillis,
             )
 
+            // Auto-zoom controller: zoom out if sign candidate confidence < 60%; zoom in on small distant upper objects
+            var nextZoom = _state.value.recommendedZoomRatio
+            if ((timestampMillis - lastAutoZoomAdjustMs) >= 1200L) {
+                val bestCandidate = signCandidates.maxByOrNull { it.confidence }
+                val hasSmallDistantSignObject = tracked.any {
+                    (it.normalizedRight - it.normalizedLeft) < 0.11f && it.normalizedTop < 0.48f
+                }
+                nextZoom = when {
+                    bestCandidate != null && bestCandidate.confidence < SignTemporalTracker.SURE_CONFIDENCE_THRESHOLD -> {
+                        lastAutoZoomAdjustMs = timestampMillis
+                        (nextZoom - 0.3f).coerceAtLeast(1.0f)
+                    }
+                    bestCandidate == null && hasSmallDistantSignObject && nextZoom < 1.9f -> {
+                        lastAutoZoomAdjustMs = timestampMillis
+                        (nextZoom + 0.25f).coerceAtMost(2.0f)
+                    }
+                    else -> nextZoom
+                }
+            }
+
             val latencyMs = (System.nanoTime() - startNs) / 1_000_000L
-            val nextSpeedLimit = confirmed?.category?.speedLimitKmh ?: _state.value.lastSpeedLimitKmh
+            val nextSpeedLimit = if (confirmed != null && !confirmed.isUncertain && confirmed.category.speedLimitKmh != null) {
+                confirmed.category.speedLimitKmh
+            } else {
+                _state.value.lastSpeedLimitKmh
+            }
             _state.value = _state.value.copy(
                 trackedObjects = tracked,
                 lastInferenceLatencyMs = latencyMs,
@@ -182,7 +209,8 @@ class RoadVisionPipeline @Inject constructor(
                 trafficLightSignal = lighting.trafficLightSignal,
                 isDarkScene = darkStreak >= 3,
                 averageLuminance = lighting.averageLuminance,
-                statusMessage = "Tracking ${tracked.size} object(s) • Offline",
+                recommendedZoomRatio = nextZoom,
+                statusMessage = "Tracking ${tracked.size} object(s) • Auto-Zoom ${"%.1f".format(nextZoom)}x",
             )
 
             if (confirmed != null) {

@@ -390,15 +390,16 @@ class DashboardViewModel @Inject constructor(
             return
         }
         val limit = observation.category.speedLimitKmh
+        val label = observation.customLabel ?: observation.category.displayName
         val text = when {
+            observation.isUncertain ->
+                "Road sign ahead is unsure. Possible $label. Adjusting camera."
             limit != null && observation.applicableToDriverLane == false ->
                 "Speed limit $limit kilometres per hour observed nearby."
             limit != null ->
-                "Speed limit $limit kilometres per hour observed."
-            !observation.customLabel.isNullOrBlank() ->
-                "Road sign observed: ${observation.customLabel}."
+                "Speed limit $limit kilometres per hour."
             else ->
-                "${observation.category.displayName} observed."
+                "$label sign observed."
         }
         if (settings.alertChimeEnabled && !settings.alertsMuted && speechSink is AndroidTtsSpeechSink) {
             speechSink.playChime()

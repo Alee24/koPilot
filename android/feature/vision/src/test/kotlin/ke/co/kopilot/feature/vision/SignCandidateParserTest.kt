@@ -8,17 +8,24 @@ import org.junit.Test
 
 class SignCandidateParserTest {
     @Test
-    fun `parses speed limit only with sign border color and parses regulatory text signs`() {
-        // Without red/yellow border, bare number "50" should be rejected
-        assertNull(SignCandidateParser.parseSignFromText("50", hasSignBorderColor = false, normalizedCenterX = 0.5f))
+    fun `parses 30 speed limit accurately without confusing with STOP and marks low-confidence as unsure`() {
+        // Red ring + white interior + "30" -> high confidence SPEED_LIMIT_30
+        val speed30 = SignCandidateParser.parseSignFromText("30", hasSignBorderColor = true, normalizedCenterX = 0.4f, hasWhiteInterior = true)
+        assertNotNull(speed30)
+        assertEquals(TrafficSignCategory.SPEED_LIMIT_30, speed30?.category)
+        assertEquals(true, (speed30?.confidence ?: 0f) >= 0.60f)
 
-        // With sign border color, "50" -> SPEED_LIMIT_50
-        val speed50 = SignCandidateParser.parseSignFromText("50", hasSignBorderColor = true, normalizedCenterX = 0.4f)
-        assertNotNull(speed50)
-        assertEquals(TrafficSignCategory.SPEED_LIMIT_50, speed50?.category)
+        // OCR confusion "3O" with red ring -> still SPEED_LIMIT_30
+        val speed3O = SignCandidateParser.parseSignFromText("3O", hasSignBorderColor = true, normalizedCenterX = 0.4f, hasWhiteInterior = true)
+        assertEquals(TrafficSignCategory.SPEED_LIMIT_30, speed3O?.category)
 
-        // STOP sign
-        val stop = SignCandidateParser.parseSignFromText("STOP", hasSignBorderColor = true, normalizedCenterX = 0.3f)
+        // Unclear bare "30" without border -> low confidence (< 60%) for auto-zoom & "unsure" feedback
+        val unsure30 = SignCandidateParser.parseSignFromText("30", hasSignBorderColor = false, normalizedCenterX = 0.5f, hasWhiteInterior = true)
+        assertNotNull(unsure30)
+        assertEquals(true, (unsure30?.confidence ?: 1f) < 0.60f)
+
+        // Solid red STOP sign -> STOP
+        val stop = SignCandidateParser.parseSignFromText("STOP", hasSignBorderColor = true, normalizedCenterX = 0.3f, hasWhiteInterior = false)
         assertEquals(TrafficSignCategory.STOP, stop?.category)
 
         // SCHOOL ZONE

@@ -56,6 +56,7 @@ data class TrafficSignObservation(
     val timestampMillis: Long,
     val modelVersion: String,
     val customLabel: String? = null,
+    val isUncertain: Boolean = false,
 )
 
 enum class HazardCategory(val displayName: String) {

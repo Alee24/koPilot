@@ -74,6 +74,7 @@ class SignTemporalTracker @Inject constructor() {
             timestampMillis = nowMillis,
             modelVersion = modelVersion,
             customLabel = best.customLabel,
+            isUncertain = maxConfidence < SURE_CONFIDENCE_THRESHOLD,
         )
     }
 
@@ -86,7 +87,8 @@ class SignTemporalTracker @Inject constructor() {
     }
 
     companion object {
-        const val MIN_CONFIDENCE = 0.72f
+        const val MIN_CONFIDENCE = 0.45f
+        const val SURE_CONFIDENCE_THRESHOLD = 0.60f
         const val REQUIRED_CONSECUTIVE_FRAMES = 2
         const val DUPLICATE_SUPPRESSION_MS = 20_000L
     }

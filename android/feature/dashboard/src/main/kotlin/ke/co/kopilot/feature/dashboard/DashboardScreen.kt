@@ -391,7 +391,7 @@ private fun ViewportCard(
                     permissionGranted = state.cameraStatus.permissionGranted,
                     isDrivingSessionActive = state.isDrivingSessionActive,
                     analysisIntervalMs = viewModel.analysisIntervalFor(state.settings.detectionQuality),
-                    zoomRatio = state.settings.cameraZoomRatio,
+                    zoomRatio = state.visionState.recommendedZoomRatio,
                     performanceController = viewModel.cameraController,
                     onFrameListener = { imageProxy, rotation, ts ->
                         viewModel.visionPipeline.analyzeFrame(
@@ -432,13 +432,20 @@ private fun ViewportCard(
                                 .padding(10.dp),
                             shape = if (limit != null) CircleShape else RoundedCornerShape(10.dp),
                             color = Color.White,
-                            border = BorderStroke(4.dp, Color(0xFFD32F2F)),
+                            border = BorderStroke(
+                                4.dp,
+                                if (obs.isUncertain) KoPilotColors.WarningAmber else Color(0xFFD32F2F),
+                            ),
                         ) {
                             Text(
-                                text = limit?.toString() ?: obs.category.displayName.take(12),
+                                text = when {
+                                    obs.isUncertain -> "? ${limit ?: obs.category.displayName.take(8)}"
+                                    limit != null -> limit.toString()
+                                    else -> (obs.customLabel ?: obs.category.displayName).take(12)
+                                },
                                 color = Color(0xFF101820),
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = if (limit != null) 16.sp else 11.sp,
+                                fontSize = if (limit != null && !obs.isUncertain) 16.sp else 11.sp,
                                 modifier = Modifier.padding(
                                     horizontal = if (limit != null) 10.dp else 8.dp,
                                     vertical = if (limit != null) 8.dp else 6.dp,
@@ -513,7 +520,7 @@ private fun ViewportCard(
                         color = Color(0xCC0D141C),
                     ) {
                         Text(
-                            text = "${"%.1f".format(state.settings.cameraZoomRatio)}x",
+                            text = "Auto ${"%.1f".format(state.visionState.recommendedZoomRatio)}x",
                             color = MintTeal,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
