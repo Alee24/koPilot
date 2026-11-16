@@ -10,15 +10,23 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import ke.co.kopilot.core.common.coroutines.DispatcherProvider
+import ke.co.kopilot.core.security.SecureTokenStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,6 +34,8 @@ import javax.inject.Singleton
 class LocalVoiceCommandEngine @Inject constructor(
     @ApplicationContext private val context: Context,
     private val toolExecutor: VoiceToolExecutor,
+    private val tokenStore: SecureTokenStore,
+    private val okHttpClient: OkHttpClient,
     private val dispatchers: DispatcherProvider,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.io)
@@ -185,8 +195,60 @@ class LocalVoiceCommandEngine @Inject constructor(
                 }
             }
             else -> {
-                "Heard: $utterance. Try asking about your speed, route, traffic, weather, road signs, or vehicle diagnostics."
+                val apiKey = tokenStore.getOpenAiApiKey()
+                if (apiKey != null) {
+                    askOpenAiGeneralTopic(apiKey, utterance, language)
+                } else {
+                    "Heard: $utterance. Add your OpenAI API key in Settings to ask about any topic, or ask about your speed, route, traffic, weather, road signs, or vehicle diagnostics."
+                }
             }
+        }
+    }
+
+    private suspend fun askOpenAiGeneralTopic(
+        apiKey: String,
+        question: String,
+        language: String,
+    ): String = withContext(dispatchers.io) {
+        val speedContext = runCatching { toolExecutor.executeTool("get_current_speed", emptyObj()) }.getOrDefault("")
+        val langNote = if (language == "sw") "Answer in natural Kiswahili." else "Answer clearly in English."
+        val sysPrompt = "You are KoPilot, an intelligent AI driving companion for Kenyan motorists. " +
+            "Answer any question on any topic clearly and concisely (2-4 spoken sentences) so it can be read out loud while driving. " +
+            "Live vehicle context if relevant: $speedContext. $langNote"
+
+        val payload = buildJsonObject {
+            put("model", "gpt-4o-mini")
+            put(
+                "messages",
+                buildJsonArray {
+                    add(buildJsonObject { put("role", "system"); put("content", sysPrompt) })
+                    add(buildJsonObject { put("role", "user"); put("content", question) })
+                },
+            )
+            put("max_tokens", 220)
+        }.toString()
+
+        runCatching {
+            val req = Request.Builder()
+                .url("https://api.openai.com/v1/chat/completions")
+                .addHeader("Authorization", "Bearer $apiKey")
+                .post(payload.toRequestBody("application/json".toMediaType()))
+                .build()
+            okHttpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    return@runCatching "OpenAI returned HTTP ${resp.code}. Please check your API key in Settings."
+                }
+                val body = resp.body?.string().orEmpty()
+                val root = json.parseToJsonElement(body).jsonObject
+                root["choices"]?.jsonArray?.firstOrNull()?.jsonObject
+                    ?.get("message")?.jsonObject
+                    ?.get("content")?.jsonPrimitive?.content
+                    ?.trim()
+                    ?.ifBlank { "I could not generate a response." }
+                    ?: "I could not generate a response."
+            }
+        }.getOrElse { err ->
+            "Could not reach OpenAI: ${err.localizedMessage ?: "network error"}."
         }
     }
 

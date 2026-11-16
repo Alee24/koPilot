@@ -3,6 +3,7 @@ package ke.co.kopilot.feature.voice
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.os.Build
 import dagger.hilt.android.qualifiers.ApplicationContext
 import ke.co.kopilot.core.common.coroutines.DispatcherProvider
 import ke.co.kopilot.core.network.api.KoPilotApiService
@@ -216,10 +217,27 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
 
     private fun configureAudioRouting() {
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        val btConnected = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+        val btDevice = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
             it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
         }
-        _state.value = _state.value.copy(bluetoothAudioActive = btConnected)
+        if (btDevice != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                audioManager.setCommunicationDevice(btDevice)
+            }
+            @Suppress("DEPRECATION")
+            audioManager.isSpeakerphoneOn = false
+            _state.value = _state.value.copy(bluetoothAudioActive = true)
+        } else {
+            val speaker = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
+                it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && speaker != null) {
+                audioManager.setCommunicationDevice(speaker)
+            }
+            @Suppress("DEPRECATION")
+            audioManager.isSpeakerphoneOn = true
+            _state.value = _state.value.copy(bluetoothAudioActive = false)
+        }
     }
 
     private suspend fun establishWebRtcSession(
@@ -260,7 +278,9 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
                 override fun onRemoveStream(stream: MediaStream?) = Unit
                 override fun onDataChannel(dc: DataChannel?) = Unit
                 override fun onRenegotiationNeeded() = Unit
-                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) = Unit
+                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
+                    (receiver?.track() as? AudioTrack)?.setEnabled(true)
+                }
             },
         ) ?: error("Failed to create PeerConnection")
 
