@@ -74,6 +74,7 @@ class RoadVisionPipeline @Inject constructor(
     @ApplicationContext private val context: Context,
     private val temporalTracker: SignTemporalTracker,
     val signCatalog: LocalRoadSignCatalog,
+    private val liteRtClassifier: LiteRtSignClassifier,
     private val connectivityObserver: ConnectivityObserver,
     private val tokenStore: SecureTokenStore,
     private val okHttpClient: OkHttpClient,
@@ -104,12 +105,18 @@ class RoadVisionPipeline @Inject constructor(
                 .build()
             objectDetector = ObjectDetection.getClient(objOptions)
             textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+            liteRtClassifier.ensureInitialized()
+            val modeLabel = if (liteRtClassifier.isAvailable) {
+                "On-Device Hybrid (OCR+CV+LiteRT)"
+            } else {
+                "On-Device Hybrid (OCR+CV)"
+            }
 
             _state.value = _state.value.copy(
                 modelLoaded = true,
-                modelVersion = "mlkit-offline-1.0",
-                validationStatus = "On-Device Offline",
-                statusMessage = "Offline object tracking & sign vision ready",
+                modelVersion = "mlkit-cv-hybrid-2.0",
+                validationStatus = modeLabel,
+                statusMessage = "$modeLabel ready",
             )
         }.onFailure { err ->
             _state.value = _state.value.copy(
@@ -145,21 +152,20 @@ class RoadVisionPipeline @Inject constructor(
             val h = bitmap.height.toFloat().coerceAtLeast(1f)
             frameCounter += 1
 
-            // Extract salient sign ROIs in < 1ms and run Object Detection + ROI OCR in PARALLEL
+            // Extract salient sign ROIs in < 2ms and run Object Detection, ROI OCR, and Full-Frame OCR in PARALLEL
             val signRois = SignRoiExtractor.extractSignRois(bitmap, maxRois = 2)
             val objTask: Task<List<DetectedObject>> = detector.process(inputImage)
             val roiTasks: List<Task<Text>> = signRois.map { roi ->
                 recognizer.process(InputImage.fromBitmap(roi.bitmap, 0))
             }
-            val shouldRunFullOcr = signRois.isEmpty() && (frameCounter % 4 == 0)
-            val fullOcrTask: Task<Text>? = if (shouldRunFullOcr) recognizer.process(inputImage) else null
+            val fullOcrTask: Task<Text> = recognizer.process(inputImage)
 
             val allTasks = buildList<Task<*>> {
                 add(objTask)
                 addAll(roiTasks)
-                if (fullOcrTask != null) add(fullOcrTask)
+                add(fullOcrTask)
             }
-            runCatching { Tasks.await(Tasks.whenAllComplete(allTasks), 220, TimeUnit.MILLISECONDS) }
+            runCatching { Tasks.await(Tasks.whenAllComplete(allTasks), 320, TimeUnit.MILLISECONDS) }
 
             val detectedObjects = if (objTask.isSuccessful) objTask.result.orEmpty() else emptyList()
 
@@ -211,27 +217,69 @@ class RoadVisionPipeline @Inject constructor(
                     val box = block.boundingBox ?: continue
                     val hasBorder = SignCandidateParser.hasSignBorderColor(roi.bitmap, box)
                     val whiteInterior = SignCandidateParser.hasWhiteInterior(roi.bitmap, box)
-                    SignCandidateParser.parseSignFromText(block.text, hasBorder, roiCenterX, whiteInterior)?.let {
-                        signCandidates.add(it)
+                    val blockDet = SignCandidateParser.parseSignFromText(block.text, hasBorder, roiCenterX, whiteInterior)
+                    if (blockDet != null) {
+                        signCandidates.add(blockDet)
+                    } else {
+                        for (line in block.lines) {
+                            SignCandidateParser.parseSignFromText(line.text, hasBorder, roiCenterX, whiteInterior)?.let {
+                                signCandidates.add(it)
+                            }
+                        }
                     }
                 }
             }
 
-            if (fullOcrTask != null && fullOcrTask.isSuccessful) {
+            if (fullOcrTask.isSuccessful) {
                 for (block in fullOcrTask.result.textBlocks) {
                     val box = block.boundingBox ?: continue
                     val normTop = box.top / h
-                    if (normTop <= 0.65f) {
+                    if (normTop <= 0.88f) {
                         val hasBorder = SignCandidateParser.hasSignBorderColor(bitmap, box)
                         val whiteInterior = SignCandidateParser.hasWhiteInterior(bitmap, box)
                         val centerX = box.centerX() / w
-                        SignCandidateParser.parseSignFromText(block.text, hasBorder, centerX, whiteInterior)?.let {
-                            signCandidates.add(it)
+                        val blockDet = SignCandidateParser.parseSignFromText(block.text, hasBorder, centerX, whiteInterior)
+                        if (blockDet != null) {
+                            signCandidates.add(blockDet)
+                        } else {
+                            for (line in block.lines) {
+                                SignCandidateParser.parseSignFromText(line.text, hasBorder, centerX, whiteInterior)?.let {
+                                    signCandidates.add(it)
+                                }
+                            }
                         }
                     }
                     if (detectedPlate == null) {
                         detectedPlate = FrontRoadAnalyzer.extractKenyanPlate(block.text)
                     }
+                }
+            }
+
+            // Option 2: Two-stage LiteRT TFLite classification on localized sign crops (if model is bundled)
+            if (liteRtClassifier.isAvailable) {
+                for (roi in signRois) {
+                    val centerX = (roi.normLeft + roi.normRight) / 2f
+                    liteRtClassifier.classifyCrop(roi.bitmap, centerX)?.let { signCandidates.add(it) }
+                }
+                if (signCandidates.isEmpty()) {
+                    for (obj in detectedObjects.take(2)) {
+                        val box = obj.boundingBox
+                        val left = box.left.coerceIn(0, bitmap.width - 1)
+                        val top = box.top.coerceIn(0, bitmap.height - 1)
+                        val right = box.right.coerceIn(left + 1, bitmap.width)
+                        val bottom = box.bottom.coerceIn(top + 1, bitmap.height)
+                        if (top / h <= 0.75f && (right - left) >= 32 && (bottom - top) >= 32) {
+                            val crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+                            liteRtClassifier.classifyCrop(crop, box.centerX() / w)?.let { signCandidates.add(it) }
+                        }
+                    }
+                }
+            }
+
+            // Option 3: Zero-model CV shape + color + interior symbol geometry when OCR/LiteRT found no text sign
+            if (signCandidates.isEmpty()) {
+                for (roi in signRois) {
+                    OfflineSymbolSignDetector.classifyCrop(roi)?.let { signCandidates.add(it) }
                 }
             }
 
