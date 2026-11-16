@@ -42,6 +42,7 @@ dependencies {
     implementation(project(":feature:alerts"))
     implementation(project(":feature:diagnostics"))
     implementation(project(":feature:trips"))
+    implementation(project(":feature:sensors"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)

@@ -70,6 +70,7 @@ dependencies {
     implementation(project(":feature:trips"))
     implementation(project(":feature:settings"))
     implementation(project(":feature:diagnostics"))
+    implementation(project(":feature:sensors"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

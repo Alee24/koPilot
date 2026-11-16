@@ -96,6 +96,7 @@ private val NavBlue = Color(0xFF2B7FFF)
 @Composable
 fun DashboardScreen(
     onOpenSettings: () -> Unit,
+    onOpenSensors: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -166,7 +167,7 @@ fun DashboardScreen(
                     modifier = Modifier.weight(1.1f).fillMaxHeight(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    TopCockpitHeader(isOnline = state.isOnline, onOpenSettings = onOpenSettings)
+                    TopCockpitHeader(isOnline = state.isOnline, onOpenSensors = onOpenSensors)
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         ViewportCard(state = state, viewModel = viewModel)
                     }
@@ -183,7 +184,7 @@ fun DashboardScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    SpeedCockpitRow(state = state)
+                    SpeedCockpitRow(state = state, onOpenSensors = onOpenSensors)
                 SpeedZoneBanner(state.speedZone)
                     QuickInfoCardsRow(
                         state = state,
@@ -215,7 +216,7 @@ fun DashboardScreen(
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                TopCockpitHeader(isOnline = state.isOnline, onOpenSettings = onOpenSettings)
+                TopCockpitHeader(isOnline = state.isOnline, onOpenSensors = onOpenSensors)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -223,7 +224,7 @@ fun DashboardScreen(
                 ) {
                     ViewportCard(state = state, viewModel = viewModel)
                 }
-                SpeedCockpitRow(state = state)
+                SpeedCockpitRow(state = state, onOpenSensors = onOpenSensors)
                 SpeedZoneBanner(state.speedZone)
                 VoiceAssistantBar(
                     state = state,
@@ -257,7 +258,7 @@ fun DashboardScreen(
 @Composable
 private fun TopCockpitHeader(
     isOnline: Boolean,
-    onOpenSettings: () -> Unit,
+    onOpenSensors: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -265,8 +266,8 @@ private fun TopCockpitHeader(
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onOpenSettings, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.Menu, contentDescription = "Menu", tint = Color.White)
+            IconButton(onClick = onOpenSensors, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Menu, contentDescription = "Sensors & Motion", tint = Color.White)
             }
             Spacer(Modifier.width(4.dp))
             Box(
@@ -486,7 +487,10 @@ private fun SpeedZoneBanner(zone: SpeedZone) {
 }
 
 @Composable
-private fun SpeedCockpitRow(state: DashboardUiState) {
+private fun SpeedCockpitRow(
+    state: DashboardUiState,
+    onOpenSensors: () -> Unit,
+) {
     val speedKmh = state.speedEvaluation.currentSpeedKmh
     val speedText = speedKmh?.let { "%.0f".format(it) } ?: "--"
     val isOverspeed = state.speedEvaluation.decision == SpeedAlertDecision.POSSIBLE_OVERSPEED_WARNING ||
@@ -507,7 +511,7 @@ private fun SpeedCockpitRow(state: DashboardUiState) {
     ) {
         // Left: GPS card
         Surface(
-            modifier = Modifier.width(86.dp),
+            modifier = Modifier.width(86.dp).clickable(onClick = onOpenSensors),
             shape = RoundedCornerShape(14.dp),
             color = CockpitCardBg,
             border = BorderStroke(1.dp, CockpitCardBorder),
@@ -527,7 +531,15 @@ private fun SpeedCockpitRow(state: DashboardUiState) {
                     modifier = Modifier.size(20.dp),
                 )
                 Spacer(Modifier.height(4.dp))
-                Text("GPS", color = Color(0xFF8C9EB2), fontSize = 11.sp)
+                Text(
+                    text = if (state.locationState.satellitesInView > 0) {
+                        "${state.locationState.satellitesUsedInFix}/${state.locationState.satellitesInView} sats"
+                    } else {
+                        "GPS"
+                    },
+                    color = Color(0xFF8C9EB2),
+                    fontSize = 10.sp,
+                )
                 Text(
                     text = when (state.speedEvaluation.signalState) {
                         GpsSignalState.GOOD -> "Strong"

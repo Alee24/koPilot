@@ -25,6 +25,9 @@ import ke.co.kopilot.feature.location.SpeedAlertEngine
 import ke.co.kopilot.feature.location.SpeedEvaluation
 import ke.co.kopilot.feature.location.SpeedZone
 import ke.co.kopilot.feature.location.SpeedZoneMonitor
+import ke.co.kopilot.feature.sensors.DrivingMotionAnalysis
+import ke.co.kopilot.feature.sensors.SensorManagerRepository
+import ke.co.kopilot.feature.sensors.SensorSamplingProfile
 import ke.co.kopilot.feature.navigation.NavigationRepository
 import ke.co.kopilot.feature.navigation.NavigationUiState
 import ke.co.kopilot.feature.traffic.TrafficAdvisor
@@ -68,6 +71,7 @@ data class DashboardUiState(
     val diagnosticsState: VehicleDiagnosticsState = VehicleDiagnosticsState(),
     val savedTrips: List<TripEntity> = emptyList(),
     val speedZone: SpeedZone = SpeedZone.NORMAL,
+    val motionAnalysis: DrivingMotionAnalysis = DrivingMotionAnalysis(),
 )
 
 @HiltViewModel
@@ -85,6 +89,7 @@ class DashboardViewModel @Inject constructor(
     private val alertCoordinator: LocalAlertCoordinator,
     private val obdManager: ObdBluetoothManager,
     private val tripRepo: TripRepository,
+    private val sensorManagerRepo: SensorManagerRepository,
     connectivityObserver: ConnectivityObserver,
 ) : ViewModel() {
 
@@ -149,6 +154,7 @@ class DashboardViewModel @Inject constructor(
             diagnosticsState = obd,
             savedTrips = trips,
             speedZone = currentSpeedZone.value,
+            motionAnalysis = sensorManagerRepo.state.value.motionAnalysis,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -223,6 +229,7 @@ class DashboardViewModel @Inject constructor(
         signsDetectedInTrip = 0
         locationTracker.resetTripDistance()
         locationTracker.startTracking(highAccuracy = true)
+        sensorManagerRepo.startMonitoring(SensorSamplingProfile.DRIVING)
     }
 
     fun endTrip() {
@@ -236,6 +243,7 @@ class DashboardViewModel @Inject constructor(
         isDriving.value = false
         tripStartedAt.value = null
         locationTracker.stopTracking()
+        sensorManagerRepo.stopMonitoring()
         voiceClient.disconnect()
         speedAlertEngine.reset()
         speedZoneMonitor.reset()
