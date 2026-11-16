@@ -9,6 +9,7 @@ import ke.co.kopilot.core.common.model.GpsSignalState
 import ke.co.kopilot.core.common.model.SpeedAlertDecision
 import ke.co.kopilot.core.common.model.TrafficSignObservation
 import ke.co.kopilot.core.common.model.VehicleDiagnosticsState
+import ke.co.kopilot.core.database.entity.TripEntity
 import ke.co.kopilot.core.database.preferences.DetectionQuality
 import ke.co.kopilot.core.database.preferences.KoPilotSettings
 import ke.co.kopilot.core.database.preferences.PreferencesRepository
@@ -63,6 +64,7 @@ data class DashboardUiState(
     val voiceState: VoiceAssistantState = VoiceAssistantState(),
     val alertState: AlertCoordinatorState = AlertCoordinatorState(),
     val diagnosticsState: VehicleDiagnosticsState = VehicleDiagnosticsState(),
+    val savedTrips: List<TripEntity> = emptyList(),
 )
 
 @HiltViewModel
@@ -114,7 +116,8 @@ class DashboardViewModel @Inject constructor(
         sensorFlows,
         alertCoordinator.state,
         obdManager.state,
-    ) { core, sensor, alerts, obd ->
+        tripRepo.trips,
+    ) { core, sensor, alerts, obd, trips ->
         val speedEval = speedAlertEngine.evaluate(
             fix = sensor.location.currentFix,
             latestSign = sensor.vision.lastObservation,
@@ -139,6 +142,7 @@ class DashboardViewModel @Inject constructor(
             voiceState = sensor.voice,
             alertState = alerts,
             diagnosticsState = obd,
+            savedTrips = trips,
         )
     }.stateIn(
         scope = viewModelScope,
