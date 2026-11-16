@@ -2,6 +2,8 @@ package ke.co.kopilot.feature.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -45,7 +47,7 @@ import ke.co.kopilot.core.database.preferences.MicMode
 import ke.co.kopilot.core.database.preferences.ResponseLength
 import ke.co.kopilot.core.designsystem.component.CockpitPanel
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
@@ -206,6 +208,22 @@ fun SettingsScreen(
                         )
                     }
                 }
+                Spacer(Modifier.height(6.dp))
+                Text("Camera Zoom for Road Signs (${"%.1f".format(settings.cameraZoomRatio)}x)")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(1.0f, 1.3f, 1.6f, 2.0f).forEach { z ->
+                        FilterChip(
+                            selected = kotlin.math.abs(settings.cameraZoomRatio - z) < 0.05f,
+                            onClick = { viewModel.setCameraZoomRatio(z) },
+                            label = { Text("${z}x") },
+                        )
+                    }
+                }
+                SettingSwitch(
+                    "Announce All Road Signs Out Loud",
+                    settings.announceAllSigns,
+                    viewModel::setAnnounceAllSigns,
+                )
                 SettingSwitch(
                     "Experimental Hazard Advisories (Unvalidated)",
                     settings.hazardAdvisoriesEnabled,
@@ -221,9 +239,27 @@ fun SettingsScreen(
                 SettingSwitch("Navigation Voice Prompts", settings.navVoiceGuidanceEnabled, viewModel::setNavVoice)
             }
 
-            // AI Assistant
+            // AI Assistant & Sound
             CockpitPanel {
-                Text("AI Voice Assistant", style = MaterialTheme.typography.titleMedium)
+                Text("AI Voice & Sound", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(6.dp))
+                Text("Realtime AI Voice: ${settings.aiVoiceName}")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("marin", "alloy", "ash", "coral", "echo", "sage", "shimmer", "verse").forEach { v ->
+                        FilterChip(
+                            selected = settings.aiVoiceName == v,
+                            onClick = { viewModel.setAiVoiceName(v) },
+                            label = { Text(v) },
+                        )
+                    }
+                }
+                Text("Speech Rate: ${"%.1f".format(settings.voiceSpeed)}x")
+                Slider(
+                    value = settings.voiceSpeed,
+                    onValueChange = viewModel::setVoiceSpeed,
+                    valueRange = 0.6f..1.5f,
+                )
+                SettingSwitch("Play Alert Chime Before Warnings", settings.alertChimeEnabled, viewModel::setAlertChimeEnabled)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     MicMode.entries.forEach { mode ->
                         FilterChip(
@@ -241,6 +277,10 @@ fun SettingsScreen(
                             label = { Text(len.name) },
                         )
                     }
+                }
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(onClick = viewModel::testVoiceSound) {
+                    Text("Test Voice & Chime Sound")
                 }
             }
 

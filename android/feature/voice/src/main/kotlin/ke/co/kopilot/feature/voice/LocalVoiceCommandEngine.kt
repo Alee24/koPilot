@@ -111,7 +111,7 @@ class LocalVoiceCommandEngine @Inject constructor(
     internal suspend fun handleSpokenCommand(utterance: String, language: String): String {
         val q = utterance.lowercase()
         return when {
-            q.contains("speed") || q.contains("kasi") -> {
+            q.contains("speed") || q.contains("how fast") || q.contains("limit") || q.contains("kasi") -> {
                 val res = parseObj(toolExecutor.executeTool("get_current_speed", emptyObj()))
                 val speed = res["speed_kmh"]?.jsonPrimitive?.content
                 val limit = res["observed_limit_kmh"]?.jsonPrimitive?.content
@@ -137,7 +137,7 @@ class LocalVoiceCommandEngine @Inject constructor(
                     "GPS is active at latitude ${res["latitude"]?.jsonPrimitive?.content}, longitude ${res["longitude"]?.jsonPrimitive?.content}."
                 }
             }
-            q.contains("weather") || q.contains("rain") || q.contains("hali ya hewa") -> {
+            q.contains("weather") || q.contains("whether") || q.contains("forecast") || q.contains("rain") || q.contains("hali ya hewa") -> {
                 val res = parseObj(toolExecutor.executeTool("get_weather_forecast", emptyObj()))
                 if (res["status"]?.jsonPrimitive?.content != "ok") {
                     "Weather forecast is currently unavailable."
@@ -242,10 +242,17 @@ class LocalVoiceCommandEngine @Inject constructor(
                 .post(payload.toRequestBody("application/json".toMediaType()))
                 .build()
             okHttpClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    return@runCatching "OpenAI returned HTTP ${resp.code}. Please check your API key in Settings."
-                }
                 val body = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) {
+                    val errCode = runCatching {
+                        json.parseToJsonElement(body).jsonObject["error"]?.jsonObject?.get("code")?.jsonPrimitive?.content
+                    }.getOrNull()
+                    return@runCatching when (resp.code) {
+                        429 -> "OpenAI rate limit or quota reached (${errCode ?: "429"}). Check billing/credits on platform.openai.com."
+                        401 -> "OpenAI rejected the API key (401). Please verify your key in Settings."
+                        else -> "OpenAI returned HTTP ${resp.code}."
+                    }
+                }
                 val root = json.parseToJsonElement(body).jsonObject
                 root["choices"]?.jsonArray?.firstOrNull()?.jsonObject
                     ?.get("message")?.jsonObject

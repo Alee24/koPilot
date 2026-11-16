@@ -58,6 +58,7 @@ object SignCandidateParser {
                     Regex("\\b80\\b").containsMatchIn(cleaned) -> TrafficSignCategory.SPEED_LIMIT_80 to 0.88f
                     Regex("\\b100\\b").containsMatchIn(cleaned) -> TrafficSignCategory.SPEED_LIMIT_100 to 0.88f
                     Regex("\\b110\\b").containsMatchIn(cleaned) -> TrafficSignCategory.SPEED_LIMIT_110 to 0.88f
+                    hasSignBorderColor && cleaned.length in 3..26 -> TrafficSignCategory.GENERAL_WARNING to 0.78f
                     else -> null
                 }
             }
@@ -68,6 +69,7 @@ object SignCandidateParser {
                 category = cat,
                 confidence = conf,
                 normalizedCenterX = normalizedCenterX.coerceIn(0f, 1f),
+                customLabel = if (cat == TrafficSignCategory.GENERAL_WARNING) cleaned else null,
             )
         }
     }

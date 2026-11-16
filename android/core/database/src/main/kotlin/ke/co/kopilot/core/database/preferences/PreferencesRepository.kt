@@ -34,13 +34,16 @@ data class KoPilotSettings(
     // Camera
     val cameraPrimaryLayout: Boolean = true,
     val detectionQuality: DetectionQuality = DetectionQuality.BALANCED,
+    val cameraZoomRatio: Float = 1.3f,
     val hazardAdvisoriesEnabled: Boolean = false, // Disabled by default until validated
+    val announceAllSigns: Boolean = true,
     // Navigation
     val avoidTolls: Boolean = false,
     val trafficAlertsEnabled: Boolean = true,
     val navVoiceGuidanceEnabled: Boolean = true,
     // AI Assistant
     val aiVoiceName: String = "marin",
+    val alertChimeEnabled: Boolean = true,
     val micMode: MicMode = MicMode.HANDS_FREE,
     val responseLength: ResponseLength = ResponseLength.CONCISE,
     // Emergency Contact
@@ -71,11 +74,14 @@ class PreferencesRepository @Inject constructor(
             detectionQuality = runCatching {
                 DetectionQuality.valueOf(prefs[KEY_DETECTION_QUALITY] ?: "BALANCED")
             }.getOrDefault(DetectionQuality.BALANCED),
+            cameraZoomRatio = prefs[KEY_CAMERA_ZOOM] ?: 1.3f,
             hazardAdvisoriesEnabled = prefs[KEY_HAZARD_ADVISORIES] ?: false,
+            announceAllSigns = prefs[KEY_ANNOUNCE_ALL_SIGNS] ?: true,
             avoidTolls = prefs[KEY_AVOID_TOLLS] ?: false,
             trafficAlertsEnabled = prefs[KEY_TRAFFIC_ALERTS] ?: true,
             navVoiceGuidanceEnabled = prefs[KEY_NAV_VOICE] ?: true,
             aiVoiceName = prefs[KEY_AI_VOICE] ?: "marin",
+            alertChimeEnabled = prefs[KEY_ALERT_CHIME] ?: true,
             micMode = runCatching {
                 MicMode.valueOf(prefs[KEY_MIC_MODE] ?: "HANDS_FREE")
             }.getOrDefault(MicMode.HANDS_FREE),
@@ -103,11 +109,14 @@ class PreferencesRepository @Inject constructor(
     suspend fun setSafetyDisclosureAccepted(accepted: Boolean) = edit { it[KEY_SAFETY_ACCEPTED] = accepted }
     suspend fun setCameraPrimaryLayout(cameraPrimary: Boolean) = edit { it[KEY_CAMERA_PRIMARY] = cameraPrimary }
     suspend fun setDetectionQuality(quality: DetectionQuality) = edit { it[KEY_DETECTION_QUALITY] = quality.name }
+    suspend fun setCameraZoomRatio(zoom: Float) = edit { it[KEY_CAMERA_ZOOM] = zoom.coerceIn(1.0f, 3.0f) }
     suspend fun setHazardAdvisoriesEnabled(enabled: Boolean) = edit { it[KEY_HAZARD_ADVISORIES] = enabled }
+    suspend fun setAnnounceAllSigns(enabled: Boolean) = edit { it[KEY_ANNOUNCE_ALL_SIGNS] = enabled }
     suspend fun setAvoidTolls(avoid: Boolean) = edit { it[KEY_AVOID_TOLLS] = avoid }
     suspend fun setTrafficAlertsEnabled(enabled: Boolean) = edit { it[KEY_TRAFFIC_ALERTS] = enabled }
     suspend fun setNavVoiceGuidanceEnabled(enabled: Boolean) = edit { it[KEY_NAV_VOICE] = enabled }
     suspend fun setAiVoiceName(voice: String) = edit { it[KEY_AI_VOICE] = voice }
+    suspend fun setAlertChimeEnabled(enabled: Boolean) = edit { it[KEY_ALERT_CHIME] = enabled }
     suspend fun setMicMode(mode: MicMode) = edit { it[KEY_MIC_MODE] = mode.name }
     suspend fun setResponseLength(length: ResponseLength) = edit { it[KEY_RESPONSE_LENGTH] = length.name }
     suspend fun setEmergencyContact(name: String, phone: String) = edit {
@@ -138,11 +147,14 @@ class PreferencesRepository @Inject constructor(
         val KEY_SAFETY_ACCEPTED = booleanPreferencesKey("safety_accepted")
         val KEY_CAMERA_PRIMARY = booleanPreferencesKey("camera_primary")
         val KEY_DETECTION_QUALITY = stringPreferencesKey("detection_quality")
+        val KEY_CAMERA_ZOOM = floatPreferencesKey("camera_zoom")
         val KEY_HAZARD_ADVISORIES = booleanPreferencesKey("hazard_advisories")
+        val KEY_ANNOUNCE_ALL_SIGNS = booleanPreferencesKey("announce_all_signs")
         val KEY_AVOID_TOLLS = booleanPreferencesKey("avoid_tolls")
         val KEY_TRAFFIC_ALERTS = booleanPreferencesKey("traffic_alerts")
         val KEY_NAV_VOICE = booleanPreferencesKey("nav_voice")
         val KEY_AI_VOICE = stringPreferencesKey("ai_voice")
+        val KEY_ALERT_CHIME = booleanPreferencesKey("alert_chime")
         val KEY_MIC_MODE = stringPreferencesKey("mic_mode")
         val KEY_RESPONSE_LENGTH = stringPreferencesKey("response_length")
         val KEY_EMERGENCY_NAME = stringPreferencesKey("emergency_name")

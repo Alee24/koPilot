@@ -1,6 +1,8 @@
 package ke.co.kopilot.feature.dashboard
 
+import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -69,6 +71,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -124,18 +127,28 @@ fun DashboardScreen(
         )
     }
 
-    if (showDestinationDialog) {
-        DestinationPickerDialog(
-            state = state,
-            presets = viewModel.kenyanCityPresets,
-            onSearch = viewModel::searchDestinations,
-            onSelect = { name, lat, lng ->
-                viewModel.navigateToCoordinates(name, lat, lng)
-                showDestinationDialog = false
-            },
-            onDismiss = { showDestinationDialog = false },
-        )
-    }
+        if (showDestinationDialog) {
+            val ctx = LocalContext.current
+            DestinationPickerDialog(
+                state = state,
+                presets = viewModel.kenyanCityPresets,
+                onSearch = viewModel::searchDestinations,
+                onSelect = { name, lat, lng ->
+                    viewModel.navigateToCoordinates(name, lat, lng)
+                    showDestinationDialog = false
+                },
+                onOpenExternalGoogleMaps = { name, lat, lng ->
+                    val navUri = Uri.parse("google.navigation:q=$lat,$lng&mode=d")
+                    val intent = Intent(Intent.ACTION_VIEW, navUri).apply {
+                        setPackage("com.google.android.apps.maps")
+                    }
+                    runCatching { ctx.startActivity(intent) }.onFailure {
+                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:$lat,$lng?q=$lat,$lng(${Uri.encode(name)})")))
+                    }
+                },
+                onDismiss = { showDestinationDialog = false },
+            )
+        }
 
     if (showTripsDialog) {
         TripsHistoryDialog(
@@ -378,6 +391,7 @@ private fun ViewportCard(
                     permissionGranted = state.cameraStatus.permissionGranted,
                     isDrivingSessionActive = state.isDrivingSessionActive,
                     analysisIntervalMs = viewModel.analysisIntervalFor(state.settings.detectionQuality),
+                    zoomRatio = state.settings.cameraZoomRatio,
                     performanceController = viewModel.cameraController,
                     onFrameListener = { imageProxy, rotation, ts ->
                         viewModel.visionPipeline.analyzeFrame(
@@ -484,23 +498,71 @@ private fun ViewportCard(
                 }
             }
 
-            // Top-right expand/swap button
-            Surface(
+            // Top-right controls (Zoom pill when in Camera view + Expand/Swap button)
+            Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(10.dp)
-                    .size(34.dp)
-                    .clickable(onClick = viewModel::toggleCameraPrimaryLayout),
-                shape = CircleShape,
-                color = Color(0xCC0D141C),
+                    .padding(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.OpenInFull,
-                        contentDescription = "Switch View",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp),
-                    )
+                if (state.settings.cameraPrimaryLayout) {
+                    Surface(
+                        modifier = Modifier.clickable(onClick = viewModel::cycleCameraZoom),
+                        shape = RoundedCornerShape(50),
+                        color = Color(0xCC0D141C),
+                    ) {
+                        Text(
+                            text = "${"%.1f".format(state.settings.cameraZoomRatio)}x",
+                            color = MintTeal,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
+                    }
+                } else {
+                    val dest = state.navigationState.destinationLatLng
+                    val destName = state.navigationState.destinationName ?: "Destination"
+                    if (dest != null) {
+                        val ctx = LocalContext.current
+                        Surface(
+                            modifier = Modifier.clickable {
+                                val navUri = Uri.parse("google.navigation:q=${dest.latitude},${dest.longitude}&mode=d")
+                                val intent = Intent(Intent.ACTION_VIEW, navUri).apply {
+                                    setPackage("com.google.android.apps.maps")
+                                }
+                                runCatching { ctx.startActivity(intent) }.onFailure {
+                                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:${dest.latitude},${dest.longitude}?q=${dest.latitude},${dest.longitude}(${Uri.encode(destName)})")))
+                                }
+                            },
+                            shape = RoundedCornerShape(50),
+                            color = NavBlue,
+                        ) {
+                            Text(
+                                text = "Google Maps",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+                }
+                Surface(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clickable(onClick = viewModel::toggleCameraPrimaryLayout),
+                    shape = CircleShape,
+                    color = Color(0xCC0D141C),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.OpenInFull,
+                            contentDescription = "Switch View",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
             }
 
@@ -737,6 +799,7 @@ private fun SpeedCockpitRow(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 val limit = state.visionState.lastSpeedLimitKmh
+                    ?: state.navigationState.roadIntelligence.mappedSpeedLimitKmh
                     ?: state.speedEvaluation.applicableSpeedLimitKmh
                 Surface(
                     modifier = Modifier.size(48.dp),
@@ -1126,6 +1189,7 @@ private fun DestinationPickerDialog(
     presets: List<Pair<String, com.google.android.gms.maps.model.LatLng>>,
     onSearch: (String) -> Unit,
     onSelect: (String, Double, Double) -> Unit,
+    onOpenExternalGoogleMaps: (String, Double, Double) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
@@ -1153,20 +1217,36 @@ private fun DestinationPickerDialog(
                     Text("Search Places")
                 }
                 state.navigationState.searchResults.forEach { item ->
-                    TextButton(
-                        onClick = { onSelect(item.name, item.latitude, item.longitude) },
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("${item.name} — ${item.formattedAddress}")
+                        TextButton(
+                            onClick = { onSelect(item.name, item.latitude, item.longitude) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("${item.name} — ${item.formattedAddress}")
+                        }
+                        TextButton(onClick = { onOpenExternalGoogleMaps(item.name, item.latitude, item.longitude) }) {
+                            Text("GMaps")
+                        }
                     }
                 }
                 Text("Major Kenyan Towns", style = MaterialTheme.typography.labelMedium)
                 presets.forEach { (name, latLng) ->
-                    TextButton(
-                        onClick = { onSelect(name, latLng.latitude, latLng.longitude) },
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(name)
+                        TextButton(
+                            onClick = { onSelect(name, latLng.latitude, latLng.longitude) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(name)
+                        }
+                        TextButton(onClick = { onOpenExternalGoogleMaps(name, latLng.latitude, latLng.longitude) }) {
+                            Text("GMaps")
+                        }
                     }
                 }
             }

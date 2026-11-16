@@ -34,6 +34,7 @@ fun RoadCameraPreview(
     permissionGranted: Boolean,
     isDrivingSessionActive: Boolean,
     analysisIntervalMs: Long,
+    zoomRatio: Float = 1.3f,
     performanceController: CameraPerformanceController,
     onFrameListener: RoadFrameListener,
     modifier: Modifier = Modifier,
@@ -76,6 +77,17 @@ fun RoadCameraPreview(
         }
     }
 
+    val cameraRef = remember { androidx.compose.runtime.mutableStateOf<androidx.camera.core.Camera?>(null) }
+
+    DisposableEffect(zoomRatio, cameraRef.value) {
+        cameraRef.value?.let { cam ->
+            val maxZoom = cam.cameraInfo.zoomState.value?.maxZoomRatio ?: 2.0f
+            val minZoom = cam.cameraInfo.zoomState.value?.minZoomRatio ?: 1.0f
+            cam.cameraControl.setZoomRatio(zoomRatio.coerceIn(minZoom, maxZoom))
+        }
+        onDispose {}
+    }
+
     DisposableEffect(lifecycleOwner, analysisIntervalMs) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -92,7 +104,7 @@ fun RoadCameraPreview(
                 val resolutionSelector = ResolutionSelector.Builder()
                     .setResolutionStrategy(
                         ResolutionStrategy(
-                            Size(640, 480),
+                            Size(1280, 720),
                             ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
                         ),
                     )
@@ -118,8 +130,12 @@ fun RoadCameraPreview(
 
                 val selector = CameraSelector.DEFAULT_BACK_CAMERA
                 if (cameraProvider.hasCamera(selector)) {
-                    cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, imageAnalysis)
-                    performanceController.setCameraActive(true, "Rear camera active")
+                    val cam = cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, imageAnalysis)
+                    cameraRef.value = cam
+                    val maxZoom = cam.cameraInfo.zoomState.value?.maxZoomRatio ?: 2.0f
+                    val minZoom = cam.cameraInfo.zoomState.value?.minZoomRatio ?: 1.0f
+                    cam.cameraControl.setZoomRatio(zoomRatio.coerceIn(minZoom, maxZoom))
+                    performanceController.setCameraActive(true, "Rear camera active (HD)")
                 } else {
                     performanceController.setCameraActive(false, "Rear camera not found on this device")
                 }

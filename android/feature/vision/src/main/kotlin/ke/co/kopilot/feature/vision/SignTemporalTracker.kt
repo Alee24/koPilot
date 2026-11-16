@@ -10,6 +10,7 @@ data class RawSignDetection(
     val category: TrafficSignCategory,
     val confidence: Float,
     val normalizedCenterX: Float, // 0.0 (left) to 1.0 (right)
+    val customLabel: String? = null,
 )
 
 @Singleton
@@ -72,6 +73,7 @@ class SignTemporalTracker @Inject constructor() {
             applicableToDriverLane = likelyDriverSide,
             timestampMillis = nowMillis,
             modelVersion = modelVersion,
+            customLabel = best.customLabel,
         )
     }
 

@@ -40,6 +40,7 @@ data class NavigationUiState(
     val decodedPoints: List<LatLng> = emptyList(),
     val currentStepIndex: Int = 0,
     val searchResults: List<PlaceItemDto> = emptyList(),
+    val roadIntelligence: RoadMapIntelligence = RoadMapIntelligence(),
     val isSearching: Boolean = false,
     val isComputingRoute: Boolean = false,
     val errorMessage: String? = null,
@@ -50,6 +51,7 @@ class NavigationRepository @Inject constructor(
     private val apiService: KoPilotApiService,
     private val connectivityObserver: ConnectivityObserver,
     private val tokenStore: SecureTokenStore,
+    private val osmRoadIntelligence: OsmRoadIntelligence,
     private val okHttpClient: OkHttpClient,
     private val dispatchers: DispatcherProvider,
 ) {
@@ -262,6 +264,12 @@ class NavigationRepository @Inject constructor(
 
     fun clearRoute() {
         _state.value = NavigationUiState()
+    }
+
+    suspend fun refreshRoadIntelligence(lat: Double, lng: Double) {
+        if (!connectivityObserver.isCurrentlyOnline()) return
+        val intel = osmRoadIntelligence.queryNear(lat, lng)
+        _state.value = _state.value.copy(roadIntelligence = intel)
     }
 
     companion object {

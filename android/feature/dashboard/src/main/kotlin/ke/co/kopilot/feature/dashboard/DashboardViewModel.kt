@@ -15,7 +15,9 @@ import ke.co.kopilot.core.database.preferences.KoPilotSettings
 import ke.co.kopilot.core.database.preferences.PreferencesRepository
 import ke.co.kopilot.core.network.connectivity.ConnectivityObserver
 import ke.co.kopilot.feature.alerts.AlertCoordinatorState
+import ke.co.kopilot.feature.alerts.AndroidTtsSpeechSink
 import ke.co.kopilot.feature.alerts.LocalAlertCoordinator
+import ke.co.kopilot.feature.alerts.SpeechSink
 import ke.co.kopilot.feature.camera.CameraPerformanceController
 import ke.co.kopilot.feature.camera.CameraStatusState
 import ke.co.kopilot.feature.diagnostics.ObdBluetoothManager
@@ -88,6 +90,7 @@ class DashboardViewModel @Inject constructor(
     private val weatherRepo: WeatherRepository,
     private val voiceClient: OpenAiRealtimeVoiceClient,
     private val alertCoordinator: LocalAlertCoordinator,
+    private val speechSink: SpeechSink,
     private val obdManager: ObdBluetoothManager,
     private val tripRepo: TripRepository,
     private val sensorManagerRepo: SensorManagerRepository,
@@ -226,6 +229,25 @@ class DashboardViewModel @Inject constructor(
                     speedSampleCount += 1
                 }
                 weatherRepo.refreshWeather(fix.latitude, fix.longitude)
+                navigationRepo.refreshRoadIntelligence(fix.latitude, fix.longitude)
+                val roadIntel = navigationRepo.state.value.roadIntelligence
+                val camDist = roadIntel.nearestSpeedCameraMeters
+                if (camDist != null && camDist <= 500) {
+                    val s = uiState.value.settings
+                    alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = AlertPriority.ROAD_OBSERVATION,
+                            spokenText = "Mapped speed camera $camDist metres ahead.",
+                            displayText = "Speed camera $camDist m ahead",
+                            dedupKey = "osm_speed_camera",
+                            timestampMillis = System.currentTimeMillis(),
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
+                }
                 weatherRepo.state.value.advisoryMessage?.let { weatherAdv ->
                     val s = uiState.value.settings
                     alertCoordinator.submit(
@@ -364,14 +386,22 @@ class DashboardViewModel @Inject constructor(
     fun onConfirmedSign(observation: TrafficSignObservation) {
         signsDetectedInTrip += 1
         val settings = uiState.value.settings
+        if (!settings.announceAllSigns && observation.category.speedLimitKmh == null) {
+            return
+        }
         val limit = observation.category.speedLimitKmh
         val text = when {
             limit != null && observation.applicableToDriverLane == false ->
                 "Speed limit $limit kilometres per hour observed nearby."
             limit != null ->
                 "Speed limit $limit kilometres per hour observed."
+            !observation.customLabel.isNullOrBlank() ->
+                "Road sign observed: ${observation.customLabel}."
             else ->
                 "${observation.category.displayName} observed."
+        }
+        if (settings.alertChimeEnabled && !settings.alertsMuted && speechSink is AndroidTtsSpeechSink) {
+            speechSink.playChime()
         }
         alertCoordinator.submit(
             alert = AlertMessage(
@@ -379,13 +409,24 @@ class DashboardViewModel @Inject constructor(
                 priority = AlertPriority.ROAD_OBSERVATION,
                 spokenText = text,
                 displayText = text,
-                dedupKey = "sign_${observation.category.name}",
+                dedupKey = "sign_${observation.category.name}_${observation.customLabel.orEmpty()}",
                 timestampMillis = observation.timestampMillis,
             ),
             speechRate = settings.voiceSpeed,
             language = settings.language,
             globalMute = settings.alertsMuted,
         )
+    }
+
+    fun cycleCameraZoom() = viewModelScope.launch {
+        val current = uiState.value.settings.cameraZoomRatio
+        val next = when {
+            current < 1.2f -> 1.3f
+            current < 1.5f -> 1.6f
+            current < 1.9f -> 2.0f
+            else -> 1.0f
+        }
+        prefsRepo.setCameraZoomRatio(next)
     }
 
     fun toggleAlertsMute() = viewModelScope.launch {
@@ -425,7 +466,7 @@ class DashboardViewModel @Inject constructor(
         val fix = locationTracker.state.value.currentFix
         val originLat = fix?.latitude ?: -1.286389
         val originLng = fix?.longitude ?: 36.817223
-        navigationRepo.navigateTo(
+        val ok = navigationRepo.navigateTo(
             originLat = originLat,
             originLng = originLng,
             destName = name,
@@ -433,6 +474,36 @@ class DashboardViewModel @Inject constructor(
             destLng = lng,
             avoidTolls = uiState.value.settings.avoidTolls,
         )
+        if (ok) {
+            prefsRepo.setCameraPrimaryLayout(false)
+            val nav = navigationRepo.state.value
+            val active = nav.activeRoute
+            if (active != null) {
+                val mins = (active.durationSeconds / 60).coerceAtLeast(1)
+                val km = "%.1f".format(active.distanceMeters / 1000.0)
+                val alt = nav.alternativeRoutes.firstOrNull()
+                val comparison = if (alt != null && alt.durationSeconds > active.durationSeconds) {
+                    val savedMin = ((alt.durationSeconds - active.durationSeconds) / 60).coerceAtLeast(1)
+                    " Selected this route as it is $savedMin minutes faster than the alternative with heavier traffic."
+                } else {
+                    ""
+                }
+                val s = uiState.value.settings
+                alertCoordinator.submit(
+                    alert = AlertMessage(
+                        id = UUID.randomUUID().toString(),
+                        priority = AlertPriority.NAVIGATION_INSTRUCTION,
+                        spokenText = "Route to $name ready: $mins minutes, $km kilometres via ${active.summary}.$comparison",
+                        displayText = "$name: $mins min ($km km) via ${active.summary}",
+                        dedupKey = "nav_route_$name",
+                        timestampMillis = System.currentTimeMillis(),
+                    ),
+                    speechRate = s.voiceSpeed,
+                    language = s.language,
+                    globalMute = s.alertsMuted,
+                )
+            }
+        }
     }
 
     fun analysisIntervalFor(quality: DetectionQuality): Long = when (quality) {

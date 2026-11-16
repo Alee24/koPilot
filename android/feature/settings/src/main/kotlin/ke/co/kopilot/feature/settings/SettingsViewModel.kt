@@ -13,6 +13,8 @@ import ke.co.kopilot.core.database.preferences.PreferencesRepository
 import ke.co.kopilot.core.database.preferences.ResponseLength
 import ke.co.kopilot.core.network.api.KoPilotApiService
 import ke.co.kopilot.core.security.SecureTokenStore
+import ke.co.kopilot.feature.alerts.AndroidTtsSpeechSink
+import ke.co.kopilot.feature.alerts.SpeechSink
 import ke.co.kopilot.feature.diagnostics.ObdBluetoothManager
 import ke.co.kopilot.feature.diagnostics.PairedBluetoothDevice
 import ke.co.kopilot.feature.trips.TripRepository
@@ -43,6 +45,7 @@ class SettingsViewModel @Inject constructor(
     private val apiService: KoPilotApiService,
     private val tokenStore: SecureTokenStore,
     private val okHttpClient: OkHttpClient,
+    private val speechSink: SpeechSink,
 ) : ViewModel() {
 
     private val _backendUrl = MutableStateFlow(tokenStore.getBackendBaseUrl())
@@ -78,11 +81,29 @@ class SettingsViewModel @Inject constructor(
     fun setVoiceSpeed(speed: Float) = viewModelScope.launch { prefsRepo.setVoiceSpeed(speed) }
     fun setSpeedThreshold(kmh: Int) = viewModelScope.launch { prefsRepo.setSpeedAlertThresholdKmh(kmh) }
     fun setDetectionQuality(q: DetectionQuality) = viewModelScope.launch { prefsRepo.setDetectionQuality(q) }
+    fun setCameraZoomRatio(zoom: Float) = viewModelScope.launch { prefsRepo.setCameraZoomRatio(zoom) }
     fun setHazardAdvisories(enabled: Boolean) = viewModelScope.launch { prefsRepo.setHazardAdvisoriesEnabled(enabled) }
+    fun setAnnounceAllSigns(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAnnounceAllSigns(enabled) }
     fun setAvoidTolls(avoid: Boolean) = viewModelScope.launch { prefsRepo.setAvoidTolls(avoid) }
     fun setTrafficAlerts(enabled: Boolean) = viewModelScope.launch { prefsRepo.setTrafficAlertsEnabled(enabled) }
     fun setNavVoice(enabled: Boolean) = viewModelScope.launch { prefsRepo.setNavVoiceGuidanceEnabled(enabled) }
+    fun setAiVoiceName(voice: String) = viewModelScope.launch { prefsRepo.setAiVoiceName(voice) }
+    fun setAlertChimeEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertChimeEnabled(enabled) }
+    fun setVoiceVolume(vol: Float) = viewModelScope.launch { prefsRepo.setVoiceVolume(vol) }
     fun setMicMode(mode: MicMode) = viewModelScope.launch { prefsRepo.setMicMode(mode) }
+
+    fun testVoiceSound() {
+        val s = settings.value
+        if (s.alertChimeEnabled && speechSink is AndroidTtsSpeechSink) {
+            speechSink.playChime()
+        }
+        speechSink.speak(
+            text = "KoPilot voice and alert sound check. Speed limit 50 kilometres per hour observed.",
+            flushQueue = true,
+            speechRate = s.voiceSpeed,
+            languageTag = s.language,
+        )
+    }
     fun setResponseLength(len: ResponseLength) = viewModelScope.launch { prefsRepo.setResponseLength(len) }
     fun setTripHistory(enabled: Boolean) = viewModelScope.launch { prefsRepo.setTripHistoryEnabled(enabled) }
     fun setTelemetryOptIn(optIn: Boolean) = viewModelScope.launch { prefsRepo.setTelemetryOptIn(optIn) }
@@ -146,7 +167,16 @@ class SettingsViewModel @Inject constructor(
                         .post(body.toRequestBody("application/json".toMediaType()))
                         .build()
                     okHttpClient.newCall(req).execute().use { r ->
-                        if (r.isSuccessful) "OpenAI: OK" else "OpenAI: HTTP ${r.code}"
+                        if (r.isSuccessful) {
+                            "OpenAI: OK"
+                        } else {
+                            val errBody = r.body?.string().orEmpty()
+                            when (r.code) {
+                                429 -> "OpenAI: Quota/Rate Limit (429)"
+                                401 -> "OpenAI: Invalid Key (401)"
+                                else -> "OpenAI: HTTP ${r.code} (${errBody.take(60)})"
+                            }
+                        }
                     }
                 }.getOrElse { "OpenAI: ${it.localizedMessage ?: "error"}" }
             }

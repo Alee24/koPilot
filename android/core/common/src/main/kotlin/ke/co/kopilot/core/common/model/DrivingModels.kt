@@ -44,6 +44,7 @@ enum class TrafficSignCategory(val displayName: String, val speedLimitKmh: Int? 
     HOSPITAL_ZONE("Hospital Zone"),
     BLACKSPOT("Accident Blackspot"),
     POLICE_CHECKPOINT("Police Checkpoint Ahead"),
+    GENERAL_WARNING("Road Sign"),
 }
 
 data class TrafficSignObservation(
@@ -54,6 +55,7 @@ data class TrafficSignObservation(
     val applicableToDriverLane: Boolean?,
     val timestampMillis: Long,
     val modelVersion: String,
+    val customLabel: String? = null,
 )
 
 enum class HazardCategory(val displayName: String) {

@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.ToneGenerator
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -54,6 +55,13 @@ class AndroidTtsSpeechSink @Inject constructor(
                     }
                 })
             }
+        }
+    }
+
+    fun playChime() {
+        runCatching {
+            val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 75)
+            tg.startTone(ToneGenerator.TONE_PROP_BEEP, 140)
         }
     }
 
