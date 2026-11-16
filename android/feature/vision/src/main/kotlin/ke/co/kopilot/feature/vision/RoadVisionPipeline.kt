@@ -36,6 +36,7 @@ data class VisionPipelineState(
     val modelVersion: String = "mlkit-offline-1.0",
     val validationStatus: String = "On-Device Offline",
     val lastObservation: TrafficSignObservation? = null,
+    val lastSpeedLimitKmh: Int? = null,
     val trackedObjects: List<TrackedRoadObject> = emptyList(),
     val lastInferenceLatencyMs: Long = 0L,
     val statusMessage: String = "Initializing offline vision...",
@@ -144,10 +145,12 @@ class RoadVisionPipeline @Inject constructor(
             )
 
             val latencyMs = (System.nanoTime() - startNs) / 1_000_000L
+            val nextSpeedLimit = confirmed?.category?.speedLimitKmh ?: _state.value.lastSpeedLimitKmh
             _state.value = _state.value.copy(
                 trackedObjects = tracked,
                 lastInferenceLatencyMs = latencyMs,
                 lastObservation = confirmed ?: _state.value.lastObservation,
+                lastSpeedLimitKmh = nextSpeedLimit,
                 statusMessage = "Tracking ${tracked.size} object(s) • Offline",
             )
 

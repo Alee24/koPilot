@@ -26,8 +26,10 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import javax.inject.Inject
 
 @HiltViewModel
@@ -125,6 +127,49 @@ class SettingsViewModel @Inject constructor(
             }
         }
         _statusBanner.value = resultMsg
+    }
+
+    fun testEnteredApiKeys(openAiKeyInput: String, googleKeyInput: String) = viewModelScope.launch {
+        saveApiConfiguration(_backendUrl.value, openAiKeyInput, googleKeyInput)
+        _statusBanner.value = "Testing OpenAI and Google API keys..."
+        val openAi = openAiKeyInput.trim()
+        val google = googleKeyInput.trim()
+        val msg = withContext(Dispatchers.IO) {
+            val openAiStatus = if (openAi.isBlank()) {
+                "OpenAI: not entered"
+            } else {
+                runCatching {
+                    val body = """{"expires_after":{"anchor":"created_at","seconds":60},"session":{"type":"realtime","model":"gpt-realtime"}}"""
+                    val req = Request.Builder()
+                        .url("https://api.openai.com/v1/realtime/client_secrets")
+                        .addHeader("Authorization", "Bearer $openAi")
+                        .post(body.toRequestBody("application/json".toMediaType()))
+                        .build()
+                    okHttpClient.newCall(req).execute().use { r ->
+                        if (r.isSuccessful) "OpenAI: OK" else "OpenAI: HTTP ${r.code}"
+                    }
+                }.getOrElse { "OpenAI: ${it.localizedMessage ?: "error"}" }
+            }
+
+            val googleStatus = if (google.isBlank()) {
+                "Google: not entered"
+            } else {
+                runCatching {
+                    val body = """{"textQuery":"Nairobi","regionCode":"KE","maxResultCount":1}"""
+                    val req = Request.Builder()
+                        .url("https://places.googleapis.com/v1/places:searchText")
+                        .addHeader("X-Goog-Api-Key", google)
+                        .addHeader("X-Goog-FieldMask", "places.id")
+                        .post(body.toRequestBody("application/json".toMediaType()))
+                        .build()
+                    okHttpClient.newCall(req).execute().use { r ->
+                        if (r.isSuccessful) "Google Places/Routes: OK" else "Google: HTTP ${r.code}"
+                    }
+                }.getOrElse { "Google: ${it.localizedMessage ?: "error"}" }
+            }
+            "$openAiStatus • $googleStatus"
+        }
+        _statusBanner.value = msg
     }
 
     fun saveVehicleProfile(profile: VehicleProfile) = viewModelScope.launch {

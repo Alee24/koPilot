@@ -59,8 +59,14 @@ class AndroidTtsSpeechSink @Inject constructor(
 
     override fun speak(text: String, flushQueue: Boolean, speechRate: Float, languageTag: String) {
         if (!ready) return
-        val locale = if (languageTag == "sw") Locale("sw", "KE") else Locale("en", "KE")
-        tts?.language = locale
+        val preferred = if (languageTag == "sw") Locale("sw", "KE") else Locale("en", "KE")
+        val langResult = tts?.setLanguage(preferred)
+        if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+            val fallback = tts?.setLanguage(Locale.US)
+            if (fallback == TextToSpeech.LANG_MISSING_DATA || fallback == TextToSpeech.LANG_NOT_SUPPORTED) {
+                tts?.setLanguage(Locale.getDefault())
+            }
+        }
         tts?.setSpeechRate(speechRate)
         audioManager.requestAudioFocus(focusRequest)
         val mode = if (flushQueue) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD

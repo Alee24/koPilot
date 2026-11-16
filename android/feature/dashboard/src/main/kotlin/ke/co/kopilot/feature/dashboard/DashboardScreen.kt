@@ -681,7 +681,7 @@ private fun SpeedCockpitRow(
             }
         }
 
-        // Right: Speed Limit Sign card
+        // Right: Speed Limit Sign card (populates from last recognized speed limit sign)
         Surface(
             modifier = Modifier.width(86.dp),
             shape = RoundedCornerShape(14.dp),
@@ -692,7 +692,8 @@ private fun SpeedCockpitRow(
                 modifier = Modifier.padding(10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                val limit = state.speedEvaluation.applicableSpeedLimitKmh
+                val limit = state.visionState.lastSpeedLimitKmh
+                    ?: state.speedEvaluation.applicableSpeedLimitKmh
                 Surface(
                     modifier = Modifier.size(48.dp),
                     shape = CircleShape,
@@ -709,7 +710,13 @@ private fun SpeedCockpitRow(
                     }
                 }
                 Spacer(Modifier.height(6.dp))
-                Text("Speed Limit", color = Color(0xFF8C9EB2), fontSize = 11.sp)
+                Text(
+                    text = state.visionState.lastObservation?.category?.displayName ?: "Speed Limit",
+                    color = Color(0xFF8C9EB2),
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

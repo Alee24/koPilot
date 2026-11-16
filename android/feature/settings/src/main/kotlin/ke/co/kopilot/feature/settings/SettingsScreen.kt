@@ -149,12 +149,16 @@ fun SettingsScreen(
                     ) {
                         Text("Save Keys")
                     }
+                    OutlinedButton(onClick = { viewModel.testEnteredApiKeys(openAiKeyInput, googleKeyInput) }) {
+                        Text("Test Keys")
+                    }
                     OutlinedButton(onClick = { viewModel.testBackendConnection(backendUrlInput) }) {
-                        Text("Test Backend")
+                        Text("Test Server")
                     }
-                    OutlinedButton(onClick = viewModel::clearApiCredentials) {
-                        Text("Clear")
-                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(onClick = viewModel::clearApiCredentials) {
+                    Text("Clear Saved Keys")
                 }
             }
 
