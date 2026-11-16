@@ -174,15 +174,54 @@ class DashboardViewModel @Inject constructor(
                     speedSampleCount += 1
                 }
                 weatherRepo.refreshWeather(fix.latitude, fix.longitude)
+                weatherRepo.state.value.advisoryMessage?.let { weatherAdv ->
+                    val s = uiState.value.settings
+                    alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = AlertPriority.WEATHER_NOTIFICATION,
+                            spokenText = weatherAdv,
+                            displayText = weatherAdv,
+                            dedupKey = "weather_$weatherAdv",
+                            timestampMillis = System.currentTimeMillis(),
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
+                }
+
                 val speedEval = speedAlertEngine.evaluate(
                     fix = fix,
                     latestSign = visionPipeline.state.value.lastObservation,
                     thresholdKmh = uiState.value.settings.speedAlertThresholdKmh,
                 )
+                if (speedEval.decision == SpeedAlertDecision.POSSIBLE_OVERSPEED_WARNING &&
+                    speedEval.applicableSpeedLimitKmh != null
+                ) {
+                    val s = uiState.value.settings
+                    val limit = speedEval.applicableSpeedLimitKmh!!
+                    val msg = "You are exceeding the observed $limit kilometres per hour speed limit. Please slow down."
+                    alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = AlertPriority.ROAD_OBSERVATION,
+                            spokenText = msg,
+                            displayText = "Overspeed: Observed $limit km/h limit",
+                            dedupKey = "overspeed_limit_$limit",
+                            timestampMillis = System.currentTimeMillis(),
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
+                }
+
+                val isMoving = (fix.speedKmh ?: 0f) >= 5f
                 val zoneEval = speedZoneMonitor.evaluate(
                     fix = fix,
                     signalState = speedEval.signalState,
-                    isDrivingActive = isDriving.value,
+                    isDrivingActive = isDriving.value || isMoving,
                 )
                 currentSpeedZone.value = zoneEval.zone
                 val spoken = zoneEval.zone.spokenAlert
@@ -214,6 +253,10 @@ class DashboardViewModel @Inject constructor(
         cameraController.setPermissionGranted(cameraGranted)
         locationTracker.setPermissionGranted(locationGranted)
         voiceClient.setMicPermissionGranted(micGranted)
+        if (locationGranted) {
+            locationTracker.startTracking(highAccuracy = true)
+            sensorManagerRepo.startMonitoring(SensorSamplingProfile.DRIVING)
+        }
     }
 
     fun acceptSafetyDisclosure() = viewModelScope.launch {
@@ -269,10 +312,14 @@ class DashboardViewModel @Inject constructor(
     fun onConfirmedSign(observation: TrafficSignObservation) {
         signsDetectedInTrip += 1
         val settings = uiState.value.settings
-        val text = if (observation.applicableToDriverLane == false) {
-            "${observation.category.displayName} observed nearby."
-        } else {
-            "${observation.category.displayName} observed."
+        val limit = observation.category.speedLimitKmh
+        val text = when {
+            limit != null && observation.applicableToDriverLane == false ->
+                "Speed limit $limit kilometres per hour observed nearby."
+            limit != null ->
+                "Speed limit $limit kilometres per hour observed."
+            else ->
+                "${observation.category.displayName} observed."
         }
         alertCoordinator.submit(
             alert = AlertMessage(

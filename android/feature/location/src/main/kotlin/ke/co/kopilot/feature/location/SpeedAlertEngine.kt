@@ -137,7 +137,7 @@ class SpeedAlertEngine @Inject constructor() {
         const val STALE_FIX_MS = 6_000L
         const val SIGN_VALIDITY_MS = 180_000L
         const val MIN_SIGN_CONFIDENCE = 0.72f
-        const val MIN_CONSECUTIVE_FRAMES = 3
+        const val MIN_CONSECUTIVE_FRAMES = 2
         const val MAX_HORIZONTAL_ACCURACY_M = 35f
         const val MAX_SPEED_UNCERTAINTY_KMH = 12f
         const val HYSTERESIS_KMH = 4f

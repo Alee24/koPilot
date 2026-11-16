@@ -186,6 +186,22 @@ fun DashboardScreen(
                 ) {
                     SpeedCockpitRow(state = state, onOpenSensors = onOpenSensors)
                 SpeedZoneBanner(state.speedZone)
+                state.alertState.activeAlert?.let { alert ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF102A30),
+                        border = BorderStroke(1.dp, MintTeal.copy(alpha = 0.6f)),
+                    ) {
+                        Text(
+                            text = "Alert: ${alert.displayText}",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        )
+                    }
+                }
                     QuickInfoCardsRow(
                         state = state,
                         onOpenDestination = { showDestinationDialog = true },
@@ -226,6 +242,22 @@ fun DashboardScreen(
                 }
                 SpeedCockpitRow(state = state, onOpenSensors = onOpenSensors)
                 SpeedZoneBanner(state.speedZone)
+                state.alertState.activeAlert?.let { alert ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF102A30),
+                        border = BorderStroke(1.dp, MintTeal.copy(alpha = 0.6f)),
+                    ) {
+                        Text(
+                            text = "Alert: ${alert.displayText}",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        )
+                    }
+                }
                 VoiceAssistantBar(
                     state = state,
                     onToggleVoice = viewModel::toggleVoiceConnection,

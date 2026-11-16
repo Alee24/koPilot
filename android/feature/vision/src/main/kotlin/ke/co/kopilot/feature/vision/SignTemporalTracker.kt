@@ -17,6 +17,7 @@ class SignTemporalTracker @Inject constructor() {
 
     private var candidateCategory: TrafficSignCategory? = null
     private var consecutiveHits = 0
+    private var missedFrames = 0
     private var maxConfidence = 0f
     private val lastAnnouncedMs = mutableMapOf<TrafficSignCategory, Long>()
 
@@ -30,12 +31,16 @@ class SignTemporalTracker @Inject constructor() {
             .maxByOrNull { it.confidence }
 
         if (best == null) {
-            consecutiveHits = 0
-            candidateCategory = null
-            maxConfidence = 0f
+            missedFrames += 1
+            if (missedFrames > 1) {
+                consecutiveHits = 0
+                candidateCategory = null
+                maxConfidence = 0f
+            }
             return null
         }
 
+        missedFrames = 0
         if (best.category == candidateCategory) {
             consecutiveHits += 1
             maxConfidence = maxOf(maxConfidence, best.confidence)
@@ -73,13 +78,14 @@ class SignTemporalTracker @Inject constructor() {
     fun reset() {
         candidateCategory = null
         consecutiveHits = 0
+        missedFrames = 0
         maxConfidence = 0f
         lastAnnouncedMs.clear()
     }
 
     companion object {
         const val MIN_CONFIDENCE = 0.72f
-        const val REQUIRED_CONSECUTIVE_FRAMES = 3
+        const val REQUIRED_CONSECUTIVE_FRAMES = 2
         const val DUPLICATE_SUPPRESSION_MS = 20_000L
     }
 }

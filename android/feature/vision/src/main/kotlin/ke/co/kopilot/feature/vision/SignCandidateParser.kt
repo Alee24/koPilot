@@ -16,25 +16,41 @@ object SignCandidateParser {
         if (cleaned.isEmpty()) return null
 
         val categoryAndConfidence: Pair<TrafficSignCategory, Float>? = when {
-            cleaned == "STOP" || cleaned.contains(" STOP") ->
-                TrafficSignCategory.STOP to if (hasSignBorderColor) 0.90f else 0.78f
+            cleaned == "STOP" || Regex("\\bSTOP\\b").containsMatchIn(cleaned) ->
+                TrafficSignCategory.STOP to if (hasSignBorderColor) 0.92f else 0.80f
             cleaned.contains("GIVE WAY") || cleaned.contains("YIELD") ->
-                TrafficSignCategory.GIVE_WAY to 0.85f
+                TrafficSignCategory.GIVE_WAY to 0.86f
             cleaned.contains("NO ENTRY") ->
-                TrafficSignCategory.NO_ENTRY to 0.85f
-            cleaned.contains("SCHOOL") ->
-                TrafficSignCategory.SCHOOL_ZONE to 0.82f
-            cleaned.contains("BUMP") || cleaned.contains("HUMP") ->
-                TrafficSignCategory.SPEED_BUMP to 0.82f
-            cleaned.contains("ROADWORK") || cleaned.contains("MEN AT WORK") ->
-                TrafficSignCategory.ROADWORKS to 0.82f
-            cleaned.contains("PEDESTRIAN") || cleaned.contains("CROSSING") ->
-                TrafficSignCategory.PEDESTRIAN_CROSSING to 0.80f
-            cleaned.contains("NO OVERTAKING") ->
-                TrafficSignCategory.NO_OVERTAKING to 0.82f
+                TrafficSignCategory.NO_ENTRY to 0.86f
+            cleaned.contains("SCHOOL") || cleaned.contains("CHILDREN") ->
+                TrafficSignCategory.SCHOOL_ZONE to 0.84f
+            cleaned.contains("BUMP") || cleaned.contains("HUMP") || cleaned.contains("RUMBLE") ->
+                TrafficSignCategory.SPEED_BUMP to 0.84f
+            cleaned.contains("ROADWORK") || cleaned.contains("MEN AT WORK") || cleaned.contains("CONSTRUCTION") ->
+                TrafficSignCategory.ROADWORKS to 0.84f
+            cleaned.contains("PEDESTRIAN") || cleaned.contains("CROSSING") || cleaned.contains("ZEBRA") ->
+                TrafficSignCategory.PEDESTRIAN_CROSSING to 0.82f
+            cleaned.contains("NO OVERTAKING") || cleaned.contains("NO PASSING") ->
+                TrafficSignCategory.NO_OVERTAKING to 0.84f
+            cleaned.contains("BEND") || cleaned.contains("CURVE") ->
+                TrafficSignCategory.DANGEROUS_BEND to 0.82f
+            cleaned.contains("ROUNDABOUT") ->
+                TrafficSignCategory.ROUNDABOUT to 0.82f
+            cleaned.contains("RAILWAY") || cleaned.contains("LEVEL CROSSING") ->
+                TrafficSignCategory.RAILWAY_CROSSING to 0.84f
+            cleaned.contains("HOSPITAL") ->
+                TrafficSignCategory.HOSPITAL_ZONE to 0.82f
+            cleaned.contains("BLACKSPOT") || cleaned.contains("BLACK SPOT") ->
+                TrafficSignCategory.BLACKSPOT to 0.85f
+            cleaned.contains("POLICE") || cleaned.contains("CHECKPOINT") ->
+                TrafficSignCategory.POLICE_CHECKPOINT to 0.82f
             else -> {
-                // Speed limits require red/yellow sign border color around the number to avoid false positives
-                if (!hasSignBorderColor) return null
+                val explicitSpeedText = cleaned.contains("KM") ||
+                    cleaned.contains("KPH") ||
+                    cleaned.contains("SPEED") ||
+                    cleaned.contains("LIMIT") ||
+                    cleaned.contains("MAX")
+                if (!hasSignBorderColor && !explicitSpeedText) return null
                 when {
                     Regex("\\b30\\b").containsMatchIn(cleaned) -> TrafficSignCategory.SPEED_LIMIT_30 to 0.86f
                     Regex("\\b50\\b").containsMatchIn(cleaned) -> TrafficSignCategory.SPEED_LIMIT_50 to 0.88f

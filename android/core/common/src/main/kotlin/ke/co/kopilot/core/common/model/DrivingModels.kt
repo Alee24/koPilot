@@ -39,6 +39,11 @@ enum class TrafficSignCategory(val displayName: String, val speedLimitKmh: Int? 
     DANGEROUS_BEND("Dangerous Bend"),
     SPEED_BUMP("Speed Bump Ahead"),
     NO_OVERTAKING("No Overtaking"),
+    ROUNDABOUT("Roundabout Ahead"),
+    RAILWAY_CROSSING("Railway Crossing"),
+    HOSPITAL_ZONE("Hospital Zone"),
+    BLACKSPOT("Accident Blackspot"),
+    POLICE_CHECKPOINT("Police Checkpoint Ahead"),
 }
 
 data class TrafficSignObservation(
