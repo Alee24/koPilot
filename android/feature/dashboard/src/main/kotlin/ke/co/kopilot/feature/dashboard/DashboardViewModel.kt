@@ -23,6 +23,8 @@ import ke.co.kopilot.feature.location.LocationTracker
 import ke.co.kopilot.feature.location.LocationTrackingState
 import ke.co.kopilot.feature.location.SpeedAlertEngine
 import ke.co.kopilot.feature.location.SpeedEvaluation
+import ke.co.kopilot.feature.location.SpeedZone
+import ke.co.kopilot.feature.location.SpeedZoneMonitor
 import ke.co.kopilot.feature.navigation.NavigationRepository
 import ke.co.kopilot.feature.navigation.NavigationUiState
 import ke.co.kopilot.feature.traffic.TrafficAdvisor
@@ -65,6 +67,7 @@ data class DashboardUiState(
     val alertState: AlertCoordinatorState = AlertCoordinatorState(),
     val diagnosticsState: VehicleDiagnosticsState = VehicleDiagnosticsState(),
     val savedTrips: List<TripEntity> = emptyList(),
+    val speedZone: SpeedZone = SpeedZone.NORMAL,
 )
 
 @HiltViewModel
@@ -74,6 +77,7 @@ class DashboardViewModel @Inject constructor(
     val visionPipeline: RoadVisionPipeline,
     private val locationTracker: LocationTracker,
     private val speedAlertEngine: SpeedAlertEngine,
+    private val speedZoneMonitor: SpeedZoneMonitor,
     private val navigationRepo: NavigationRepository,
     private val trafficAdvisor: TrafficAdvisor,
     private val weatherRepo: WeatherRepository,
@@ -86,6 +90,7 @@ class DashboardViewModel @Inject constructor(
 
     private val isDriving = MutableStateFlow(false)
     private val tripStartedAt = MutableStateFlow<Long?>(null)
+    private val currentSpeedZone = MutableStateFlow(SpeedZone.NORMAL)
     private var maxSpeedObservedKmh = 0f
     private var speedSampleSum = 0f
     private var speedSampleCount = 0
@@ -143,6 +148,7 @@ class DashboardViewModel @Inject constructor(
             alertState = alerts,
             diagnosticsState = obd,
             savedTrips = trips,
+            speedZone = currentSpeedZone.value,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -162,6 +168,38 @@ class DashboardViewModel @Inject constructor(
                     speedSampleCount += 1
                 }
                 weatherRepo.refreshWeather(fix.latitude, fix.longitude)
+                val speedEval = speedAlertEngine.evaluate(
+                    fix = fix,
+                    latestSign = visionPipeline.state.value.lastObservation,
+                    thresholdKmh = uiState.value.settings.speedAlertThresholdKmh,
+                )
+                val zoneEval = speedZoneMonitor.evaluate(
+                    fix = fix,
+                    signalState = speedEval.signalState,
+                    isDrivingActive = isDriving.value,
+                )
+                currentSpeedZone.value = zoneEval.zone
+                val spoken = zoneEval.zone.spokenAlert
+                if (zoneEval.shouldNotify && spoken != null) {
+                    val s = uiState.value.settings
+                    alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = if (zoneEval.zone == SpeedZone.DANGEROUS_DRIVING || zoneEval.zone == SpeedZone.REDUCE_SPEED) {
+                                AlertPriority.ROAD_OBSERVATION
+                            } else {
+                                AlertPriority.TRAFFIC_UPDATE
+                            },
+                            spokenText = spoken,
+                            displayText = zoneEval.zone.displayBanner ?: spoken,
+                            dedupKey = "speed_zone_${zoneEval.zone.name}",
+                            timestampMillis = System.currentTimeMillis(),
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
+                }
             }
         }
     }
@@ -200,6 +238,8 @@ class DashboardViewModel @Inject constructor(
         locationTracker.stopTracking()
         voiceClient.disconnect()
         speedAlertEngine.reset()
+        speedZoneMonitor.reset()
+        currentSpeedZone.value = SpeedZone.NORMAL
 
         if (started != null && uiState.value.settings.tripHistoryEnabled) {
             viewModelScope.launch {

@@ -1,6 +1,7 @@
 package ke.co.kopilot.feature.dashboard
 
 import android.content.res.Configuration
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -79,6 +80,7 @@ import ke.co.kopilot.core.common.model.SpeedAlertDecision
 import ke.co.kopilot.core.database.entity.TripEntity
 import ke.co.kopilot.core.designsystem.theme.KoPilotColors
 import ke.co.kopilot.feature.camera.RoadCameraPreview
+import ke.co.kopilot.feature.location.SpeedZone
 import ke.co.kopilot.feature.navigation.KoPilotNavigationMap
 import ke.co.kopilot.feature.voice.VoiceConnectionState
 import java.text.SimpleDateFormat
@@ -141,7 +143,17 @@ fun DashboardScreen(
         )
     }
 
-    Scaffold(containerColor = CockpitDarkBg) { padding ->
+    val screenBgColor by animateColorAsState(
+        targetValue = when (state.speedZone) {
+            SpeedZone.OPTIMAL_CRUISE -> Color(0xFF0A244D)
+            SpeedZone.REDUCE_SPEED -> Color(0xFF3E0B14)
+            SpeedZone.DANGEROUS_DRIVING -> Color(0xFF5A0812)
+            else -> CockpitDarkBg
+        },
+        label = "speedZoneBg",
+    )
+
+    Scaffold(containerColor = screenBgColor) { padding ->
         if (isLandscape) {
             Row(
                 modifier = Modifier
@@ -172,6 +184,7 @@ fun DashboardScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     SpeedCockpitRow(state = state)
+                SpeedZoneBanner(state.speedZone)
                     QuickInfoCardsRow(
                         state = state,
                         onOpenDestination = { showDestinationDialog = true },
@@ -211,6 +224,7 @@ fun DashboardScreen(
                     ViewportCard(state = state, viewModel = viewModel)
                 }
                 SpeedCockpitRow(state = state)
+                SpeedZoneBanner(state.speedZone)
                 VoiceAssistantBar(
                     state = state,
                     onToggleVoice = viewModel::toggleVoiceConnection,
@@ -447,11 +461,43 @@ private fun ViewportCard(
 }
 
 @Composable
+private fun SpeedZoneBanner(zone: SpeedZone) {
+    val bannerText = zone.displayBanner ?: return
+    val (bgColor, borderColor, textColor) = when (zone) {
+        SpeedZone.OPTIMAL_CRUISE -> Triple(Color(0xFF10346B), NavBlue, Color.White)
+        SpeedZone.REDUCE_SPEED, SpeedZone.DANGEROUS_DRIVING -> Triple(Color(0xFF61101C), KoPilotColors.DangerRed, Color.White)
+        SpeedZone.ENCOURAGE_PACE -> Triple(Color(0xFF2B220E), KoPilotColors.WarningAmber, KoPilotColors.WarningAmber)
+        SpeedZone.NORMAL -> return
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = bgColor,
+        border = BorderStroke(1.dp, borderColor),
+    ) {
+        Text(
+            text = bannerText,
+            color = textColor,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+        )
+    }
+}
+
+@Composable
 private fun SpeedCockpitRow(state: DashboardUiState) {
     val speedKmh = state.speedEvaluation.currentSpeedKmh
     val speedText = speedKmh?.let { "%.0f".format(it) } ?: "--"
-    val isOverspeed = state.speedEvaluation.decision == SpeedAlertDecision.POSSIBLE_OVERSPEED_WARNING
-    val arcColor = if (isOverspeed) KoPilotColors.DangerRed else MintTeal
+    val isOverspeed = state.speedEvaluation.decision == SpeedAlertDecision.POSSIBLE_OVERSPEED_WARNING ||
+        state.speedZone == SpeedZone.REDUCE_SPEED ||
+        state.speedZone == SpeedZone.DANGEROUS_DRIVING
+    val arcColor = when {
+        isOverspeed -> KoPilotColors.DangerRed
+        state.speedZone == SpeedZone.OPTIMAL_CRUISE -> NavBlue
+        state.speedZone == SpeedZone.ENCOURAGE_PACE -> KoPilotColors.WarningAmber
+        else -> MintTeal
+    }
     val progress = ((speedKmh ?: 0f) / 140f).coerceIn(0f, 1f)
 
     Row(

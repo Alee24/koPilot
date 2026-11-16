@@ -59,4 +59,23 @@ class SpeedAlertEngineTest {
         val second = engine.evaluate(fastFix.copy(timestampMillis = now + 2_000L), sign, thresholdKmh = 5, nowMillis = now + 2_000L)
         assertEquals(SpeedAlertDecision.NO_ALERT, second.decision)
     }
+
+    @Test
+    fun `speed zone monitor classifies 60-80, 80-110, above 110, and above 120`() {
+        val monitor = SpeedZoneMonitor()
+        val baseTime = 500_000L
+        fun fixForKmh(kmh: Float, t: Long) = GpsFix(-1.29, 36.82, kmh / 3.6f, 0.5f, 5f, 90f, t)
+
+        val z65 = monitor.evaluate(fixForKmh(65f, baseTime), GpsSignalState.GOOD, true, baseTime)
+        assertEquals(SpeedZone.ENCOURAGE_PACE, z65.zone)
+
+        val z95 = monitor.evaluate(fixForKmh(95f, baseTime + 10_000L), GpsSignalState.GOOD, true, baseTime + 10_000L)
+        assertEquals(SpeedZone.OPTIMAL_CRUISE, z95.zone)
+
+        val z115 = monitor.evaluate(fixForKmh(115f, baseTime + 20_000L), GpsSignalState.GOOD, true, baseTime + 20_000L)
+        assertEquals(SpeedZone.REDUCE_SPEED, z115.zone)
+
+        val z125 = monitor.evaluate(fixForKmh(125f, baseTime + 30_000L), GpsSignalState.GOOD, true, baseTime + 30_000L)
+        assertEquals(SpeedZone.DANGEROUS_DRIVING, z125.zone)
+    }
 }
