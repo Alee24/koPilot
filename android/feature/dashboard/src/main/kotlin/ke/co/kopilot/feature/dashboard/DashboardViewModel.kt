@@ -187,20 +187,47 @@ class DashboardViewModel @Inject constructor(
                         globalMute = s.alertsMuted,
                     )
                 }
-                if (vision.trafficLightSignal == TrafficLightSignal.RED && moving) {
-                    alertCoordinator.submit(
+                when (vision.trafficLightSignal) {
+                    TrafficLightSignal.RED -> alertCoordinator.submit(
                         alert = AlertMessage(
                             id = UUID.randomUUID().toString(),
                             priority = AlertPriority.ROAD_OBSERVATION,
-                            spokenText = "Red traffic light ahead.",
-                            displayText = "Red traffic light ahead",
-                            dedupKey = "front_red_traffic_light",
+                            spokenText = "Red traffic light ahead. Prepare to stop.",
+                            displayText = "Red Traffic Light Ahead — Stop",
+                            dedupKey = "front_tl_red",
                             timestampMillis = System.currentTimeMillis(),
                         ),
                         speechRate = s.voiceSpeed,
                         language = s.language,
                         globalMute = s.alertsMuted,
                     )
+                    TrafficLightSignal.AMBER -> alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = AlertPriority.ROAD_OBSERVATION,
+                            spokenText = "Amber traffic light ahead. Prepare to stop if safe.",
+                            displayText = "Amber Traffic Light Ahead",
+                            dedupKey = "front_tl_amber",
+                            timestampMillis = System.currentTimeMillis(),
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
+                    TrafficLightSignal.GREEN -> alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = AlertPriority.TRAFFIC_UPDATE,
+                            spokenText = "Green traffic light ahead. Proceed with caution.",
+                            displayText = "Green Traffic Light Ahead",
+                            dedupKey = "front_tl_green",
+                            timestampMillis = System.currentTimeMillis(),
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
+                    TrafficLightSignal.NONE -> Unit
                 }
                 if (vision.isDarkScene && moving) {
                     alertCoordinator.submit(
@@ -389,17 +416,11 @@ class DashboardViewModel @Inject constructor(
         if (!settings.announceAllSigns && observation.category.speedLimitKmh == null) {
             return
         }
-        val limit = observation.category.speedLimitKmh
         val label = observation.customLabel ?: observation.category.displayName
-        val text = when {
-            observation.isUncertain ->
-                "Road sign ahead is unsure. Possible $label. Adjusting camera."
-            limit != null && observation.applicableToDriverLane == false ->
-                "Speed limit $limit kilometres per hour observed nearby."
-            limit != null ->
-                "Speed limit $limit kilometres per hour."
-            else ->
-                "$label sign observed."
+        val text = if (observation.isUncertain) {
+            "Road sign ahead is unsure. Possible $label. Adjusting camera."
+        } else {
+            visionPipeline.signCatalog.getSpokenAdvice(observation.category, observation.customLabel)
         }
         if (settings.alertChimeEnabled && !settings.alertsMuted && speechSink is AndroidTtsSpeechSink) {
             speechSink.playChime()

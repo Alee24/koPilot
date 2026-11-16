@@ -6,6 +6,7 @@ import android.graphics.Color
 enum class TrafficLightSignal {
     NONE,
     RED,
+    AMBER,
     GREEN,
 }
 
@@ -66,6 +67,7 @@ object FrontRoadAnalyzer {
         var brakeRedHits = 0
         var brakeSampled = 0
         var upperRedHits = 0
+        var upperAmberHits = 0
         var upperGreenHits = 0
         var upperSampled = 0
 
@@ -84,6 +86,7 @@ object FrontRoadAnalyzer {
                 lumCount++
 
                 val isBrightRed = r >= 195 && g <= 80 && b <= 80 && (r - g) >= 115
+                val isBrightAmber = r >= 200 && g in 125..210 && b <= 75 && (r - b) >= 120
                 val isBrightGreen = g >= 185 && r <= 105 && b >= 90 && (g - r) >= 75
 
                 // Middle road corridor: potential vehicle brake lights ahead
@@ -92,8 +95,9 @@ object FrontRoadAnalyzer {
                     brakeSampled++
                 }
                 // Upper road corridor: potential traffic signals / streetlights
-                if (normY in 0.06f..0.40f && normX in 0.18f..0.82f) {
+                if (normY in 0.05f..0.44f && normX in 0.15f..0.85f) {
                     if (isBrightRed) upperRedHits++
+                    if (isBrightAmber) upperAmberHits++
                     if (isBrightGreen) upperGreenHits++
                     upperSampled++
                 }
@@ -105,11 +109,13 @@ object FrontRoadAnalyzer {
         val avgLum = if (lumCount > 0) lumSum / lumCount else 128f
         val brakeRatio = if (brakeSampled > 0) brakeRedHits.toFloat() / brakeSampled else 0f
         val upperRedRatio = if (upperSampled > 0) upperRedHits.toFloat() / upperSampled else 0f
+        val upperAmberRatio = if (upperSampled > 0) upperAmberHits.toFloat() / upperSampled else 0f
         val upperGreenRatio = if (upperSampled > 0) upperGreenHits.toFloat() / upperSampled else 0f
 
         val tlSignal = when {
-            upperRedRatio >= 0.012f && upperRedRatio > upperGreenRatio -> TrafficLightSignal.RED
-            upperGreenRatio >= 0.015f && upperGreenRatio > upperRedRatio -> TrafficLightSignal.GREEN
+            upperRedRatio >= 0.010f && upperRedRatio >= upperAmberRatio && upperRedRatio > upperGreenRatio -> TrafficLightSignal.RED
+            upperAmberRatio >= 0.012f && upperAmberRatio > upperRedRatio && upperAmberRatio > upperGreenRatio -> TrafficLightSignal.AMBER
+            upperGreenRatio >= 0.012f && upperGreenRatio > upperRedRatio && upperGreenRatio > upperAmberRatio -> TrafficLightSignal.GREEN
             else -> TrafficLightSignal.NONE
         }
 

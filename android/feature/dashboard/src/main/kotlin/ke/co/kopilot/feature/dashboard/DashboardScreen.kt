@@ -85,6 +85,7 @@ import ke.co.kopilot.core.designsystem.theme.KoPilotColors
 import ke.co.kopilot.feature.camera.RoadCameraPreview
 import ke.co.kopilot.feature.location.SpeedZone
 import ke.co.kopilot.feature.navigation.KoPilotNavigationMap
+import ke.co.kopilot.feature.vision.TrafficLightSignal
 import ke.co.kopilot.feature.voice.VoiceConnectionState
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -422,6 +423,19 @@ private fun ViewportCard(
                                 style = Stroke(width = 2.5.dp.toPx()),
                             )
                         }
+                        // Highlight focused Sign ROI regions
+                        for (roi in state.visionState.signRoiBoxes) {
+                            val left = roi.normalizedLeft * size.width
+                            val top = roi.normalizedTop * size.height
+                            val right = roi.normalizedRight * size.width
+                            val bottom = roi.normalizedBottom * size.height
+                            drawRect(
+                                color = Color.Yellow.copy(alpha = 0.7f),
+                                topLeft = Offset(left, top),
+                                size = Size((right - left).coerceAtLeast(4f), (bottom - top).coerceAtLeast(4f)),
+                                style = Stroke(width = 1.5.dp.toPx()),
+                            )
+                        }
                     }
                     // Visual road sign badge in bottom-right of camera viewport once a sign is recognized
                     state.visionState.lastObservation?.let { obs ->
@@ -674,70 +688,106 @@ private fun SpeedCockpitRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        // Left: GPS card
-        Surface(
-            modifier = Modifier.width(86.dp).clickable(onClick = onOpenSensors),
-            shape = RoundedCornerShape(14.dp),
-            color = CockpitCardBg,
-            border = BorderStroke(1.dp, CockpitCardBorder),
+        // Left column: GPS card + Traffic Light tab right next to Speed/GPS
+        Column(
+            modifier = Modifier.width(86.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Column(
-                modifier = Modifier.padding(10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenSensors),
+                shape = RoundedCornerShape(14.dp),
+                color = CockpitCardBg,
+                border = BorderStroke(1.dp, CockpitCardBorder),
             ) {
-                Icon(
-                    imageVector = Icons.Default.SatelliteAlt,
-                    contentDescription = null,
-                    tint = when (state.speedEvaluation.signalState) {
-                        GpsSignalState.GOOD -> MintTeal
-                        GpsSignalState.UNCERTAIN -> KoPilotColors.WarningAmber
-                        GpsSignalState.UNAVAILABLE -> Color(0xFF6B7C90)
-                    },
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = if (state.locationState.satellitesInView > 0) {
-                        "${state.locationState.satellitesUsedInFix}/${state.locationState.satellitesInView} sats"
-                    } else {
-                        "GPS"
-                    },
-                    color = Color(0xFF8C9EB2),
-                    fontSize = 10.sp,
-                )
-                Text(
-                    text = when (state.speedEvaluation.signalState) {
-                        GpsSignalState.GOOD -> "Strong"
-                        GpsSignalState.UNCERTAIN -> "Weak"
-                        GpsSignalState.UNAVAILABLE -> "Off"
-                    },
-                    color = when (state.speedEvaluation.signalState) {
-                        GpsSignalState.GOOD -> MintTeal
-                        GpsSignalState.UNCERTAIN -> KoPilotColors.WarningAmber
-                        GpsSignalState.UNAVAILABLE -> Color(0xFF8C9EB2)
-                    },
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(4.dp))
-                val activeBars = when (state.speedEvaluation.signalState) {
-                    GpsSignalState.GOOD -> 4
-                    GpsSignalState.UNCERTAIN -> 2
-                    GpsSignalState.UNAVAILABLE -> 0
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    verticalAlignment = Alignment.Bottom,
+                Column(
+                    modifier = Modifier.padding(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    repeat(4) { idx ->
+                    Icon(
+                        imageVector = Icons.Default.SatelliteAlt,
+                        contentDescription = null,
+                        tint = when (state.speedEvaluation.signalState) {
+                            GpsSignalState.GOOD -> MintTeal
+                            GpsSignalState.UNCERTAIN -> KoPilotColors.WarningAmber
+                            GpsSignalState.UNAVAILABLE -> Color(0xFF6B7C90)
+                        },
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        text = if (state.locationState.satellitesInView > 0) {
+                            "${state.locationState.satellitesUsedInFix}/${state.locationState.satellitesInView} sats"
+                        } else {
+                            "GPS"
+                        },
+                        color = Color(0xFF8C9EB2),
+                        fontSize = 10.sp,
+                    )
+                    Text(
+                        text = when (state.speedEvaluation.signalState) {
+                            GpsSignalState.GOOD -> "Strong"
+                            GpsSignalState.UNCERTAIN -> "Weak"
+                            GpsSignalState.UNAVAILABLE -> "Off"
+                        },
+                        color = when (state.speedEvaluation.signalState) {
+                            GpsSignalState.GOOD -> MintTeal
+                            GpsSignalState.UNCERTAIN -> KoPilotColors.WarningAmber
+                            GpsSignalState.UNAVAILABLE -> Color(0xFF8C9EB2)
+                        },
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+
+            // Traffic Light Tab next to GPS & Speedometer
+            val tl = state.visionState.trafficLightSignal
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = CockpitCardBg,
+                border = BorderStroke(
+                    1.dp,
+                    when (tl) {
+                        TrafficLightSignal.RED -> KoPilotColors.DangerRed
+                        TrafficLightSignal.AMBER -> KoPilotColors.WarningAmber
+                        TrafficLightSignal.GREEN -> MintTeal
+                        TrafficLightSignal.NONE -> CockpitCardBorder
+                    },
+                ),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                         Box(
-                            modifier = Modifier
-                                .width(5.dp)
-                                .height((6 + idx * 3).dp)
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(if (idx < activeBars) MintTeal else Color(0xFF283747)),
+                            modifier = Modifier.size(9.dp).clip(CircleShape).background(
+                                if (tl == TrafficLightSignal.RED) KoPilotColors.DangerRed else Color(0xFF3A1A1D),
+                            ),
+                        )
+                        Box(
+                            modifier = Modifier.size(9.dp).clip(CircleShape).background(
+                                if (tl == TrafficLightSignal.AMBER) KoPilotColors.WarningAmber else Color(0xFF3A2F15),
+                            ),
+                        )
+                        Box(
+                            modifier = Modifier.size(9.dp).clip(CircleShape).background(
+                                if (tl == TrafficLightSignal.GREEN) MintTeal else Color(0xFF15382F),
+                            ),
                         )
                     }
+                    Text(
+                        text = when (tl) {
+                            TrafficLightSignal.RED -> "RED"
+                            TrafficLightSignal.AMBER -> "AMBER"
+                            TrafficLightSignal.GREEN -> "GREEN"
+                            TrafficLightSignal.NONE -> "Lights"
+                        },
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
         }

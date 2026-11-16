@@ -1,0 +1,23 @@
+[
+  {"category":"SPEED_LIMIT_30","code":"R1-30","title":"30 km/h Speed Limit","spokenAdvice":"Speed limit 30 kilometres per hour. Keep your speed at or below 30.","shape":"RED_RING_WHITE"},
+  {"category":"SPEED_LIMIT_50","code":"R1-50","title":"50 km/h Speed Limit","spokenAdvice":"Speed limit 50 kilometres per hour. Urban speed limit ahead.","shape":"RED_RING_WHITE"},
+  {"category":"SPEED_LIMIT_60","code":"R1-60","title":"60 km/h Speed Limit","spokenAdvice":"Speed limit 60 kilometres per hour.","shape":"RED_RING_WHITE"},
+  {"category":"SPEED_LIMIT_80","code":"R1-80","title":"80 km/h Speed Limit","spokenAdvice":"Speed limit 80 kilometres per hour.","shape":"RED_RING_WHITE"},
+  {"category":"SPEED_LIMIT_100","code":"R1-100","title":"100 km/h Speed Limit","spokenAdvice":"Speed limit 100 kilometres per hour.","shape":"RED_RING_WHITE"},
+  {"category":"SPEED_LIMIT_110","code":"R1-110","title":"110 km/h Speed Limit","spokenAdvice":"Speed limit 110 kilometres per hour. Highway maximum.","shape":"RED_RING_WHITE"},
+  {"category":"STOP","code":"R2","title":"STOP Sign","spokenAdvice":"Stop sign ahead. Come to a complete stop before the line and proceed only when clear.","shape":"SOLID_RED_OCTAGON"},
+  {"category":"GIVE_WAY","code":"R3","title":"Give Way","spokenAdvice":"Give way sign ahead. Slow down and yield to traffic on the major road.","shape":"RED_TRIANGLE_INV"},
+  {"category":"NO_ENTRY","code":"R4","title":"No Entry","spokenAdvice":"No entry sign ahead. Do not enter this road.","shape":"RED_CIRCLE_BAR"},
+  {"category":"NO_OVERTAKING","code":"R5","title":"No Overtaking","spokenAdvice":"No overtaking zone. Stay in your lane.","shape":"RED_RING_WHITE"},
+  {"category":"PEDESTRIAN_CROSSING","code":"W1","title":"Pedestrian Crossing","spokenAdvice":"Pedestrian crossing ahead. Watch for people crossing the road.","shape":"RED_TRIANGLE"},
+  {"category":"SCHOOL_ZONE","code":"W2","title":"School Zone","spokenAdvice":"School zone ahead. Slow down and watch carefully for children.","shape":"YELLOW_WARNING"},
+  {"category":"ROADWORKS","code":"W3","title":"Roadworks Ahead","spokenAdvice":"Roadworks ahead. Reduce speed and watch for workers or lane closures.","shape":"YELLOW_WARNING"},
+  {"category":"DANGEROUS_BEND","code":"W4","title":"Dangerous Bend","spokenAdvice":"Sharp bend ahead. Slow down before entering the curve.","shape":"RED_TRIANGLE"},
+  {"category":"SPEED_BUMP","code":"W5","title":"Speed Bump Ahead","spokenAdvice":"Speed bump ahead. Slow down smoothly.","shape":"RED_TRIANGLE"},
+  {"category":"ROUNDABOUT","code":"W6","title":"Roundabout Ahead","spokenAdvice":"Roundabout ahead. Slow down and yield to traffic already in the roundabout.","shape":"RED_TRIANGLE"},
+  {"category":"RAILWAY_CROSSING","code":"W7","title":"Railway Crossing","spokenAdvice":"Railway level crossing ahead. Slow down and look both ways before crossing.","shape":"RED_TRIANGLE"},
+  {"category":"HOSPITAL_ZONE","code":"I1","title":"Hospital Zone","spokenAdvice":"Hospital zone ahead. Drive quietly and watch for ambulances and pedestrians.","shape":"BLUE_INFO"},
+  {"category":"BLACKSPOT","code":"W8","title":"Accident Blackspot","spokenAdvice":"Accident blackspot area ahead. Exercise extra caution and maintain safe distance.","shape":"YELLOW_WARNING"},
+  {"category":"POLICE_CHECKPOINT","code":"I2","title":"Police Checkpoint Ahead","spokenAdvice":"Police checkpoint ahead. Prepare to slow down and stop if signaled.","shape":"BLUE_INFO"},
+  {"category":"GENERAL_WARNING","code":"W0","title":"Road Sign","spokenAdvice":"Road sign observed ahead.","shape":"MIXED"}
+]

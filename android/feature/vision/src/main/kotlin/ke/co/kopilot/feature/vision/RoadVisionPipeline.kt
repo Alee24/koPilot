@@ -44,6 +44,7 @@ data class VisionPipelineState(
     val averageLuminance: Float = 128f,
     val recommendedZoomRatio: Float = 1.2f,
     val trackedObjects: List<TrackedRoadObject> = emptyList(),
+    val signRoiBoxes: List<TrackedRoadObject> = emptyList(),
     val lastInferenceLatencyMs: Long = 0L,
     val statusMessage: String = "Initializing offline vision...",
 )
@@ -52,6 +53,7 @@ data class VisionPipelineState(
 class RoadVisionPipeline @Inject constructor(
     @ApplicationContext private val context: Context,
     private val temporalTracker: SignTemporalTracker,
+    val signCatalog: LocalRoadSignCatalog,
 ) {
     private val _state = MutableStateFlow(VisionPipelineState())
     val state: StateFlow<VisionPipelineState> = _state.asStateFlow()
@@ -60,6 +62,8 @@ class RoadVisionPipeline @Inject constructor(
     private var textRecognizer: TextRecognizer? = null
     private var brakeLightStreak = 0
     private var darkStreak = 0
+    private var lastTrafficSignal: TrafficLightSignal = TrafficLightSignal.NONE
+    private var trafficSignalStreak = 0
     private var lastAutoZoomAdjustMs = 0L
 
     fun initializeIfNeeded() {
@@ -145,26 +149,72 @@ class RoadVisionPipeline @Inject constructor(
             val lighting = FrontRoadAnalyzer.analyzeLightingAndLights(bitmap)
             brakeLightStreak = if (lighting.redBrakeLightsAhead) brakeLightStreak + 1 else 0
             darkStreak = if (lighting.isDark) darkStreak + 1 else 0
+            if (lighting.trafficLightSignal != TrafficLightSignal.NONE && lighting.trafficLightSignal == lastTrafficSignal) {
+                trafficSignalStreak += 1
+            } else {
+                lastTrafficSignal = lighting.trafficLightSignal
+                trafficSignalStreak = if (lighting.trafficLightSignal != TrafficLightSignal.NONE) 1 else 0
+            }
+            val confirmedTrafficLight = if (trafficSignalStreak >= 2) lighting.trafficLightSignal else TrafficLightSignal.NONE
 
-            val textResult = runCatching {
-                Tasks.await(recognizer.process(inputImage), 450, TimeUnit.MILLISECONDS)
-            }.getOrNull()
-
+            // Focus OCR on salient sign-colored ROIs first (instead of scanning the entire asphalt road)
+            val signRois = SignRoiExtractor.extractSignRois(bitmap, maxRois = 3)
             val signCandidates = mutableListOf<RawSignDetection>()
             var detectedPlate: String? = null
-            if (textResult != null) {
-                for (block in textResult.textBlocks) {
-                    val box = block.boundingBox ?: continue
-                    val hasBorder = SignCandidateParser.hasSignBorderColor(bitmap, box)
-                    val whiteInterior = SignCandidateParser.hasWhiteInterior(bitmap, box)
-                    val centerX = box.centerX() / w
-                    SignCandidateParser.parseSignFromText(block.text, hasBorder, centerX, whiteInterior)?.let {
-                        signCandidates.add(it)
-                    }
-                    if (detectedPlate == null) {
-                        detectedPlate = FrontRoadAnalyzer.extractKenyanPlate(block.text)
+
+            if (signRois.isNotEmpty()) {
+                for (roi in signRois) {
+                    val roiInput = InputImage.fromBitmap(roi.bitmap, 0)
+                    val roiText = runCatching {
+                        Tasks.await(recognizer.process(roiInput), 250, TimeUnit.MILLISECONDS)
+                    }.getOrNull() ?: continue
+                    val roiCenterX = (roi.normLeft + roi.normRight) / 2f
+                    for (block in roiText.textBlocks) {
+                        val box = block.boundingBox ?: continue
+                        val hasBorder = SignCandidateParser.hasSignBorderColor(roi.bitmap, box)
+                        val whiteInterior = SignCandidateParser.hasWhiteInterior(roi.bitmap, box)
+                        SignCandidateParser.parseSignFromText(block.text, hasBorder, roiCenterX, whiteInterior)?.let {
+                            signCandidates.add(it)
+                        }
                     }
                 }
+            }
+
+            // Fallback / plate scan on full frame only if no sign found in ROIs or to catch lower-road plates
+            if (signCandidates.isEmpty()) {
+                val textResult = runCatching {
+                    Tasks.await(recognizer.process(inputImage), 350, TimeUnit.MILLISECONDS)
+                }.getOrNull()
+
+                if (textResult != null) {
+                    for (block in textResult.textBlocks) {
+                        val box = block.boundingBox ?: continue
+                        val normTop = box.top / h
+                        if (normTop <= 0.65f) {
+                            val hasBorder = SignCandidateParser.hasSignBorderColor(bitmap, box)
+                            val whiteInterior = SignCandidateParser.hasWhiteInterior(bitmap, box)
+                            val centerX = box.centerX() / w
+                            SignCandidateParser.parseSignFromText(block.text, hasBorder, centerX, whiteInterior)?.let {
+                                signCandidates.add(it)
+                            }
+                        }
+                        if (detectedPlate == null) {
+                            detectedPlate = FrontRoadAnalyzer.extractKenyanPlate(block.text)
+                        }
+                    }
+                }
+            }
+
+            val roiOverlayBoxes = signRois.mapIndexed { idx, r ->
+                TrackedRoadObject(
+                    trackingId = idx,
+                    label = "Sign ROI",
+                    confidence = 1f,
+                    normalizedLeft = r.normLeft,
+                    normalizedTop = r.normTop,
+                    normalizedRight = r.normRight,
+                    normalizedBottom = r.normBottom,
+                )
             }
 
             val confirmed = temporalTracker.processFrame(
@@ -201,16 +251,17 @@ class RoadVisionPipeline @Inject constructor(
             }
             _state.value = _state.value.copy(
                 trackedObjects = tracked,
+                signRoiBoxes = roiOverlayBoxes,
                 lastInferenceLatencyMs = latencyMs,
                 lastObservation = confirmed ?: _state.value.lastObservation,
                 lastSpeedLimitKmh = nextSpeedLimit,
                 lastDetectedPlate = detectedPlate ?: _state.value.lastDetectedPlate,
                 redBrakeLightsAhead = brakeLightStreak >= 2,
-                trafficLightSignal = lighting.trafficLightSignal,
+                trafficLightSignal = confirmedTrafficLight,
                 isDarkScene = darkStreak >= 3,
                 averageLuminance = lighting.averageLuminance,
                 recommendedZoomRatio = nextZoom,
-                statusMessage = "Tracking ${tracked.size} object(s) • Auto-Zoom ${"%.1f".format(nextZoom)}x",
+                statusMessage = "Tracking ${tracked.size} obj • ${signRois.size} Sign ROI • ${"%.1f".format(nextZoom)}x",
             )
 
             if (confirmed != null) {
