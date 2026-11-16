@@ -45,9 +45,9 @@ class CameraPerformanceController @Inject constructor(
                     else -> ThermalState.NORMAL
                 }
                 val interval = when (mapped) {
-                    ThermalState.NORMAL -> 200L
-                    ThermalState.MODERATE -> 450L
-                    ThermalState.SEVERE -> 1000L
+                    ThermalState.NORMAL -> 80L
+                    ThermalState.MODERATE -> 250L
+                    ThermalState.SEVERE -> 700L
                 }
                 _status.value = _status.value.copy(
                     thermalState = mapped,

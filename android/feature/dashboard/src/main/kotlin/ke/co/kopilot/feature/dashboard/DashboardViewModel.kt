@@ -529,9 +529,9 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun analysisIntervalFor(quality: DetectionQuality): Long = when (quality) {
-        DetectionQuality.FAST -> 150L
-        DetectionQuality.BALANCED -> 250L
-        DetectionQuality.HIGH -> 400L
+        DetectionQuality.FAST -> 80L
+        DetectionQuality.BALANCED -> 120L
+        DetectionQuality.HIGH -> 180L
     }
 
     val kenyanCityPresets get() = navigationRepo.kenyanCities

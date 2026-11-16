@@ -51,7 +51,10 @@ class SignTemporalTracker @Inject constructor() {
             maxConfidence = best.confidence
         }
 
-        if (consecutiveHits < REQUIRED_CONSECUTIVE_FRAMES) {
+        // High-confidence (>= 85%) clear sign confirms immediately in 1 frame for fast-moving cars;
+        // lower-confidence detections require 2 frames.
+        val requiredFrames = if (maxConfidence >= INSTANT_CONFIDENCE_THRESHOLD) 1 else REQUIRED_CONSECUTIVE_FRAMES
+        if (consecutiveHits < requiredFrames) {
             return null
         }
 
@@ -89,6 +92,7 @@ class SignTemporalTracker @Inject constructor() {
     companion object {
         const val MIN_CONFIDENCE = 0.45f
         const val SURE_CONFIDENCE_THRESHOLD = 0.60f
+        const val INSTANT_CONFIDENCE_THRESHOLD = 0.85f
         const val REQUIRED_CONSECUTIVE_FRAMES = 2
         const val DUPLICATE_SUPPRESSION_MS = 20_000L
     }

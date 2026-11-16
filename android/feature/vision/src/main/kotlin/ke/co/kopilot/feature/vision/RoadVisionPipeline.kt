@@ -3,20 +3,40 @@ package ke.co.kopilot.feature.vision
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.util.Base64
 import androidx.camera.core.ImageProxy
+import com.google.android.gms.tasks.Task
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.objects.DetectedObject
 import com.google.mlkit.vision.objects.ObjectDetection
 import com.google.mlkit.vision.objects.ObjectDetector
 import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import dagger.hilt.android.qualifiers.ApplicationContext
+import ke.co.kopilot.core.common.coroutines.DispatcherProvider
+import ke.co.kopilot.core.common.model.TrafficSignCategory
 import ke.co.kopilot.core.common.model.TrafficSignObservation
+import ke.co.kopilot.core.network.connectivity.ConnectivityObserver
+import ke.co.kopilot.core.security.SecureTokenStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -54,10 +74,16 @@ class RoadVisionPipeline @Inject constructor(
     @ApplicationContext private val context: Context,
     private val temporalTracker: SignTemporalTracker,
     val signCatalog: LocalRoadSignCatalog,
+    private val connectivityObserver: ConnectivityObserver,
+    private val tokenStore: SecureTokenStore,
+    private val okHttpClient: OkHttpClient,
+    dispatchers: DispatcherProvider,
 ) {
     private val _state = MutableStateFlow(VisionPipelineState())
     val state: StateFlow<VisionPipelineState> = _state.asStateFlow()
 
+    private val bgScope = CoroutineScope(SupervisorJob() + dispatchers.io)
+    private val json = Json { ignoreUnknownKeys = true }
     private var objectDetector: ObjectDetector? = null
     private var textRecognizer: TextRecognizer? = null
     private var brakeLightStreak = 0
@@ -65,6 +91,8 @@ class RoadVisionPipeline @Inject constructor(
     private var lastTrafficSignal: TrafficLightSignal = TrafficLightSignal.NONE
     private var trafficSignalStreak = 0
     private var lastAutoZoomAdjustMs = 0L
+    private var frameCounter = 0
+    private var lastCloudBoostMs = 0L
 
     fun initializeIfNeeded() {
         if (objectDetector != null && textRecognizer != null) return
@@ -115,10 +143,25 @@ class RoadVisionPipeline @Inject constructor(
             val inputImage = InputImage.fromBitmap(bitmap, 0)
             val w = bitmap.width.toFloat().coerceAtLeast(1f)
             val h = bitmap.height.toFloat().coerceAtLeast(1f)
+            frameCounter += 1
 
-            val detectedObjects = runCatching {
-                Tasks.await(detector.process(inputImage), 450, TimeUnit.MILLISECONDS)
-            }.getOrDefault(emptyList())
+            // Extract salient sign ROIs in < 1ms and run Object Detection + ROI OCR in PARALLEL
+            val signRois = SignRoiExtractor.extractSignRois(bitmap, maxRois = 2)
+            val objTask: Task<List<DetectedObject>> = detector.process(inputImage)
+            val roiTasks: List<Task<Text>> = signRois.map { roi ->
+                recognizer.process(InputImage.fromBitmap(roi.bitmap, 0))
+            }
+            val shouldRunFullOcr = signRois.isEmpty() && (frameCounter % 4 == 0)
+            val fullOcrTask: Task<Text>? = if (shouldRunFullOcr) recognizer.process(inputImage) else null
+
+            val allTasks = buildList<Task<*>> {
+                add(objTask)
+                addAll(roiTasks)
+                if (fullOcrTask != null) add(fullOcrTask)
+            }
+            runCatching { Tasks.await(Tasks.whenAllComplete(allTasks), 220, TimeUnit.MILLISECONDS) }
+
+            val detectedObjects = if (objTask.isSuccessful) objTask.result.orEmpty() else emptyList()
 
             val tracked = detectedObjects.mapNotNull { obj ->
                 val box = obj.boundingBox
@@ -157,50 +200,55 @@ class RoadVisionPipeline @Inject constructor(
             }
             val confirmedTrafficLight = if (trafficSignalStreak >= 2) lighting.trafficLightSignal else TrafficLightSignal.NONE
 
-            // Focus OCR on salient sign-colored ROIs first (instead of scanning the entire asphalt road)
-            val signRois = SignRoiExtractor.extractSignRois(bitmap, maxRois = 3)
             val signCandidates = mutableListOf<RawSignDetection>()
             var detectedPlate: String? = null
 
-            if (signRois.isNotEmpty()) {
-                for (roi in signRois) {
-                    val roiInput = InputImage.fromBitmap(roi.bitmap, 0)
-                    val roiText = runCatching {
-                        Tasks.await(recognizer.process(roiInput), 250, TimeUnit.MILLISECONDS)
-                    }.getOrNull() ?: continue
-                    val roiCenterX = (roi.normLeft + roi.normRight) / 2f
-                    for (block in roiText.textBlocks) {
-                        val box = block.boundingBox ?: continue
-                        val hasBorder = SignCandidateParser.hasSignBorderColor(roi.bitmap, box)
-                        val whiteInterior = SignCandidateParser.hasWhiteInterior(roi.bitmap, box)
-                        SignCandidateParser.parseSignFromText(block.text, hasBorder, roiCenterX, whiteInterior)?.let {
-                            signCandidates.add(it)
-                        }
+            roiTasks.forEachIndexed { idx, task ->
+                if (!task.isSuccessful) return@forEachIndexed
+                val roi = signRois[idx]
+                val roiCenterX = (roi.normLeft + roi.normRight) / 2f
+                for (block in task.result.textBlocks) {
+                    val box = block.boundingBox ?: continue
+                    val hasBorder = SignCandidateParser.hasSignBorderColor(roi.bitmap, box)
+                    val whiteInterior = SignCandidateParser.hasWhiteInterior(roi.bitmap, box)
+                    SignCandidateParser.parseSignFromText(block.text, hasBorder, roiCenterX, whiteInterior)?.let {
+                        signCandidates.add(it)
                     }
                 }
             }
 
-            // Fallback / plate scan on full frame only if no sign found in ROIs or to catch lower-road plates
-            if (signCandidates.isEmpty()) {
-                val textResult = runCatching {
-                    Tasks.await(recognizer.process(inputImage), 350, TimeUnit.MILLISECONDS)
-                }.getOrNull()
+            if (fullOcrTask != null && fullOcrTask.isSuccessful) {
+                for (block in fullOcrTask.result.textBlocks) {
+                    val box = block.boundingBox ?: continue
+                    val normTop = box.top / h
+                    if (normTop <= 0.65f) {
+                        val hasBorder = SignCandidateParser.hasSignBorderColor(bitmap, box)
+                        val whiteInterior = SignCandidateParser.hasWhiteInterior(bitmap, box)
+                        val centerX = box.centerX() / w
+                        SignCandidateParser.parseSignFromText(block.text, hasBorder, centerX, whiteInterior)?.let {
+                            signCandidates.add(it)
+                        }
+                    }
+                    if (detectedPlate == null) {
+                        detectedPlate = FrontRoadAnalyzer.extractKenyanPlate(block.text)
+                    }
+                }
+            }
 
-                if (textResult != null) {
-                    for (block in textResult.textBlocks) {
-                        val box = block.boundingBox ?: continue
-                        val normTop = box.top / h
-                        if (normTop <= 0.65f) {
-                            val hasBorder = SignCandidateParser.hasSignBorderColor(bitmap, box)
-                            val whiteInterior = SignCandidateParser.hasWhiteInterior(bitmap, box)
-                            val centerX = box.centerX() / w
-                            SignCandidateParser.parseSignFromText(block.text, hasBorder, centerX, whiteInterior)?.let {
-                                signCandidates.add(it)
-                            }
-                        }
-                        if (detectedPlate == null) {
-                            detectedPlate = FrontRoadAnalyzer.extractKenyanPlate(block.text)
-                        }
+            // Optional fast online symbol boost: if local OCR found nothing in a sign ROI and OpenAI key + internet are active,
+            // send only the tiny cropped ROI (~5 KB) asynchronously to identify symbol-only signs (bends, bumps, roundabouts).
+            if (signCandidates.isEmpty() && signRois.isNotEmpty() &&
+                (timestampMillis - lastCloudBoostMs) >= 3_500L &&
+                connectivityObserver.isCurrentlyOnline()
+            ) {
+                val apiKey = tokenStore.getOpenAiApiKey()
+                if (apiKey != null) {
+                    lastCloudBoostMs = timestampMillis
+                    val topRoi = signRois.first()
+                    val roiCopy = topRoi.bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                    val centerX = (topRoi.normLeft + topRoi.normRight) / 2f
+                    bgScope.launch {
+                        classifySymbolRoiOnline(apiKey, roiCopy, centerX, onConfirmedSign)
                     }
                 }
             }
@@ -278,5 +326,57 @@ class RoadVisionPipeline @Inject constructor(
         objectDetector = null
         textRecognizer = null
         temporalTracker.reset()
+    }
+
+    private fun classifySymbolRoiOnline(
+        apiKey: String,
+        roiBitmap: Bitmap,
+        centerX: Float,
+        onConfirmedSign: (TrafficSignObservation) -> Unit,
+    ) {
+        runCatching {
+            val scaled = Bitmap.createScaledBitmap(roiBitmap, 160, 160, true)
+            val baos = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 70, baos)
+            val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+            val classes = TrafficSignCategory.entries.joinToString(",") { it.name }
+            val payload = """
+                {
+                  "model": "gpt-4o-mini",
+                  "max_tokens": 20,
+                  "messages": [{
+                    "role": "user",
+                    "content": [
+                      {"type": "text", "text": "If this is a road sign, reply with ONLY one enum from [$classes], else NONE."},
+                      {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,$b64", "detail": "low"}}
+                    ]
+                  }]
+                }
+            """.trimIndent()
+            val req = Request.Builder()
+                .url("https://api.openai.com/v1/chat/completions")
+                .addHeader("Authorization", "Bearer $apiKey")
+                .post(payload.toRequestBody("application/json".toMediaType()))
+                .build()
+            okHttpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return
+                val raw = resp.body?.string().orEmpty()
+                val reply = json.parseToJsonElement(raw).jsonObject["choices"]?.jsonArray
+                    ?.firstOrNull()?.jsonObject?.get("message")?.jsonObject
+                    ?.get("content")?.jsonPrimitive?.content?.trim().orEmpty()
+                val category = TrafficSignCategory.entries.firstOrNull { it.name == reply } ?: return
+                val obs = temporalTracker.processFrame(
+                    detections = listOf(RawSignDetection(category, 0.88f, centerX)),
+                    modelVersion = "hybrid-online-1.0",
+                    nowMillis = System.currentTimeMillis(),
+                ) ?: return
+                val nextLimit = obs.category.speedLimitKmh ?: _state.value.lastSpeedLimitKmh
+                _state.value = _state.value.copy(
+                    lastObservation = obs,
+                    lastSpeedLimitKmh = nextLimit,
+                )
+                onConfirmedSign(obs)
+            }
+        }
     }
 }

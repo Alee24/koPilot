@@ -26,6 +26,9 @@ android {
 
 dependencies {
     implementation(project(":core:common"))
+    implementation(project(":core:network"))
+    implementation(project(":core:security"))
+    implementation(libs.okhttp)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.camera.core)
     implementation(libs.kotlinx.coroutines.core)
