@@ -76,7 +76,7 @@ fun RoadCameraPreview(
         }
     }
 
-    DisposableEffect(lifecycleOwner, isDrivingSessionActive, analysisIntervalMs) {
+    DisposableEffect(lifecycleOwner, analysisIntervalMs) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         val mainExecutor = ContextCompat.getMainExecutor(context)
 
@@ -84,11 +84,6 @@ fun RoadCameraPreview(
             runCatching {
                 val cameraProvider = cameraProviderFuture.get()
                 cameraProvider.unbindAll()
-
-                if (!isDrivingSessionActive) {
-                    performanceController.setCameraActive(false, "Camera paused while parked")
-                    return@runCatching
-                }
 
                 val preview = Preview.Builder().build().also {
                     it.surfaceProvider = previewView.surfaceProvider

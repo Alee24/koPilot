@@ -33,6 +33,9 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.litert)
     implementation(libs.litert.support)
+    implementation(libs.mlkit.obj.detection)
+    implementation(libs.mlkit.text.recognition)
+    implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 

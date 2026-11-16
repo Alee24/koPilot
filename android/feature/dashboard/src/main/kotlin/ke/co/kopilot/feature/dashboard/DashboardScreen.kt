@@ -356,6 +356,21 @@ private fun ViewportCard(
                         )
                     },
                 )
+                // Real-time on-device tracked object bounding boxes
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    for (obj in state.visionState.trackedObjects) {
+                        val left = obj.normalizedLeft * size.width
+                        val top = obj.normalizedTop * size.height
+                        val right = obj.normalizedRight * size.width
+                        val bottom = obj.normalizedBottom * size.height
+                        drawRect(
+                            color = MintTeal,
+                            topLeft = Offset(left, top),
+                            size = Size((right - left).coerceAtLeast(4f), (bottom - top).coerceAtLeast(4f)),
+                            style = Stroke(width = 2.5.dp.toPx()),
+                        )
+                    }
+                }
             } else {
                 val fix = state.locationState.currentFix
                 KoPilotNavigationMap(
@@ -393,7 +408,7 @@ private fun ViewportCard(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                     )
-                    if (state.isDrivingSessionActive && state.cameraStatus.isPreviewActive) {
+                    if (state.cameraStatus.isPreviewActive) {
                         Spacer(Modifier.width(8.dp))
                         Box(
                             modifier = Modifier
@@ -447,10 +462,15 @@ private fun ViewportCard(
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = when {
-                            state.isDrivingSessionActive && state.cameraStatus.isPreviewActive -> "Road Monitoring Active"
-                            state.isDrivingSessionActive -> state.cameraStatus.statusMessage
-                            else -> "Tap Start Driving to Monitor"
+                        text = buildString {
+                            if (state.cameraStatus.isPreviewActive) {
+                                append("Tracking ${state.visionState.trackedObjects.size} obj")
+                                state.visionState.lastObservation?.let { obs ->
+                                    append(" • Sign: ${obs.category.displayName}")
+                                }
+                            } else {
+                                append(state.cameraStatus.statusMessage)
+                            }
                         },
                         color = Color.White,
                         fontSize = 11.sp,
