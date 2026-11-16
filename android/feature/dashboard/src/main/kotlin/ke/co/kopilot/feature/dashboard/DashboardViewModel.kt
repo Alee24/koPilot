@@ -34,6 +34,7 @@ import ke.co.kopilot.feature.traffic.TrafficAdvisor
 import ke.co.kopilot.feature.traffic.TrafficEvaluation
 import ke.co.kopilot.feature.trips.TripRepository
 import ke.co.kopilot.feature.vision.RoadVisionPipeline
+import ke.co.kopilot.feature.vision.TrafficLightSignal
 import ke.co.kopilot.feature.vision.VisionPipelineState
 import ke.co.kopilot.feature.voice.OpenAiRealtimeVoiceClient
 import ke.co.kopilot.feature.voice.VoiceAssistantState
@@ -164,6 +165,57 @@ class DashboardViewModel @Inject constructor(
 
     init {
         visionPipeline.initializeIfNeeded()
+        viewModelScope.launch {
+            visionPipeline.state.collect { vision ->
+                val s = uiState.value.settings
+                val moving = (locationTracker.state.value.currentFix?.speedKmh ?: 0f) >= 8f || isDriving.value
+                if (vision.redBrakeLightsAhead && moving) {
+                    alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = AlertPriority.ROAD_OBSERVATION,
+                            spokenText = "Red brake lights ahead. Slow down or prepare to brake.",
+                            displayText = "Red brake lights ahead — Slow down",
+                            dedupKey = "front_brake_lights",
+                            timestampMillis = System.currentTimeMillis(),
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
+                }
+                if (vision.trafficLightSignal == TrafficLightSignal.RED && moving) {
+                    alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = AlertPriority.ROAD_OBSERVATION,
+                            spokenText = "Red traffic light ahead.",
+                            displayText = "Red traffic light ahead",
+                            dedupKey = "front_red_traffic_light",
+                            timestampMillis = System.currentTimeMillis(),
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
+                }
+                if (vision.isDarkScene && moving) {
+                    alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = AlertPriority.WEATHER_NOTIFICATION,
+                            spokenText = "It is getting dark. Please turn on your headlights.",
+                            displayText = "Low light — Turn on headlights",
+                            dedupKey = "headlight_darkness_reminder",
+                            timestampMillis = System.currentTimeMillis(),
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
+                }
+            }
+        }
         viewModelScope.launch {
             locationTracker.state.collect { locState ->
                 val fix = locState.currentFix ?: return@collect

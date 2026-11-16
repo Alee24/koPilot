@@ -115,12 +115,19 @@ class LocalVoiceCommandEngine @Inject constructor(
                 val res = parseObj(toolExecutor.executeTool("get_current_speed", emptyObj()))
                 val speed = res["speed_kmh"]?.jsonPrimitive?.content
                 val limit = res["observed_limit_kmh"]?.jsonPrimitive?.content
-                if (speed == null || speed == "null") {
+                val lastSign = res["last_sign"]?.jsonPrimitive?.content
+                val speedPart = if (speed == null || speed == "null") {
                     if (language == "sw") "Kasi ya GPS haipatikani kwa sasa." else "GPS speed is currently unavailable."
                 } else {
-                    val limitPart = if (limit != null && limit != "null") " Observed limit is $limit km/h." else ""
-                    "Your current speed is $speed kilometres per hour.$limitPart"
+                    val rounded = speed.toFloatOrNull()?.toInt()?.toString() ?: speed
+                    "Your current speed is $rounded kilometres per hour."
                 }
+                val limitPart = when {
+                    limit != null && limit != "null" -> " The last recognized speed limit is $limit kilometres per hour."
+                    lastSign != null && lastSign != "none" -> " Last road sign seen: $lastSign."
+                    else -> " No speed limit sign has been recognized yet."
+                }
+                speedPart + limitPart
             }
             q.contains("location") || q.contains("where am i") || q.contains("wapi") -> {
                 val res = parseObj(toolExecutor.executeTool("get_current_location", emptyObj()))

@@ -37,6 +37,11 @@ data class VisionPipelineState(
     val validationStatus: String = "On-Device Offline",
     val lastObservation: TrafficSignObservation? = null,
     val lastSpeedLimitKmh: Int? = null,
+    val lastDetectedPlate: String? = null,
+    val redBrakeLightsAhead: Boolean = false,
+    val trafficLightSignal: TrafficLightSignal = TrafficLightSignal.NONE,
+    val isDarkScene: Boolean = false,
+    val averageLuminance: Float = 128f,
     val trackedObjects: List<TrackedRoadObject> = emptyList(),
     val lastInferenceLatencyMs: Long = 0L,
     val statusMessage: String = "Initializing offline vision...",
@@ -52,6 +57,8 @@ class RoadVisionPipeline @Inject constructor(
 
     private var objectDetector: ObjectDetector? = null
     private var textRecognizer: TextRecognizer? = null
+    private var brakeLightStreak = 0
+    private var darkStreak = 0
 
     fun initializeIfNeeded() {
         if (objectDetector != null && textRecognizer != null) return
@@ -110,23 +117,39 @@ class RoadVisionPipeline @Inject constructor(
             val tracked = detectedObjects.mapNotNull { obj ->
                 val box = obj.boundingBox
                 val bestLabel = obj.labels.maxByOrNull { it.confidence }
-                val labelText = bestLabel?.text?.takeIf { it.isNotBlank() } ?: "Object"
+                val rawLabel = bestLabel?.text?.takeIf { it.isNotBlank() } ?: "Object"
+                val nLeft = (box.left / w).coerceIn(0f, 1f)
+                val nTop = (box.top / h).coerceIn(0f, 1f)
+                val nRight = (box.right / w).coerceIn(0f, 1f)
+                val nBottom = (box.bottom / h).coerceIn(0f, 1f)
+                val roadLabel = FrontRoadAnalyzer.classifyObjectByGeometry(
+                    normLeft = nLeft,
+                    normTop = nTop,
+                    normRight = nRight,
+                    normBottom = nBottom,
+                    mlKitLabel = rawLabel,
+                )
                 TrackedRoadObject(
                     trackingId = obj.trackingId ?: -1,
-                    label = labelText,
+                    label = roadLabel,
                     confidence = bestLabel?.confidence ?: 0.7f,
-                    normalizedLeft = (box.left / w).coerceIn(0f, 1f),
-                    normalizedTop = (box.top / h).coerceIn(0f, 1f),
-                    normalizedRight = (box.right / w).coerceIn(0f, 1f),
-                    normalizedBottom = (box.bottom / h).coerceIn(0f, 1f),
+                    normalizedLeft = nLeft,
+                    normalizedTop = nTop,
+                    normalizedRight = nRight,
+                    normalizedBottom = nBottom,
                 )
             }
+
+            val lighting = FrontRoadAnalyzer.analyzeLightingAndLights(bitmap)
+            brakeLightStreak = if (lighting.redBrakeLightsAhead) brakeLightStreak + 1 else 0
+            darkStreak = if (lighting.isDark) darkStreak + 1 else 0
 
             val textResult = runCatching {
                 Tasks.await(recognizer.process(inputImage), 450, TimeUnit.MILLISECONDS)
             }.getOrNull()
 
             val signCandidates = mutableListOf<RawSignDetection>()
+            var detectedPlate: String? = null
             if (textResult != null) {
                 for (block in textResult.textBlocks) {
                     val box = block.boundingBox ?: continue
@@ -134,6 +157,9 @@ class RoadVisionPipeline @Inject constructor(
                     val centerX = box.centerX() / w
                     SignCandidateParser.parseSignFromText(block.text, hasBorder, centerX)?.let {
                         signCandidates.add(it)
+                    }
+                    if (detectedPlate == null) {
+                        detectedPlate = FrontRoadAnalyzer.extractKenyanPlate(block.text)
                     }
                 }
             }
@@ -151,6 +177,11 @@ class RoadVisionPipeline @Inject constructor(
                 lastInferenceLatencyMs = latencyMs,
                 lastObservation = confirmed ?: _state.value.lastObservation,
                 lastSpeedLimitKmh = nextSpeedLimit,
+                lastDetectedPlate = detectedPlate ?: _state.value.lastDetectedPlate,
+                redBrakeLightsAhead = brakeLightStreak >= 2,
+                trafficLightSignal = lighting.trafficLightSignal,
+                isDarkScene = darkStreak >= 3,
+                averageLuminance = lighting.averageLuminance,
                 statusMessage = "Tracking ${tracked.size} object(s) • Offline",
             )
 

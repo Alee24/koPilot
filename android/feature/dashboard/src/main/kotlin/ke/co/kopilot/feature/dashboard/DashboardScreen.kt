@@ -388,19 +388,49 @@ private fun ViewportCard(
                         )
                     },
                 )
-                // Real-time on-device tracked object bounding boxes
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    for (obj in state.visionState.trackedObjects) {
-                        val left = obj.normalizedLeft * size.width
-                        val top = obj.normalizedTop * size.height
-                        val right = obj.normalizedRight * size.width
-                        val bottom = obj.normalizedBottom * size.height
-                        drawRect(
-                            color = MintTeal,
-                            topLeft = Offset(left, top),
-                            size = Size((right - left).coerceAtLeast(4f), (bottom - top).coerceAtLeast(4f)),
-                            style = Stroke(width = 2.5.dp.toPx()),
-                        )
+                // Real-time on-device tracked object bounding boxes + labels
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        for (obj in state.visionState.trackedObjects) {
+                            val left = obj.normalizedLeft * size.width
+                            val top = obj.normalizedTop * size.height
+                            val right = obj.normalizedRight * size.width
+                            val bottom = obj.normalizedBottom * size.height
+                            val boxColor = when (obj.label) {
+                                "Pedestrian" -> KoPilotColors.WarningAmber
+                                "Vehicle" -> MintTeal
+                                else -> NavBlue
+                            }
+                            drawRect(
+                                color = boxColor,
+                                topLeft = Offset(left, top),
+                                size = Size((right - left).coerceAtLeast(4f), (bottom - top).coerceAtLeast(4f)),
+                                style = Stroke(width = 2.5.dp.toPx()),
+                            )
+                        }
+                    }
+                    // Visual road sign badge in bottom-right of camera viewport once a sign is recognized
+                    state.visionState.lastObservation?.let { obs ->
+                        val limit = obs.category.speedLimitKmh
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(10.dp),
+                            shape = if (limit != null) CircleShape else RoundedCornerShape(10.dp),
+                            color = Color.White,
+                            border = BorderStroke(4.dp, Color(0xFFD32F2F)),
+                        ) {
+                            Text(
+                                text = limit?.toString() ?: obs.category.displayName.take(12),
+                                color = Color(0xFF101820),
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = if (limit != null) 16.sp else 11.sp,
+                                modifier = Modifier.padding(
+                                    horizontal = if (limit != null) 10.dp else 8.dp,
+                                    vertical = if (limit != null) 8.dp else 6.dp,
+                                ),
+                            )
+                        }
                     }
                 }
             } else {
@@ -496,9 +526,23 @@ private fun ViewportCard(
                     Text(
                         text = buildString {
                             if (state.cameraStatus.isPreviewActive) {
-                                append("Tracking ${state.visionState.trackedObjects.size} obj")
-                                state.visionState.lastObservation?.let { obs ->
-                                    append(" • Sign: ${obs.category.displayName}")
+                                val summary = state.visionState.trackedObjects
+                                    .take(2)
+                                    .joinToString(", ") { it.label }
+                                append(
+                                    if (summary.isNotBlank()) {
+                                        "${state.visionState.trackedObjects.size} obj ($summary)"
+                                    } else {
+                                        "Scanning road"
+                                    },
+                                )
+                                state.visionState.lastDetectedPlate?.let { plate ->
+                                    append(" • $plate")
+                                }
+                                if (state.visionState.redBrakeLightsAhead) {
+                                    append(" • BRAKE LIGHTS")
+                                } else if (state.visionState.isDarkScene) {
+                                    append(" • LOW LIGHT")
                                 }
                             } else {
                                 append(state.cameraStatus.statusMessage)

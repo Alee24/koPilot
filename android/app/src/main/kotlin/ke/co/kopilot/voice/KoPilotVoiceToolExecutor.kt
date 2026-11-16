@@ -37,12 +37,14 @@ class KoPilotVoiceToolExecutor @Inject constructor(
             }
         }
         "get_current_speed" -> {
+            val vision = visionPipeline.state.value
             val eval = speedAlertEngine.evaluate(
                 fix = locationTracker.state.value.currentFix,
-                latestSign = visionPipeline.state.value.lastObservation,
+                latestSign = vision.lastObservation,
                 thresholdKmh = 5,
             )
-            """{"status":"${eval.signalState.name}","speed_kmh":${eval.currentSpeedKmh ?: "null"},"observed_limit_kmh":${eval.applicableSpeedLimitKmh ?: "null"},"decision":"${eval.decision.name}"}"""
+            val observedLimit = vision.lastSpeedLimitKmh ?: eval.applicableSpeedLimitKmh
+            """{"status":"${eval.signalState.name}","speed_kmh":${eval.currentSpeedKmh ?: "null"},"observed_limit_kmh":${observedLimit ?: "null"},"last_sign":"${vision.lastObservation?.category?.displayName ?: "none"}","decision":"${eval.decision.name}"}"""
         }
         "get_active_route" -> {
             val nav = navigationRepo.state.value
