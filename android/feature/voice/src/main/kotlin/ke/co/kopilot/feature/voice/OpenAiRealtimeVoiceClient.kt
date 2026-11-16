@@ -128,21 +128,58 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
         scope.launch {
             runCatching {
                 configureAudioRouting()
-                val session = apiService.createVoiceSession(
-                    VoiceSessionRequestDto(
-                        deviceId = tokenStore.getOrCreateDeviceId(),
-                        language = language,
-                        voice = voice,
-                    ),
-                )
+                val directKey = tokenStore.getOpenAiApiKey()
+                val (secret, callsUrl) = if (directKey != null) {
+                    mintDirectEphemeralSecret(directKey, language, voice ?: "marin")
+                } else {
+                    val session = apiService.createVoiceSession(
+                        VoiceSessionRequestDto(
+                            deviceId = tokenStore.getOrCreateDeviceId(),
+                            language = language,
+                            voice = voice,
+                        ),
+                    )
+                    session.clientSecret to session.webrtcCallsUrl
+                }
                 establishWebRtcSession(
-                    ephemeralSecret = session.clientSecret,
-                    callsUrl = session.webrtcCallsUrl,
+                    ephemeralSecret = secret,
+                    callsUrl = callsUrl,
                     language = language,
                 )
             }.onFailure {
                 startLocalVoiceFallback(language, "Cloud voice unavailable; listening locally")
             }
+        }
+    }
+
+    private suspend fun mintDirectEphemeralSecret(
+        apiKey: String,
+        language: String,
+        voice: String,
+    ): Pair<String, String> = withContext(dispatchers.io) {
+        val bodyJson = """
+            {
+              "expires_after": {"anchor": "created_at", "seconds": 600},
+              "session": {
+                "type": "realtime",
+                "model": "gpt-realtime",
+                "audio": {"output": {"voice": "$voice"}}
+              }
+            }
+        """.trimIndent()
+        val req = Request.Builder()
+            .url("https://api.openai.com/v1/realtime/client_secrets")
+            .addHeader("Authorization", "Bearer $apiKey")
+            .post(bodyJson.toRequestBody("application/json".toMediaType()))
+            .build()
+        okHttpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) error("OpenAI client_secrets HTTP ${resp.code}")
+            val raw = resp.body?.string() ?: error("Empty OpenAI response")
+            val obj = json.parseToJsonElement(raw).jsonObject
+            val value = obj["value"]?.jsonPrimitive?.content
+                ?: obj["client_secret"]?.jsonObject?.get("value")?.jsonPrimitive?.content
+                ?: error("Missing ephemeral secret")
+            value to "https://api.openai.com/v1/realtime/calls"
         }
     }
 

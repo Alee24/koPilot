@@ -17,6 +17,7 @@ import ke.co.kopilot.feature.diagnostics.ObdBluetoothManager
 import ke.co.kopilot.feature.diagnostics.PairedBluetoothDevice
 import ke.co.kopilot.feature.trips.TripRepository
 import ke.co.kopilot.feature.vehicle.VehicleProfileRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +25,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import javax.inject.Inject
 
 @HiltViewModel
@@ -36,7 +40,17 @@ class SettingsViewModel @Inject constructor(
     private val observationDao: RoadObservationDao,
     private val apiService: KoPilotApiService,
     private val tokenStore: SecureTokenStore,
+    private val okHttpClient: OkHttpClient,
 ) : ViewModel() {
+
+    private val _backendUrl = MutableStateFlow(tokenStore.getBackendBaseUrl())
+    val backendUrl: StateFlow<String> = _backendUrl.asStateFlow()
+
+    private val _openAiKey = MutableStateFlow(tokenStore.getOpenAiApiKey().orEmpty())
+    val openAiKey: StateFlow<String> = _openAiKey.asStateFlow()
+
+    private val _googleMapsKey = MutableStateFlow(tokenStore.getGoogleMapsApiKey().orEmpty())
+    val googleMapsKey: StateFlow<String> = _googleMapsKey.asStateFlow()
 
     val settings: StateFlow<KoPilotSettings> = prefsRepo.settingsFlow.stateIn(
         scope = viewModelScope,
@@ -73,6 +87,44 @@ class SettingsViewModel @Inject constructor(
     fun setEmergencyContact(name: String, phone: String) = viewModelScope.launch {
         prefsRepo.setEmergencyContact(name, phone)
         _statusBanner.value = "Emergency contact updated"
+    }
+
+    fun saveApiConfiguration(backendUrl: String, openAiKey: String, googleMapsKey: String) {
+        tokenStore.saveBackendBaseUrl(backendUrl)
+        tokenStore.saveOpenAiApiKey(openAiKey)
+        tokenStore.saveGoogleMapsApiKey(googleMapsKey)
+        _backendUrl.value = tokenStore.getBackendBaseUrl()
+        _openAiKey.value = tokenStore.getOpenAiApiKey().orEmpty()
+        _googleMapsKey.value = tokenStore.getGoogleMapsApiKey().orEmpty()
+        _statusBanner.value = "API credentials saved securely in EncryptedSharedPreferences"
+    }
+
+    fun clearApiCredentials() {
+        tokenStore.clearCredentials()
+        _backendUrl.value = tokenStore.getBackendBaseUrl()
+        _openAiKey.value = ""
+        _googleMapsKey.value = ""
+        _statusBanner.value = "API credentials cleared"
+    }
+
+    fun testBackendConnection(urlInput: String) = viewModelScope.launch {
+        val base = urlInput.trim().let { if (it.endsWith("/")) it else "$it/" }
+        _statusBanner.value = "Testing ${base}health..."
+        val resultMsg = withContext(Dispatchers.IO) {
+            runCatching {
+                val req = Request.Builder().url("${base}health").build()
+                okHttpClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        "Backend Connected (HTTP ${resp.code}): ${resp.body?.string().orEmpty()}"
+                    } else {
+                        "Backend returned HTTP ${resp.code}"
+                    }
+                }
+            }.getOrElse { err ->
+                "Connection failed: ${err.localizedMessage ?: "unreachable"}"
+            }
+        }
+        _statusBanner.value = resultMsg
     }
 
     fun saveVehicleProfile(profile: VehicleProfile) = viewModelScope.launch {

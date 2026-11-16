@@ -10,6 +10,7 @@ import ke.co.kopilot.core.network.api.KoPilotApiService
 import ke.co.kopilot.core.security.SecureTokenStore
 import ke.co.kopilot.core.security.SensitiveLogRedactor
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -43,10 +44,20 @@ object NetworkModule {
             .readTimeout(25, TimeUnit.SECONDS)
             .writeTimeout(25, TimeUnit.SECONDS)
             .addInterceptor { chain ->
-                val reqBuilder = chain.request().newBuilder()
+                val original = chain.request()
+                val reqBuilder = original.newBuilder()
                     .addHeader("X-Device-Id", tokenStore.getOrCreateDeviceId())
                 tokenStore.getAccessToken()?.let { token ->
                     reqBuilder.addHeader("Authorization", "Bearer $token")
+                }
+                val customBase = tokenStore.getBackendBaseUrl(BuildConfig.KOPILOT_API_BASE_URL).toHttpUrlOrNull()
+                if (customBase != null && original.url.host != "api.openai.com" && !original.url.host.endsWith("googleapis.com")) {
+                    val newUrl = original.url.newBuilder()
+                        .scheme(customBase.scheme)
+                        .host(customBase.host)
+                        .port(customBase.port)
+                        .build()
+                    reqBuilder.url(newUrl)
                 }
                 chain.proceed(reqBuilder.build())
             }

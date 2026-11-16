@@ -12,6 +12,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,6 +57,14 @@ fun SettingsScreen(
     val vehicle by viewModel.vehicleProfile.collectAsStateWithLifecycle()
     val pairedDevices by viewModel.pairedDevices.collectAsStateWithLifecycle()
     val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
+    val savedBackendUrl by viewModel.backendUrl.collectAsStateWithLifecycle()
+    val savedOpenAiKey by viewModel.openAiKey.collectAsStateWithLifecycle()
+    val savedGoogleKey by viewModel.googleMapsKey.collectAsStateWithLifecycle()
+
+    var backendUrlInput by remember(savedBackendUrl) { mutableStateOf(savedBackendUrl) }
+    var openAiKeyInput by remember(savedOpenAiKey) { mutableStateOf(savedOpenAiKey) }
+    var googleKeyInput by remember(savedGoogleKey) { mutableStateOf(savedGoogleKey) }
+    var showKeys by remember { mutableStateOf(false) }
 
     var manufacturer by remember(vehicle.manufacturer) { mutableStateOf(vehicle.manufacturer) }
     var model by remember(vehicle.model) { mutableStateOf(vehicle.model) }
@@ -82,6 +94,67 @@ fun SettingsScreen(
             if (statusBanner != null) {
                 CockpitPanel {
                     Text(statusBanner!!, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+
+            // API Credentials & Server Configuration
+            CockpitPanel {
+                Text("API Credentials & Server", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Stored encrypted on-device. Enter your own OpenAI / Google keys or point to your KoPilot backend.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = backendUrlInput,
+                    onValueChange = { backendUrlInput = it },
+                    label = { Text("Backend Server URL") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = openAiKeyInput,
+                    onValueChange = { openAiKeyInput = it },
+                    label = { Text("OpenAI API Key (sk-...)") },
+                    singleLine = true,
+                    visualTransformation = if (showKeys) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showKeys = !showKeys }) {
+                            Icon(
+                                if (showKeys) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = "Toggle visibility",
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = googleKeyInput,
+                    onValueChange = { googleKeyInput = it },
+                    label = { Text("Google Routes / Places API Key (AIza...)") },
+                    singleLine = true,
+                    visualTransformation = if (showKeys) VisualTransformation.None else PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            viewModel.saveApiConfiguration(backendUrlInput, openAiKeyInput, googleKeyInput)
+                        },
+                    ) {
+                        Text("Save Keys")
+                    }
+                    OutlinedButton(onClick = { viewModel.testBackendConnection(backendUrlInput) }) {
+                        Text("Test Backend")
+                    }
+                    OutlinedButton(onClick = viewModel::clearApiCredentials) {
+                        Text("Clear")
+                    }
                 }
             }
 

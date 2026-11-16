@@ -33,6 +33,7 @@ dependencies {
     implementation(project(":core:database"))
     implementation(project(":core:network"))
     implementation(project(":core:security"))
+    implementation(libs.okhttp)
     implementation(project(":feature:vehicle"))
     implementation(project(":feature:diagnostics"))
     implementation(project(":feature:trips"))
