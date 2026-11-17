@@ -37,18 +37,27 @@ object FrontRoadAnalyzer {
         val height = (normBottom - normTop).coerceAtLeast(0.01f)
         val ratio = height / width
         val centerY = (normTop + normBottom) / 2f
+        val lowerLabel = mlKitLabel.lowercase()
 
         return when {
-            mlKitLabel.equals("Person", ignoreCase = true) || (ratio >= 1.45f && centerY >= 0.25f) ->
+            lowerLabel.contains("person") || (ratio >= 1.75f && centerY >= 0.25f) ->
                 "Pedestrian"
-            width >= 0.14f && ratio in 0.45f..1.35f && centerY >= 0.30f ->
-                "Vehicle"
+            lowerLabel.contains("bicycle") || (width in 0.04f..0.11f && ratio in 1.15f..1.74f && centerY >= 0.35f) ->
+                "Bicycle"
+            lowerLabel.contains("motorcycle") || lowerLabel.contains("motorbike") || (width in 0.08f..0.16f && ratio in 1.05f..1.74f && centerY >= 0.35f) ->
+                "Motorbike"
+            lowerLabel.contains("truck") || lowerLabel.contains("bus") || (width >= 0.30f && height >= 0.32f && centerY >= 0.25f) ->
+                "Lorry / Bus"
+            width in 0.20f..0.38f && ratio in 0.95f..1.35f && normTop < 0.35f ->
+                "Tractor"
+            width in 0.14f..0.38f && ratio in 0.45f..1.05f && centerY >= 0.30f ->
+                "Car"
             width < 0.14f && height < 0.16f && centerY >= 0.55f ->
                 "Animal / Obstacle"
             mlKitLabel.isNotBlank() && mlKitLabel != "Object" ->
                 mlKitLabel
             else ->
-                "Road Object"
+                "Vehicle"
         }
     }
 

@@ -123,6 +123,10 @@ class DashboardViewModel @Inject constructor(
     private var lastTurnAlertMs = 0L
     private var lastAnnouncedLaneDirection: String? = null
     private var lastAnnouncedTurnState: LateralMotionState = LateralMotionState.STRAIGHT
+    private var lastTutorVehicleAheadMs = 0L
+    private var lastTutorBusyRoadMs = 0L
+    private var lastTutorClearRoadMs = 0L
+    private var clearRoadSinceMs = 0L
 
     private val coreFlows = combine(
         isDriving,
@@ -207,8 +211,8 @@ class DashboardViewModel @Inject constructor(
                         alert = AlertMessage(
                             id = UUID.randomUUID().toString(),
                             priority = AlertPriority.ROAD_OBSERVATION,
-                            spokenText = "Red brake lights ahead. Slow down or prepare to brake.",
-                            displayText = "Red brake lights ahead — Slow down",
+                            spokenText = "Car in front is braking. Brake now.",
+                            displayText = "Car braking ahead — Brake!",
                             dedupKey = "front_brake_lights",
                             timestampMillis = System.currentTimeMillis(),
                         ),
@@ -216,6 +220,77 @@ class DashboardViewModel @Inject constructor(
                         language = s.language,
                         globalMute = s.alertsMuted,
                     )
+                }
+                if (isDriving.value && s.sensorCameraEnabled) {
+                    val currentSpeed = locationTracker.state.value.currentFix?.speedKmh ?: 0f
+                    val roadObjects = vision.trackedObjects.filter { it.label != "Road Object" }
+                    val closeVehicleAhead = roadObjects.any {
+                        val cx = (it.normalizedLeft + it.normalizedRight) / 2f
+                        cx in 0.25f..0.75f && it.normalizedBottom >= 0.56f
+                    }
+                    if (roadObjects.isNotEmpty() || vision.redBrakeLightsAhead) {
+                        clearRoadSinceMs = 0L
+                    } else if (clearRoadSinceMs == 0L) {
+                        clearRoadSinceMs = now
+                    }
+
+                    when {
+                        roadObjects.size >= 3 && currentSpeed >= 10f && (now - lastTutorBusyRoadMs) >= 18_000L -> {
+                            lastTutorBusyRoadMs = now
+                            tripActivityLogger.logActivity("ROAD_TUTOR", "Busy road (${roadObjects.size} objects) — stay ready on brake", now)
+                            alertCoordinator.submit(
+                                alert = AlertMessage(
+                                    id = UUID.randomUUID().toString(),
+                                    priority = AlertPriority.ROAD_OBSERVATION,
+                                    spokenText = "Road is busy. Concentrate and keep your foot on the brake.",
+                                    displayText = "Busy road — Keep foot on brake",
+                                    dedupKey = "tutor_busy_road",
+                                    timestampMillis = now,
+                                ),
+                                speechRate = s.voiceSpeed,
+                                language = s.language,
+                                globalMute = s.alertsMuted,
+                            )
+                        }
+                        closeVehicleAhead && !vision.redBrakeLightsAhead && (now - lastTutorVehicleAheadMs) >= 10_000L -> {
+                            lastTutorVehicleAheadMs = now
+                            tripActivityLogger.logActivity("ROAD_TUTOR", "Vehicle ahead in lane — prepare to brake", now)
+                            alertCoordinator.submit(
+                                alert = AlertMessage(
+                                    id = UUID.randomUUID().toString(),
+                                    priority = AlertPriority.ROAD_OBSERVATION,
+                                    spokenText = "Car in front of you. Start braking.",
+                                    displayText = "Vehicle ahead — Start braking",
+                                    dedupKey = "tutor_vehicle_ahead",
+                                    timestampMillis = now,
+                                ),
+                                speechRate = s.voiceSpeed,
+                                language = s.language,
+                                globalMute = s.alertsMuted,
+                            )
+                        }
+                        roadObjects.isEmpty() && !vision.redBrakeLightsAhead &&
+                            clearRoadSinceMs > 0L && (now - clearRoadSinceMs) >= 4_000L &&
+                            currentSpeed in 40f..80f &&
+                            (vision.lastSpeedLimitKmh == null || currentSpeed < (vision.lastSpeedLimitKmh!! - 5)) &&
+                            (now - lastTutorClearRoadMs) >= 25_000L -> {
+                            lastTutorClearRoadMs = now
+                            tripActivityLogger.logActivity("ROAD_TUTOR", "Clear road at ${currentSpeed.toInt()} km/h — pick up pace", now)
+                            alertCoordinator.submit(
+                                alert = AlertMessage(
+                                    id = UUID.randomUUID().toString(),
+                                    priority = AlertPriority.TRAFFIC_UPDATE,
+                                    spokenText = "Clear road ahead. Please pick up the pace and speed up a bit.",
+                                    displayText = "Clear road — Pick up pace",
+                                    dedupKey = "tutor_clear_road",
+                                    timestampMillis = now,
+                                ),
+                                speechRate = s.voiceSpeed,
+                                language = s.language,
+                                globalMute = s.alertsMuted,
+                            )
+                        }
+                    }
                 }
                 if (isDriving.value && vision.trafficLightSignal != TrafficLightSignal.NONE &&
                     (vision.trafficLightSignal != lastLoggedTrafficSignal || (now - lastLoggedTrafficSignalMs) >= 8_000L)
@@ -521,6 +596,10 @@ class DashboardViewModel @Inject constructor(
         lastTurnAlertMs = 0L
         lastAnnouncedLaneDirection = null
         lastAnnouncedTurnState = LateralMotionState.STRAIGHT
+        lastTutorVehicleAheadMs = 0L
+        lastTutorBusyRoadMs = 0L
+        lastTutorClearRoadMs = 0L
+        clearRoadSinceMs = 0L
 
         val fix = locationTracker.state.value.currentFix
         val dest = navigationRepo.state.value.destinationName

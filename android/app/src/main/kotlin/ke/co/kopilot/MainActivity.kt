@@ -50,6 +50,7 @@ import ke.co.kopilot.feature.dashboard.DashboardViewModel
 import ke.co.kopilot.feature.diagnostics.ObdScreen
 import ke.co.kopilot.feature.sensors.SensorsScreen
 import ke.co.kopilot.feature.settings.SettingsScreen
+import ke.co.kopilot.feature.trips.TripsScreen
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -145,11 +146,15 @@ class MainActivity : ComponentActivity() {
                             onOpenSettings = { navController.navigate("settings") },
                             onOpenSensors = { navController.navigate("sensors") },
                             onOpenObd = { navController.navigate("obd") },
+                            onOpenTrips = { navController.navigate("trips") },
                             onCallEmergency = { phone ->
                                 startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
                             },
                             viewModel = dashboardViewModel,
                         )
+                    }
+                    composable("trips") {
+                        TripsScreen(onBack = { navController.popBackStack() })
                     }
                     composable("obd") {
                         ObdScreen(onBack = { navController.popBackStack() })

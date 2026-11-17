@@ -215,10 +215,19 @@ class ObdConnectionManager @Inject constructor(
     @SuppressLint("MissingPermission")
     suspend fun connect(address: String, permissionGranted: Boolean): Result<ObdTransportType> {
         val btAdapter = adapter
-        if (!permissionGranted || btAdapter == null || !btAdapter.isEnabled) {
+        if (!permissionGranted) {
+            val msg = "Bluetooth permission not granted — tap Grant Bluetooth Permissions"
+            appendLog(msg)
             _connectionState.value = ObdConnectionState.ERROR
-            _statusMessage.value = "Bluetooth unavailable or permission missing"
-            return Result.failure(IllegalStateException("Bluetooth unavailable"))
+            _statusMessage.value = msg
+            return Result.failure(IllegalStateException(msg))
+        }
+        if (btAdapter == null || !btAdapter.isEnabled) {
+            val msg = "Bluetooth is turned OFF — enable Bluetooth and try again"
+            appendLog(msg)
+            _connectionState.value = ObdConnectionState.ERROR
+            _statusMessage.value = msg
+            return Result.failure(IllegalStateException(msg))
         }
 
         manualDisconnectRequested = false
@@ -269,34 +278,41 @@ class ObdConnectionManager @Inject constructor(
 
     @SuppressLint("MissingPermission")
     private suspend fun connectClassicSpp(device: BluetoothDevice): Result<Unit> {
-        val attempts: List<() -> BluetoothSocket> = listOf(
-            { device.createRfcommSocketToServiceRecord(SPP_UUID) },
-            { device.createInsecureRfcommSocketToServiceRecord(SPP_UUID) },
-            {
+        val attempts: List<Pair<String, () -> BluetoothSocket>> = listOf(
+            "Secure SPP" to { device.createRfcommSocketToServiceRecord(SPP_UUID) },
+            "Insecure SPP" to { device.createInsecureRfcommSocketToServiceRecord(SPP_UUID) },
+            "RFCOMM Ch.1" to {
                 @Suppress("UNCHECKED_CAST")
                 device.javaClass
                     .getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
                     .invoke(device, 1) as BluetoothSocket
             },
+            "RFCOMM Ch.2" to {
+                @Suppress("UNCHECKED_CAST")
+                device.javaClass
+                    .getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                    .invoke(device, 2) as BluetoothSocket
+            },
         )
         var lastError: Throwable? = null
-        attempts.forEachIndexed { idx, factory ->
+        attempts.forEachIndexed { idx, (label, factory) ->
             var sock: BluetoothSocket? = null
             val ok = runCatching {
                 runCatching { adapter?.cancelDiscovery() }
+                delay(300L)
                 sock = factory()
                 val s = sock!!
-                appendLog("Classic SPP attempt ${idx + 1}/3...")
+                appendLog("Classic $label (${idx + 1}/${attempts.size})...")
                 s.connect()
                 if (!s.isConnected) {
                     runCatching { s.close() }
                     throw IllegalStateException("RFCOMM SPP socket not connected")
                 }
                 classicSocket = s
-                appendLog("Classic SPP socket connected")
+                appendLog("Classic $label connected!")
             }.onFailure { err ->
                 lastError = err
-                appendLog("SPP attempt ${idx + 1} failed: ${err.localizedMessage ?: err.javaClass.simpleName}")
+                appendLog("$label failed: ${err.localizedMessage ?: err.javaClass.simpleName}")
                 runCatching { sock?.close() }
             }.isSuccess
             if (ok) return Result.success(Unit)

@@ -77,6 +77,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import ke.co.kopilot.feature.diagnostics.ObdLiveTelemetry
 import ke.co.kopilot.feature.diagnostics.ObdPidCapability
 import ke.co.kopilot.feature.diagnostics.PidSupportStatus
@@ -115,6 +117,7 @@ fun DashboardScreen(
     onOpenSettings: () -> Unit,
     onOpenSensors: () -> Unit = {},
     onOpenObd: () -> Unit = {},
+    onOpenTrips: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -311,7 +314,7 @@ fun DashboardScreen(
                         alertsMuted = state.settings.alertsMuted,
                         onToggleMuteAlerts = viewModel::toggleAlertsMute,
                         onCallEmergency = { onCallEmergency(state.settings.emergencyContactPhone) },
-                        onOpenTrips = { showTripsDialog = true },
+                        onOpenTrips = onOpenTrips,
                         onOpenObd = onOpenObd,
                         onOpenSettings = onOpenSettings,
                     )
@@ -379,7 +382,7 @@ fun DashboardScreen(
                     alertsMuted = state.settings.alertsMuted,
                     onToggleMuteAlerts = viewModel::toggleAlertsMute,
                     onCallEmergency = { onCallEmergency(state.settings.emergencyContactPhone) },
-                    onOpenTrips = { showTripsDialog = true },
+                    onOpenTrips = onOpenTrips,
                     onOpenObd = onOpenObd,
                     onOpenSettings = onOpenSettings,
                 )
@@ -472,6 +475,14 @@ private fun ViewportCard(
                 )
                 // Real-time on-device tracked object bounding boxes + labels
                 Box(modifier = Modifier.fillMaxSize()) {
+                    val labelPaint = remember {
+                        android.graphics.Paint().apply {
+                            color = android.graphics.Color.WHITE
+                            textSize = 30f
+                            isFakeBoldText = true
+                            isAntiAlias = true
+                        }
+                    }
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         for (obj in state.visionState.trackedObjects) {
                             val left = obj.normalizedLeft * size.width
@@ -479,8 +490,9 @@ private fun ViewportCard(
                             val right = obj.normalizedRight * size.width
                             val bottom = obj.normalizedBottom * size.height
                             val boxColor = when (obj.label) {
-                                "Pedestrian" -> KoPilotColors.WarningAmber
-                                "Vehicle" -> MintTeal
+                                "Pedestrian", "Bicycle" -> KoPilotColors.WarningAmber
+                                "Motorbike", "Tractor", "Lorry / Bus" -> Color(0xFFFF7043)
+                                "Car", "Vehicle" -> MintTeal
                                 else -> NavBlue
                             }
                             drawRect(
@@ -488,6 +500,19 @@ private fun ViewportCard(
                                 topLeft = Offset(left, top),
                                 size = Size((right - left).coerceAtLeast(4f), (bottom - top).coerceAtLeast(4f)),
                                 style = Stroke(width = 2.5.dp.toPx()),
+                            )
+                            val tagText = if (obj.trackingId > 0) "#${obj.trackingId} ${obj.label}" else obj.label
+                            val tagTop = (top - 28f).coerceAtLeast(4f)
+                            drawRect(
+                                color = boxColor.copy(alpha = 0.85f),
+                                topLeft = Offset(left, tagTop),
+                                size = Size((tagText.length * 16f + 12f).coerceAtMost(size.width - left), 28f),
+                            )
+                            drawContext.canvas.nativeCanvas.drawText(
+                                tagText,
+                                left + 6f,
+                                tagTop + 22f,
+                                labelPaint,
                             )
                         }
                         // Highlight focused Sign ROI regions

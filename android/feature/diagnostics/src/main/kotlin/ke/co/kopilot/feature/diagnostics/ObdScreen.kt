@@ -1,11 +1,14 @@
 package ke.co.kopilot.feature.diagnostics
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,12 +19,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -136,11 +141,23 @@ fun ObdScreen(
 
             // Connection Status & Controls
             ObdPanel {
-                Text(
-                    text = "OBD State: ${connState.name}",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
+                val isBusy = connState == ObdConnectionState.CONNECTING ||
+                    connState == ObdConnectionState.ADAPTER_INITIALIZING ||
+                    connState == ObdConnectionState.ECU_CONNECTING ||
+                    connState == ObdConnectionState.RECONNECTING
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (isBusy) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    }
+                    Text(
+                        text = "OBD State: ${connState.name}",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(statusMsg, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                 telemetry.adapterInfo?.let {
@@ -151,6 +168,12 @@ fun ObdScreen(
                         "Protocol: $it • Voltage: ${telemetry.controlModuleVoltageV?.let { v -> "%.2fV".format(v) } ?: "--"}",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                }
+                if (connLog.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    connLog.takeLast(4).forEach { line ->
+                        Text(line, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -166,10 +189,15 @@ fun ObdScreen(
                             Text("Stop")
                         }
                     }
-                    if (diag.obdConnected || connState == ObdConnectionState.CONNECTING || connState == ObdConnectionState.RECONNECTING) {
+                    if (diag.obdConnected || isBusy) {
                         OutlinedButton(onClick = viewModel::disconnect) {
                             Text("Disconnect")
                         }
+                    }
+                    OutlinedButton(onClick = {
+                        runCatching { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
+                    }) {
+                        Text("BT Settings")
                     }
                 }
             }
@@ -186,10 +214,16 @@ fun ObdScreen(
                     )
                 } else {
                     devices.forEach { dev ->
+                        val onConnectDevice = {
+                            if (btGranted) viewModel.connect(dev.address, true) else permissionLauncher.launch(requiredBtPerms)
+                        }
                         Surface(
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable(onClick = onConnectDevice),
                         ) {
                             Row(
                                 modifier = Modifier.padding(10.dp),
@@ -207,11 +241,8 @@ fun ObdScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                Button(
-                                    onClick = {
-                                        if (btGranted) viewModel.connect(dev.address, true) else permissionLauncher.launch(requiredBtPerms)
-                                    },
-                                ) {
+                                Spacer(Modifier.width(8.dp))
+                                Button(onClick = onConnectDevice) {
                                     Text("Connect")
                                 }
                             }
