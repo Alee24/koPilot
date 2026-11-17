@@ -47,6 +47,7 @@ import ke.co.kopilot.core.database.preferences.PreferencesRepository
 import ke.co.kopilot.core.designsystem.theme.KoPilotTheme
 import ke.co.kopilot.feature.dashboard.DashboardScreen
 import ke.co.kopilot.feature.dashboard.DashboardViewModel
+import ke.co.kopilot.feature.diagnostics.ObdScreen
 import ke.co.kopilot.feature.sensors.SensorsScreen
 import ke.co.kopilot.feature.settings.SettingsScreen
 import javax.inject.Inject
@@ -143,11 +144,15 @@ class MainActivity : ComponentActivity() {
                         DashboardScreen(
                             onOpenSettings = { navController.navigate("settings") },
                             onOpenSensors = { navController.navigate("sensors") },
+                            onOpenObd = { navController.navigate("obd") },
                             onCallEmergency = { phone ->
                                 startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
                             },
                             viewModel = dashboardViewModel,
                         )
+                    }
+                    composable("obd") {
+                        ObdScreen(onBack = { navController.popBackStack() })
                     }
                     composable("sensors") {
                         SensorsScreen(onBack = { navController.popBackStack() })

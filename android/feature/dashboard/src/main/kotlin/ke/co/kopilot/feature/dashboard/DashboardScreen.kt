@@ -114,6 +114,7 @@ private val NavBlue = Color(0xFF2B7FFF)
 fun DashboardScreen(
     onOpenSettings: () -> Unit,
     onOpenSensors: () -> Unit = {},
+    onOpenObd: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -311,6 +312,7 @@ fun DashboardScreen(
                         onToggleMuteAlerts = viewModel::toggleAlertsMute,
                         onCallEmergency = { onCallEmergency(state.settings.emergencyContactPhone) },
                         onOpenTrips = { showTripsDialog = true },
+                        onOpenObd = onOpenObd,
                         onOpenSettings = onOpenSettings,
                     )
                 }
@@ -378,6 +380,7 @@ fun DashboardScreen(
                     onToggleMuteAlerts = viewModel::toggleAlertsMute,
                     onCallEmergency = { onCallEmergency(state.settings.emergencyContactPhone) },
                     onOpenTrips = { showTripsDialog = true },
+                    onOpenObd = onOpenObd,
                     onOpenSettings = onOpenSettings,
                 )
             }
@@ -432,63 +435,6 @@ private fun TopCockpitHeader(
                     fontSize = 11.sp,
                     lineHeight = 13.sp,
                 )
-            }
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = CockpitCardBg,
-                border = BorderStroke(1.dp, MintTeal),
-                modifier = Modifier.clickable(onClick = onOpenObdLive),
-            ) {
-                Text(
-                    text = "OBD",
-                    color = MintTeal,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                )
-            }
-            if (isParked) {
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = CockpitCardBg,
-                    border = BorderStroke(1.dp, NavBlue),
-                    modifier = Modifier.clickable(onClick = onOpenVisionDiag),
-                ) {
-                    Text(
-                        text = "Vision Diag",
-                        color = NavBlue,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    )
-                }
-            }
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = CockpitCardBg,
-                border = BorderStroke(1.dp, if (isOnline) Color(0xFF174B44) else Color(0xFF4D3B1A)),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(if (isOnline) MintTeal else KoPilotColors.WarningAmber),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = if (isOnline) "Online" else "Offline",
-                        color = if (isOnline) MintTeal else KoPilotColors.WarningAmber,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
             }
         }
     }
@@ -1332,6 +1278,7 @@ private fun BottomQuickActionsBar(
     onToggleMuteAlerts: () -> Unit,
     onCallEmergency: () -> Unit,
     onOpenTrips: () -> Unit,
+    onOpenObd: () -> Unit = {},
     onOpenSettings: () -> Unit,
 ) {
     Row(
@@ -1355,6 +1302,12 @@ private fun BottomQuickActionsBar(
             label = "My Trips",
             iconTint = Color.White,
             onClick = onOpenTrips,
+        )
+        BottomCircleAction(
+            icon = Icons.Default.DirectionsCar,
+            label = "OBD-II",
+            iconTint = MintTeal,
+            onClick = onOpenObd,
         )
         BottomCircleAction(
             icon = Icons.Default.Settings,

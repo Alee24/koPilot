@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothSocket
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.BroadcastReceiver
@@ -261,18 +262,39 @@ class ObdConnectionManager @Inject constructor(
 
     @SuppressLint("MissingPermission")
     private suspend fun connectClassicSpp(device: BluetoothDevice): Result<Unit> {
-        return runCatching {
-            val sock = device.createRfcommSocketToServiceRecord(SPP_UUID)
-            val connected = withTimeoutOrNull(8_000L) {
-                sock.connect()
-                true
-            } ?: false
-            if (!connected || !sock.isConnected) {
-                runCatching { sock.close() }
-                throw IllegalStateException("RFCOMM SPP connection timed out")
-            }
-            classicSocket = sock
+        val attempts: List<() -> BluetoothSocket> = listOf(
+            { device.createRfcommSocketToServiceRecord(SPP_UUID) },
+            { device.createInsecureRfcommSocketToServiceRecord(SPP_UUID) },
+            {
+                @Suppress("UNCHECKED_CAST")
+                device.javaClass
+                    .getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                    .invoke(device, 1) as BluetoothSocket
+            },
+        )
+        var lastError: Throwable? = null
+        for (factory in attempts) {
+            var sock: BluetoothSocket? = null
+            val ok = runCatching {
+                runCatching { adapter?.cancelDiscovery() }
+                sock = factory()
+                val s = sock!!
+                val connected = withTimeoutOrNull(6_000L) {
+                    s.connect()
+                    true
+                } ?: false
+                if (!connected || !s.isConnected) {
+                    runCatching { s.close() }
+                    throw IllegalStateException("RFCOMM SPP connection timed out")
+                }
+                classicSocket = s
+            }.onFailure { err ->
+                lastError = err
+                runCatching { sock?.close() }
+            }.isSuccess
+            if (ok) return Result.success(Unit)
         }
+        return Result.failure(lastError ?: IllegalStateException("Classic SPP connection failed"))
     }
 
     @SuppressLint("MissingPermission")
@@ -322,23 +344,36 @@ class ObdConnectionManager @Inject constructor(
                 gatt.setCharacteristicNotification(notifyChar, true)
                 val cccd = notifyChar.getDescriptor(CCCD_UUID)
                 if (cccd != null) {
-                    @Suppress("DEPRECATION")
-                    cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                    @Suppress("DEPRECATION")
-                    gatt.writeDescriptor(cccd)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        gatt.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        @Suppress("DEPRECATION")
+                        gatt.writeDescriptor(cccd)
+                    }
+                } else {
+                    readyDeferred.complete(Result.success(Unit))
                 }
-                readyDeferred.complete(Result.success(Unit))
+            }
+
+            override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+                if (!readyDeferred.isCompleted) {
+                    readyDeferred.complete(Result.success(Unit))
+                }
+            }
+
+            override fun onCharacteristicChanged(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                value: ByteArray,
+            ) {
+                handleBleChunk(value.toString(Charsets.US_ASCII))
             }
 
             @Suppress("DEPRECATION")
             override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-                val chunk = characteristic.value?.toString(Charsets.US_ASCII).orEmpty()
-                bleResponseBuffer.append(chunk)
-                if (chunk.contains('>')) {
-                    val full = bleResponseBuffer.toString().trim()
-                    bleResponseBuffer.clear()
-                    blePendingDeferred?.complete(full)
-                }
+                handleBleChunk(characteristic.value?.toString(Charsets.US_ASCII).orEmpty())
             }
         }
 
@@ -350,6 +385,15 @@ class ObdConnectionManager @Inject constructor(
 
         return withTimeoutOrNull(10_000L) { readyDeferred.await() }
             ?: Result.failure(IllegalStateException("BLE GATT service discovery timed out"))
+    }
+
+    private fun handleBleChunk(chunk: String) {
+        bleResponseBuffer.append(chunk)
+        if (chunk.contains('>')) {
+            val full = bleResponseBuffer.toString().trim()
+            bleResponseBuffer.clear()
+            blePendingDeferred?.complete(full)
+        }
     }
 
     /**
@@ -406,10 +450,20 @@ class ObdConnectionManager @Inject constructor(
         bleResponseBuffer.clear()
         blePendingDeferred = deferred
 
-        @Suppress("DEPRECATION")
-        writeChar.value = "$command\r".toByteArray(Charsets.US_ASCII)
-        @Suppress("DEPRECATION")
-        val ok = gatt.writeCharacteristic(writeChar)
+        val payload = "$command\r".toByteArray(Charsets.US_ASCII)
+        val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val writeType = if ((writeChar.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
+                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            } else {
+                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            }
+            gatt.writeCharacteristic(writeChar, payload, writeType) == BluetoothStatusCodes.SUCCESS
+        } else {
+            @Suppress("DEPRECATION")
+            writeChar.value = payload
+            @Suppress("DEPRECATION")
+            gatt.writeCharacteristic(writeChar)
+        }
         if (!ok) {
             blePendingDeferred = null
             return ""
