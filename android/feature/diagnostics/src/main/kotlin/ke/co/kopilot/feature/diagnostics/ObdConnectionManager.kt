@@ -65,6 +65,13 @@ class ObdConnectionManager @Inject constructor(
     private val _activeTransport = MutableStateFlow(ObdTransportType.UNKNOWN)
     val activeTransport: StateFlow<ObdTransportType> = _activeTransport.asStateFlow()
 
+    private val _connectionLog = MutableStateFlow<List<String>>(emptyList())
+    val connectionLog: StateFlow<List<String>> = _connectionLog.asStateFlow()
+
+    fun appendLog(line: String) {
+        _connectionLog.value = (_connectionLog.value + line).takeLast(20)
+    }
+
     private var classicSocket: BluetoothSocket? = null
     private var bleGatt: BluetoothGatt? = null
     private var bleWriteChar: BluetoothGattCharacteristic? = null
@@ -273,23 +280,23 @@ class ObdConnectionManager @Inject constructor(
             },
         )
         var lastError: Throwable? = null
-        for (factory in attempts) {
+        attempts.forEachIndexed { idx, factory ->
             var sock: BluetoothSocket? = null
             val ok = runCatching {
                 runCatching { adapter?.cancelDiscovery() }
                 sock = factory()
                 val s = sock!!
-                val connected = withTimeoutOrNull(6_000L) {
-                    s.connect()
-                    true
-                } ?: false
-                if (!connected || !s.isConnected) {
+                appendLog("Classic SPP attempt ${idx + 1}/3...")
+                s.connect()
+                if (!s.isConnected) {
                     runCatching { s.close() }
-                    throw IllegalStateException("RFCOMM SPP connection timed out")
+                    throw IllegalStateException("RFCOMM SPP socket not connected")
                 }
                 classicSocket = s
+                appendLog("Classic SPP socket connected")
             }.onFailure { err ->
                 lastError = err
+                appendLog("SPP attempt ${idx + 1} failed: ${err.localizedMessage ?: err.javaClass.simpleName}")
                 runCatching { sock?.close() }
             }.isSuccess
             if (ok) return Result.success(Unit)
@@ -431,11 +438,15 @@ class ObdConnectionManager @Inject constructor(
                 out.flush()
                 val sb = StringBuilder()
                 while (true) {
-                    val ch = input.read()
-                    if (ch == -1) break
-                    val c = ch.toChar()
-                    if (c == '>') break
-                    sb.append(c)
+                    if (input.available() > 0) {
+                        val ch = input.read()
+                        if (ch == -1) break
+                        val c = ch.toChar()
+                        if (c == '>') break
+                        sb.append(c)
+                    } else {
+                        delay(15L)
+                    }
                 }
                 sb.toString().trim()
             }.getOrDefault("")

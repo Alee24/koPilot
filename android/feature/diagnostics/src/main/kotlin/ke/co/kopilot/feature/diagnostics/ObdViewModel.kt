@@ -16,6 +16,7 @@ class ObdViewModel @Inject constructor(
     val liveTelemetry: StateFlow<ObdLiveTelemetry> = obdManager.liveTelemetry
     val capabilities: StateFlow<List<ObdPidCapability>> = obdManager.capabilities
     val statusMessage: StateFlow<String> = obdManager.connectionManager.statusMessage
+    val connectionLog: StateFlow<List<String>> = obdManager.connectionLog
     val diagnosticsState: StateFlow<VehicleDiagnosticsState> = obdManager.state
 
     fun loadPairedDevices(bluetoothGranted: Boolean) {

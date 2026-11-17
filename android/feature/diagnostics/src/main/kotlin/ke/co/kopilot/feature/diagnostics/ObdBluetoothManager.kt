@@ -37,6 +37,7 @@ class ObdBluetoothManager @Inject constructor(
 
     val connectionState: StateFlow<ObdConnectionState> = connectionManager.connectionState
     val discoveredDevices: StateFlow<List<ObdDiscoveredDevice>> = connectionManager.discoveredDevices
+    val connectionLog: StateFlow<List<String>> = connectionManager.connectionLog
 
     private var pollingJob: Job? = null
 
@@ -78,20 +79,26 @@ class ObdBluetoothManager @Inject constructor(
                 val transport = connRes.getOrDefault(ObdTransportType.UNKNOWN)
                 connectionManager.setState(ObdConnectionState.ADAPTER_INITIALIZING, "Initializing adapter...")
 
-                val atz = connectionManager.sendCommand("ATZ", timeoutMs = 2_500L)
+                val atz = connectionManager.sendCommand("ATZ", timeoutMs = 3_500L)
+                connectionManager.appendLog("> ATZ -> ${atz.replace("\r", " ").take(40)}")
+                delay(800L)
                 val ate0 = connectionManager.sendCommand("ATE0")
+                connectionManager.appendLog("> ATE0 -> ${ate0.replace("\r", " ").take(24)}")
                 connectionManager.sendCommand("ATL0")
                 connectionManager.sendCommand("ATS0")
                 connectionManager.sendCommand("ATH0")
                 val ati = connectionManager.sendCommand("ATI")
                 val atrv = connectionManager.sendCommand("ATRV")
+                connectionManager.appendLog("> ATI -> ${ati.take(30)} | ATRV -> $atrv")
 
                 val adapterVerified = atz.contains("ELM", ignoreCase = true) ||
+                    atz.contains("OBD", ignoreCase = true) ||
                     ati.contains("ELM", ignoreCase = true) ||
                     ati.contains("OBD", ignoreCase = true) ||
                     ate0.contains("OK", ignoreCase = true)
 
                 if (!adapterVerified) {
+                    connectionManager.appendLog("Adapter init failed: ATZ='$atz' ATE0='$ate0'")
                     connectionManager.setState(
                         ObdConnectionState.UNSUPPORTED,
                         "Device did not respond to ELM327-compatible initialization",
@@ -105,8 +112,16 @@ class ObdBluetoothManager @Inject constructor(
                 }
 
                 connectionManager.setState(ObdConnectionState.ECU_CONNECTING, "Connecting to vehicle ECU...")
-                val protoResp = connectionManager.sendCommand("ATSP0", timeoutMs = 3_000L)
-                val pid00Resp = connectionManager.sendCommand("0100", timeoutMs = 4_000L)
+                var protoResp = ""
+                var pid00Resp = ""
+                for (protoCmd in listOf("ATSP0", "ATSP6", "ATSP7", "ATSP3", "ATSP5")) {
+                    protoResp = connectionManager.sendCommand(protoCmd, timeoutMs = 3_000L)
+                    pid00Resp = connectionManager.sendCommand("0100", timeoutMs = 12_000L)
+                    connectionManager.appendLog("> $protoCmd + 0100 -> ${pid00Resp.replace("\r", " ").take(36)}")
+                    if (!ObdPidParser.isAdapterError(pid00Resp) && pid00Resp.uppercase().replace(" ", "").contains("4100")) {
+                        break
+                    }
+                }
 
                 if (ObdPidParser.isAdapterError(pid00Resp) || !pid00Resp.uppercase().replace(" ", "").contains("4100")) {
                     connectionManager.setState(

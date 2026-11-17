@@ -5,7 +5,9 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -22,7 +25,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -37,9 +39,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -89,12 +96,13 @@ fun ObdScreen(
     val telemetry by viewModel.liveTelemetry.collectAsStateWithLifecycle()
     val capabilities by viewModel.capabilities.collectAsStateWithLifecycle()
     val statusMsg by viewModel.statusMessage.collectAsStateWithLifecycle()
+    val connLog by viewModel.connectionLog.collectAsStateWithLifecycle()
     val diag by viewModel.diagnosticsState.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("OBD-II Connection & Engine") },
+                title = { Text("ECU Gauges & OBD-II") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -108,7 +116,7 @@ fun ObdScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (!btGranted) {
@@ -126,16 +134,23 @@ fun ObdScreen(
                 }
             }
 
-            // Connection Status Panel
+            // Connection Status & Controls
             ObdPanel {
-                Text("Adapter Status: ${connState.name}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "OBD State: ${connState.name}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
                 Spacer(Modifier.height(4.dp))
                 Text(statusMsg, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                 telemetry.adapterInfo?.let {
                     Text("Adapter: $it • ${telemetry.transportType.name}", style = MaterialTheme.typography.bodySmall)
                 }
                 telemetry.protocolName?.let {
-                    Text("Protocol: $it • Battery: ${telemetry.controlModuleVoltageV?.let { v -> "%.2fV".format(v) } ?: "--"}", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Protocol: $it • Voltage: ${telemetry.controlModuleVoltageV?.let { v -> "%.2fV".format(v) } ?: "--"}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -159,13 +174,13 @@ fun ObdScreen(
                 }
             }
 
-            // Device Selection Panel
+            // Device Picker
             ObdPanel {
-                Text("Available OBD-II Devices (${devices.size})", style = MaterialTheme.typography.titleMedium)
+                Text("OBD-II Bluetooth Devices (${devices.size})", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(6.dp))
                 if (devices.isEmpty()) {
                     Text(
-                        "No Bluetooth devices listed yet. Pair your HHOBD adapter in Android Bluetooth settings or tap Scan Classic + BLE.",
+                        "Pair your HHOBD / ELM327 adapter in Android Bluetooth settings or tap Scan Classic + BLE.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -173,7 +188,7 @@ fun ObdScreen(
                     devices.forEach { dev ->
                         Surface(
                             color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = MaterialTheme.shapes.small,
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         ) {
                             Row(
@@ -205,36 +220,115 @@ fun ObdScreen(
                 }
             }
 
-            // Live Engine Telemetry
+            // ECU Circular Gauge Dashboard (RPM, Speed, Coolant, Load, Throttle, Voltage)
             ObdPanel {
-                Text("Live Engine Telemetry", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(6.dp))
-                val rpm = telemetry.engineRpm ?: 0
-                Text("Engine RPM (010C): ${telemetry.engineRpm ?: "--"} rpm", fontWeight = FontWeight.SemiBold)
-                LinearProgressIndicator(
-                    progress = { (rpm / 7000f).coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                Text("ECU Live Gauge Cluster", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(10.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    EcuDialGauge(
+                        title = "ENGINE RPM",
+                        valueText = telemetry.engineRpm?.toString() ?: "--",
+                        unit = "rpm",
+                        fraction = ((telemetry.engineRpm ?: 0) / 8000f).coerceIn(0f, 1f),
+                        accentColor = if ((telemetry.engineRpm ?: 0) >= 6000) Color(0xFFFF5252) else Color(0xFF18E2B8),
+                    )
+                    EcuDialGauge(
+                        title = "ECU SPEED",
+                        valueText = telemetry.vehicleSpeedKmh?.toString() ?: "--",
+                        unit = "km/h",
+                        fraction = ((telemetry.vehicleSpeedKmh ?: 0) / 220f).coerceIn(0f, 1f),
+                        accentColor = Color(0xFF2B7FFF),
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    val coolant = telemetry.coolantTempC
+                    EcuDialGauge(
+                        title = "COOLANT TEMP",
+                        valueText = coolant?.let { "$it°" } ?: "--",
+                        unit = "°C",
+                        fraction = if (coolant != null) ((coolant - 20f) / 110f).coerceIn(0f, 1f) else 0f,
+                        accentColor = if ((coolant ?: 0) >= 105) Color(0xFFFF5252) else Color(0xFFFFB300),
+                    )
+                    EcuDialGauge(
+                        title = "ENGINE LOAD",
+                        valueText = telemetry.engineLoadPct?.let { "${it.toInt()}%" } ?: "--",
+                        unit = "0104",
+                        fraction = ((telemetry.engineLoadPct ?: 0f) / 100f).coerceIn(0f, 1f),
+                        accentColor = Color(0xFF18E2B8),
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    EcuDialGauge(
+                        title = "THROTTLE",
+                        valueText = telemetry.throttlePositionPct?.let { "${it.toInt()}%" } ?: "--",
+                        unit = "0111",
+                        fraction = ((telemetry.throttlePositionPct ?: 0f) / 100f).coerceIn(0f, 1f),
+                        accentColor = Color(0xFF2B7FFF),
+                    )
+                    val volt = telemetry.controlModuleVoltageV ?: telemetry.adapterVoltageV
+                    EcuDialGauge(
+                        title = "VOLTAGE",
+                        valueText = volt?.let { "%.1f".format(it) } ?: "--",
+                        unit = "V",
+                        fraction = if (volt != null) ((volt - 10f) / 6f).coerceIn(0f, 1f) else 0f,
+                        accentColor = if (volt != null && volt < 11.8f) Color(0xFFFF5252) else Color(0xFF18E2B8),
+                    )
+                }
+            }
+
+            // Extended ECU Sensors Grid
+            ObdPanel {
+                Text("Extended ECU Sensors & Fuel/Air", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                val metrics = listOf(
+                    "Intake Air Temp" to (telemetry.intakeAirTempC?.let { "$it °C" } ?: "--"),
+                    "Ambient Air Temp" to (telemetry.ambientAirTempC?.let { "$it °C" } ?: "--"),
+                    "Fuel Level" to (telemetry.fuelLevelPct?.let { "${"%.1f".format(it)} %" } ?: "--"),
+                    "Fuel Rail Press." to (telemetry.fuelPressureKpa?.let { "$it kPa" } ?: "--"),
+                    "STFT (Bank 1)" to (telemetry.shortTermFuelTrimPct?.let { "${"%.1f".format(it)} %" } ?: "--"),
+                    "LTFT (Bank 1)" to (telemetry.longTermFuelTrimPct?.let { "${"%.1f".format(it)} %" } ?: "--"),
+                    "MAP Pressure" to (telemetry.mapKpa?.let { "$it kPa" } ?: "--"),
+                    "MAF Airflow" to (telemetry.mafGramsPerSec?.let { "${"%.2f".format(it)} g/s" } ?: "--"),
+                    "Timing Advance" to (telemetry.timingAdvanceDeg?.let { "${"%.1f".format(it)} °" } ?: "--"),
+                    "O2 Sensor B1S1" to (telemetry.o2SensorVoltageV?.let { "${"%.2f".format(it)} V" } ?: "--"),
+                    "Engine Runtime" to (telemetry.runtimeSinceStartSec?.let { "${it / 60}m ${it % 60}s" } ?: "--"),
+                    "Fuel System" to (telemetry.fuelSystemStatus ?: "--"),
                 )
-                Text("Vehicle Speed (010D): ${telemetry.vehicleSpeedKmh ?: "--"} km/h")
-                Text("Coolant Temp (0105): ${telemetry.coolantTempC?.let { "$it°C" } ?: "--"}")
+                metrics.chunked(2).forEach { pair ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        pair.forEach { (label, value) ->
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(value, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                }
+                            }
+                        }
+                    }
+                }
                 if (telemetry.coolantHistoryC.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
                     Text(
-                        "Coolant Trend: ${telemetry.coolantHistoryC.takeLast(8).joinToString("° → ")}°C",
+                        "Coolant Trend: ${telemetry.coolantHistoryC.takeLast(10).joinToString("° → ")}°C",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                Text("Engine Load (0104): ${telemetry.engineLoadPct?.let { "${"%.1f".format(it)}%" } ?: "--"} | Throttle (0111): ${telemetry.throttlePositionPct?.let { "${"%.1f".format(it)}%" } ?: "--"}")
-                Text("Intake Temp (010F): ${telemetry.intakeAirTempC?.let { "$it°C" } ?: "--"} | Ambient (0146): ${telemetry.ambientAirTempC?.let { "$it°C" } ?: "--"}")
-                Text("STFT: ${telemetry.shortTermFuelTrimPct?.let { "${"%.1f".format(it)}%" } ?: "--"} | LTFT: ${telemetry.longTermFuelTrimPct?.let { "${"%.1f".format(it)}%" } ?: "--"} | MAP: ${telemetry.mapKpa ?: "--"} kPa")
-                Text("MAF: ${telemetry.mafGramsPerSec?.let { "${"%.2f".format(it)} g/s" } ?: "--"} | Timing: ${telemetry.timingAdvanceDeg?.let { "${"%.1f".format(it)}°" } ?: "--"} | O2: ${telemetry.o2SensorVoltageV?.let { "${"%.2f".format(it)}V" } ?: "--"}")
-                Text("Fuel Level: ${telemetry.fuelLevelPct?.let { "${"%.1f".format(it)}%" } ?: "--"} | Runtime: ${telemetry.runtimeSinceStartSec ?: "--"}s")
-                Text("Active Fault Codes (Mode 03): ${diag.dtcCodes.ifEmpty { listOf("None") }.joinToString(", ")}")
             }
 
-            // Transmission & CVT
+            // Fault Codes & Transmission / CVT
             ObdPanel {
-                Text("Transmission & CVT Monitoring", style = MaterialTheme.typography.titleMedium)
+                Text("Diagnostics, Fault Codes & CVT", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(4.dp))
+                Text("Engine/OBD DTCs (Mode 03): ${diag.dtcCodes.ifEmpty { listOf("None") }.joinToString(", ")}")
                 Text("Transmission DTCs (P07xx–P09xx): ${telemetry.transmissionDtcCodes.ifEmpty { listOf("None") }.joinToString(", ")}")
                 telemetry.observedRpmSpeedRatio?.let { ratio ->
                     Text("Observed RPM/Speed Ratio: ${"%.1f".format(ratio)} rpm per km/h")
@@ -244,6 +338,19 @@ fun ObdScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+
+            // Live Adapter Handshake Log (for verifying real hardware connection)
+            ObdPanel {
+                Text("Adapter Handshake & Protocol Log (${connLog.size})", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(4.dp))
+                if (connLog.isEmpty()) {
+                    Text("No commands sent yet. Tap Connect on an OBD-II device above.", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    connLog.forEach { line ->
+                        Text(line, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                    }
+                }
             }
 
             // Capability Registry
@@ -259,6 +366,43 @@ fun ObdScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun EcuDialGauge(
+    title: String,
+    valueText: String,
+    unit: String,
+    fraction: Float,
+    accentColor: Color,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(modifier = Modifier.size(124.dp), contentAlignment = Alignment.Center) {
+            Canvas(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                val startAngle = 150f
+                val sweepTotal = 240f
+                drawArc(
+                    color = Color(0xFF233242),
+                    startAngle = startAngle,
+                    sweepAngle = sweepTotal,
+                    useCenter = false,
+                    style = Stroke(width = 12.dp.toPx(), cap = StrokeCap.Round),
+                )
+                drawArc(
+                    color = accentColor,
+                    startAngle = startAngle,
+                    sweepAngle = sweepTotal * fraction.coerceIn(0f, 1f),
+                    useCenter = false,
+                    style = Stroke(width = 12.dp.toPx(), cap = StrokeCap.Round),
+                )
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(valueText, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                Text(unit, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Text(title, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
