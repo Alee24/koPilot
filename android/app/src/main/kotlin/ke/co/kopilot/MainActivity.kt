@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -76,7 +78,7 @@ class MainActivity : ComponentActivity() {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0xFF0A1016)),
+                            .background(Color(0xFF040A12)),
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(
@@ -84,22 +86,18 @@ class MainActivity : ComponentActivity() {
                             verticalArrangement = Arrangement.Center,
                         ) {
                             Image(
-                                painter = painterResource(id = R.drawable.ic_helmet_splash),
-                                contentDescription = "KoPilot Helmet",
-                                modifier = Modifier.size(132.dp),
+                                painter = painterResource(id = R.drawable.kopilot_logo_splash),
+                                contentDescription = "KoPilot Logo",
+                                modifier = Modifier
+                                    .size(220.dp)
+                                    .clip(RoundedCornerShape(36.dp)),
                             )
                             Spacer(Modifier.height(16.dp))
                             Text(
-                                text = "KoPilot",
-                                color = Color.White,
-                                fontSize = 30.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
                                 text = "Your Intelligent Driving Assistant",
                                 color = Color(0xFF18E2B8),
-                                fontSize = 13.sp,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
                             )
                         }
                     }
