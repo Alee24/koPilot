@@ -156,10 +156,10 @@ class ObdConnectionManager @Inject constructor(
             }
             context.registerReceiver(classicReceiver, filter)
             classicReceiverRegistered = true
-            adapter.startDiscovery()
+            adapter?.startDiscovery()
         }
 
-        val scanner = adapter.bluetoothLeScanner
+        val scanner = adapter?.bluetoothLeScanner
         if (scanner != null) {
             val cb = object : ScanCallback() {
                 override fun onScanResult(callbackType: Int, result: ScanResult?) {
@@ -206,7 +206,8 @@ class ObdConnectionManager @Inject constructor(
 
     @SuppressLint("MissingPermission")
     suspend fun connect(address: String, permissionGranted: Boolean): Result<ObdTransportType> {
-        if (!permissionGranted || adapter == null || !adapter.isEnabled) {
+        val btAdapter = adapter
+        if (!permissionGranted || btAdapter == null || !btAdapter.isEnabled) {
             _connectionState.value = ObdConnectionState.ERROR
             _statusMessage.value = "Bluetooth unavailable or permission missing"
             return Result.failure(IllegalStateException("Bluetooth unavailable"))
@@ -217,7 +218,7 @@ class ObdConnectionManager @Inject constructor(
         disconnectInternal(resetManualFlag = false)
         lastConnectedAddress = address
 
-        val device = runCatching { adapter.getRemoteDevice(address) }.getOrElse {
+        val device = runCatching { btAdapter.getRemoteDevice(address) }.getOrElse {
             _connectionState.value = ObdConnectionState.ERROR
             _statusMessage.value = "Invalid Bluetooth address"
             return Result.failure(it)
