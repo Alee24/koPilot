@@ -72,8 +72,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import ke.co.kopilot.feature.sensors.LateralMotionState
+import ke.co.kopilot.feature.vision.LaneShiftEvent
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -468,6 +472,80 @@ private fun ViewportCard(
                                 size = Size((right - left).coerceAtLeast(4f), (bottom - top).coerceAtLeast(4f)),
                                 style = Stroke(width = 1.5.dp.toPx()),
                             )
+                        }
+                        // Yellow lane lines & corridor overlay when driving with camera active
+                        if (state.isDrivingSessionActive && state.settings.sensorCameraEnabled) {
+                            val lane = state.visionState.laneOverlay
+                            val lTop = Offset(lane.leftTopX * size.width, lane.leftTopY * size.height)
+                            val lBot = Offset(lane.leftBottomX * size.width, lane.leftBottomY * size.height)
+                            val rTop = Offset(lane.rightTopX * size.width, lane.rightTopY * size.height)
+                            val rBot = Offset(lane.rightBottomX * size.width, lane.rightBottomY * size.height)
+                            val yellowLane = Color(0xFFFFD600)
+                            val alertRed = Color(0xFFFF5252)
+                            val leftColor = if (lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_LEFT || lane.shiftEvent == LaneShiftEvent.SHIFTING_LEFT) alertRed else yellowLane
+                            val rightColor = if (lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_RIGHT || lane.shiftEvent == LaneShiftEvent.SHIFTING_RIGHT) alertRed else yellowLane
+                            val dashEffect = if (lane.lanesDetected) null else PathEffect.dashPathEffect(floatArrayOf(18f, 14f), 0f)
+                            val laneStroke = if (lane.lanesDetected) 4.dp.toPx() else 2.5.dp.toPx()
+                            val laneAlpha = if (lane.lanesDetected) 0.95f else 0.55f
+
+                            val corridor = Path().apply {
+                                moveTo(lTop.x, lTop.y)
+                                lineTo(rTop.x, rTop.y)
+                                lineTo(rBot.x, rBot.y)
+                                lineTo(lBot.x, lBot.y)
+                                close()
+                            }
+                            drawPath(
+                                path = corridor,
+                                color = yellowLane.copy(alpha = if (lane.lanesDetected) 0.12f else 0.05f),
+                            )
+                            drawLine(
+                                color = leftColor.copy(alpha = laneAlpha),
+                                start = lTop,
+                                end = lBot,
+                                strokeWidth = laneStroke,
+                                pathEffect = dashEffect,
+                            )
+                            drawLine(
+                                color = rightColor.copy(alpha = laneAlpha),
+                                start = rTop,
+                                end = rBot,
+                                strokeWidth = laneStroke,
+                                pathEffect = dashEffect,
+                            )
+                        }
+                    }
+                    // Lane / Turn status pill at bottom-center of camera viewport
+                    if (state.isDrivingSessionActive) {
+                        val lat = state.motionAnalysis.lateralState
+                        val shift = state.visionState.laneOverlay.shiftEvent
+                        val laneBadgeText = when {
+                            lat == LateralMotionState.SHARP_CORNERING -> "SHARP TURN"
+                            lat == LateralMotionState.LEFT_TURN -> "TURNING LEFT"
+                            lat == LateralMotionState.RIGHT_TURN -> "TURNING RIGHT"
+                            lat == LateralMotionState.LANE_SHIFT_LEFT || shift == LaneShiftEvent.SHIFTING_LEFT || shift == LaneShiftEvent.LANE_DEPARTURE_LEFT -> "SHIFTING LEFT"
+                            lat == LateralMotionState.LANE_SHIFT_RIGHT || shift == LaneShiftEvent.SHIFTING_RIGHT || shift == LaneShiftEvent.LANE_DEPARTURE_RIGHT -> "SHIFTING RIGHT"
+                            state.visionState.laneOverlay.lanesDetected -> "LANES LOCKED"
+                            else -> null
+                        }
+                        if (laneBadgeText != null) {
+                            val isAlert = laneBadgeText != "LANES LOCKED"
+                            Surface(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = 10.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isAlert) Color(0xCCFF6F00) else Color(0xB3101820),
+                                border = BorderStroke(1.dp, Color(0xFFFFD600)),
+                            ) {
+                                Text(
+                                    text = laneBadgeText,
+                                    color = if (isAlert) Color.White else Color(0xFFFFD600),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                )
+                            }
                         }
                     }
                     // Visual road sign badge in bottom-right of camera viewport once a sign is recognized

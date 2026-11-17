@@ -50,6 +50,8 @@ class DrivingMotionAnalyzer @Inject constructor() {
                 LateralMotionState.SHARP_CORNERING
             yawRate >= TURN_RAD_S -> LateralMotionState.LEFT_TURN
             yawRate <= -TURN_RAD_S -> LateralMotionState.RIGHT_TURN
+            yawRate >= LANE_SHIFT_RAD_S || lateral <= -LANE_SHIFT_LATERAL_MPS2 -> LateralMotionState.LANE_SHIFT_LEFT
+            yawRate <= -LANE_SHIFT_RAD_S || lateral >= LANE_SHIFT_LATERAL_MPS2 -> LateralMotionState.LANE_SHIFT_RIGHT
             else -> LateralMotionState.STRAIGHT
         }
 
@@ -113,6 +115,8 @@ class DrivingMotionAnalyzer @Inject constructor() {
         const val HARD_ACCEL_MPS2 = 3.5f
         const val BRAKE_MPS2 = -1.8f
         const val HARSH_BRAKE_MPS2 = -4.2f
+        const val LANE_SHIFT_RAD_S = 0.12f
+        const val LANE_SHIFT_LATERAL_MPS2 = 0.95f
         const val TURN_RAD_S = 0.25f
         const val SHARP_CORNER_RAD_S = 0.65f
         const val SHARP_LATERAL_MPS2 = 3.8f

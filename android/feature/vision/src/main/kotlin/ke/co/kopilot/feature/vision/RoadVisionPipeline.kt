@@ -65,6 +65,7 @@ data class VisionPipelineState(
     val recommendedZoomRatio: Float = 1.2f,
     val trackedObjects: List<TrackedRoadObject> = emptyList(),
     val signRoiBoxes: List<TrackedRoadObject> = emptyList(),
+    val laneOverlay: LaneOverlayState = LaneOverlayState(),
     val lastInferenceLatencyMs: Long = 0L,
     val statusMessage: String = "Initializing offline vision...",
 )
@@ -361,6 +362,7 @@ class RoadVisionPipeline @Inject constructor(
                 }
             }
 
+            val laneState = LaneDetector.detectLanes(bitmap)
             val latencyMs = (System.nanoTime() - startNs) / 1_000_000L
             val nextSpeedLimit = if (confirmed != null && !confirmed.isUncertain && confirmed.category.speedLimitKmh != null) {
                 confirmed.category.speedLimitKmh
@@ -370,6 +372,7 @@ class RoadVisionPipeline @Inject constructor(
             _state.value = _state.value.copy(
                 trackedObjects = tracked,
                 signRoiBoxes = roiOverlayBoxes,
+                laneOverlay = laneState,
                 lastInferenceLatencyMs = latencyMs,
                 lastObservation = confirmed ?: _state.value.lastObservation,
                 lastSpeedLimitKmh = nextSpeedLimit,

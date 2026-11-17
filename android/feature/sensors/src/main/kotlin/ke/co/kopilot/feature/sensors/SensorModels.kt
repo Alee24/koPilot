@@ -78,6 +78,8 @@ enum class LongitudinalMotionState {
 
 enum class LateralMotionState {
     STRAIGHT,
+    LANE_SHIFT_LEFT,
+    LANE_SHIFT_RIGHT,
     LEFT_TURN,
     RIGHT_TURN,
     SHARP_CORNERING,

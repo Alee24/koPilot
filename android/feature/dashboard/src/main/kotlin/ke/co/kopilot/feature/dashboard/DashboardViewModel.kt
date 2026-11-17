@@ -28,6 +28,7 @@ import ke.co.kopilot.feature.location.SpeedEvaluation
 import ke.co.kopilot.feature.location.SpeedZone
 import ke.co.kopilot.feature.location.SpeedZoneMonitor
 import ke.co.kopilot.feature.sensors.DrivingMotionAnalysis
+import ke.co.kopilot.feature.sensors.LateralMotionState
 import ke.co.kopilot.feature.sensors.SensorManagerRepository
 import ke.co.kopilot.feature.sensors.SensorSamplingProfile
 import ke.co.kopilot.feature.navigation.NavigationRepository
@@ -36,6 +37,7 @@ import ke.co.kopilot.feature.traffic.TrafficAdvisor
 import ke.co.kopilot.feature.traffic.TrafficEvaluation
 import ke.co.kopilot.feature.trips.TripActivityLogger
 import ke.co.kopilot.feature.trips.TripRepository
+import ke.co.kopilot.feature.vision.LaneShiftEvent
 import ke.co.kopilot.feature.vision.RoadVisionPipeline
 import ke.co.kopilot.feature.vision.TrafficLightSignal
 import ke.co.kopilot.feature.vision.VisionPipelineState
@@ -117,6 +119,8 @@ class DashboardViewModel @Inject constructor(
     private var lastLoggedCameraMs = 0L
     private var lastLoggedOverspeedMs = 0L
     private var lastLoggedWeather: String? = null
+    private var lastLaneAlertMs = 0L
+    private var lastTurnAlertMs = 0L
 
     private val coreFlows = combine(
         isDriving,
@@ -279,6 +283,66 @@ class DashboardViewModel @Inject constructor(
                         globalMute = s.alertsMuted,
                     )
                 }
+                val shift = vision.laneOverlay.shiftEvent
+                if (isDriving.value && vision.laneOverlay.lanesDetected && shift != LaneShiftEvent.NONE && (now - lastLaneAlertMs) >= 6_000L) {
+                    lastLaneAlertMs = now
+                    val laneText = when (shift) {
+                        LaneShiftEvent.SHIFTING_LEFT -> "Changing lane left"
+                        LaneShiftEvent.SHIFTING_RIGHT -> "Changing lane right"
+                        LaneShiftEvent.LANE_DEPARTURE_LEFT -> "Drifting left across lane"
+                        LaneShiftEvent.LANE_DEPARTURE_RIGHT -> "Drifting right across lane"
+                        LaneShiftEvent.NONE -> ""
+                    }
+                    if (laneText.isNotEmpty()) {
+                        tripActivityLogger.logActivity("LANE_SHIFT", laneText, now)
+                        alertCoordinator.submit(
+                            alert = AlertMessage(
+                                id = UUID.randomUUID().toString(),
+                                priority = AlertPriority.ROAD_OBSERVATION,
+                                spokenText = laneText,
+                                displayText = laneText,
+                                dedupKey = "lane_shift_${shift.name}",
+                                timestampMillis = now,
+                            ),
+                            speechRate = s.voiceSpeed,
+                            language = s.language,
+                            globalMute = s.alertsMuted,
+                        )
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            sensorManagerRepo.state.collect { sensorState ->
+                if (!isDriving.value) return@collect
+                val lat = sensorState.motionAnalysis.lateralState
+                if (lat == LateralMotionState.STRAIGHT) return@collect
+                val now = System.currentTimeMillis()
+                if ((now - lastTurnAlertMs) < 6_000L) return@collect
+                lastTurnAlertMs = now
+                val s = uiState.value.settings
+                val (tag, msg) = when (lat) {
+                    LateralMotionState.LANE_SHIFT_LEFT -> "LANE_CHANGE" to "Changing lane left"
+                    LateralMotionState.LANE_SHIFT_RIGHT -> "LANE_CHANGE" to "Changing lane right"
+                    LateralMotionState.LEFT_TURN -> "TURNING_LEFT" to "Turning left"
+                    LateralMotionState.RIGHT_TURN -> "TURNING_RIGHT" to "Turning right"
+                    LateralMotionState.SHARP_CORNERING -> "SHARP_CORNERING" to "Sharp turn detected — Slow down"
+                    LateralMotionState.STRAIGHT -> return@collect
+                }
+                tripActivityLogger.logActivity(tag, msg, now)
+                alertCoordinator.submit(
+                    alert = AlertMessage(
+                        id = UUID.randomUUID().toString(),
+                        priority = AlertPriority.ROAD_OBSERVATION,
+                        spokenText = msg,
+                        displayText = msg,
+                        dedupKey = "sensor_lat_${lat.name}",
+                        timestampMillis = now,
+                    ),
+                    speechRate = s.voiceSpeed,
+                    language = s.language,
+                    globalMute = s.alertsMuted,
+                )
             }
         }
         viewModelScope.launch {
@@ -444,6 +508,8 @@ class DashboardViewModel @Inject constructor(
         lastLoggedCameraMs = 0L
         lastLoggedOverspeedMs = 0L
         lastLoggedWeather = null
+        lastLaneAlertMs = 0L
+        lastTurnAlertMs = 0L
 
         val fix = locationTracker.state.value.currentFix
         val dest = navigationRepo.state.value.destinationName
