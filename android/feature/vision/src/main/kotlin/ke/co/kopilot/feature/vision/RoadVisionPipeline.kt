@@ -152,20 +152,31 @@ class RoadVisionPipeline @Inject constructor(
             val h = bitmap.height.toFloat().coerceAtLeast(1f)
             frameCounter += 1
 
-            // Extract salient sign ROIs in < 2ms and run Object Detection, ROI OCR, and Full-Frame OCR in PARALLEL
+            // Extract salient sign ROIs in < 2ms and run Object Detection, Full-Frame OCR, and top-1 upscaled ROI OCR in parallel
             val signRois = SignRoiExtractor.extractSignRois(bitmap, maxRois = 2)
             val objTask: Task<List<DetectedObject>> = detector.process(inputImage)
-            val roiTasks: List<Task<Text>> = signRois.map { roi ->
-                recognizer.process(InputImage.fromBitmap(roi.bitmap, 0))
+            val topRoi = signRois.firstOrNull()
+            val topRoiTask: Task<Text>? = topRoi?.let { roi ->
+                val bmp = if (roi.bitmap.width < 180 || roi.bitmap.height < 180) {
+                    Bitmap.createScaledBitmap(
+                        roi.bitmap,
+                        (roi.bitmap.width * 2).coerceAtLeast(180),
+                        (roi.bitmap.height * 2).coerceAtLeast(180),
+                        true,
+                    )
+                } else {
+                    roi.bitmap
+                }
+                recognizer.process(InputImage.fromBitmap(bmp, 0))
             }
             val fullOcrTask: Task<Text> = recognizer.process(inputImage)
 
             val allTasks = buildList<Task<*>> {
                 add(objTask)
-                addAll(roiTasks)
+                if (topRoiTask != null) add(topRoiTask)
                 add(fullOcrTask)
             }
-            runCatching { Tasks.await(Tasks.whenAllComplete(allTasks), 320, TimeUnit.MILLISECONDS) }
+            runCatching { Tasks.await(Tasks.whenAllComplete(allTasks), 750, TimeUnit.MILLISECONDS) }
 
             val detectedObjects = if (objTask.isSuccessful) objTask.result.orEmpty() else emptyList()
 
@@ -209,21 +220,25 @@ class RoadVisionPipeline @Inject constructor(
             val signCandidates = mutableListOf<RawSignDetection>()
             var detectedPlate: String? = null
 
-            roiTasks.forEachIndexed { idx, task ->
-                if (!task.isSuccessful) return@forEachIndexed
-                val roi = signRois[idx]
-                val roiCenterX = (roi.normLeft + roi.normRight) / 2f
-                for (block in task.result.textBlocks) {
-                    val box = block.boundingBox ?: continue
-                    val hasBorder = SignCandidateParser.hasSignBorderColor(roi.bitmap, box)
-                    val whiteInterior = SignCandidateParser.hasWhiteInterior(roi.bitmap, box)
-                    val blockDet = SignCandidateParser.parseSignFromText(block.text, hasBorder, roiCenterX, whiteInterior)
+            if (topRoi != null && topRoiTask != null && topRoiTask.isSuccessful) {
+                val roiCenterX = (topRoi.normLeft + topRoi.normRight) / 2f
+                val fullRoiRect = android.graphics.Rect(0, 0, topRoi.bitmap.width - 1, topRoi.bitmap.height - 1)
+                val whiteInterior = SignCandidateParser.hasWhiteInterior(topRoi.bitmap, fullRoiRect)
+                for (block in topRoiTask.result.textBlocks) {
+                    val blockDet = SignCandidateParser.parseSignFromText(block.text, true, roiCenterX, whiteInterior)
                     if (blockDet != null) {
                         signCandidates.add(blockDet)
                     } else {
                         for (line in block.lines) {
-                            SignCandidateParser.parseSignFromText(line.text, hasBorder, roiCenterX, whiteInterior)?.let {
-                                signCandidates.add(it)
+                            val lineDet = SignCandidateParser.parseSignFromText(line.text, true, roiCenterX, whiteInterior)
+                            if (lineDet != null) {
+                                signCandidates.add(lineDet)
+                            } else {
+                                for (el in line.elements) {
+                                    SignCandidateParser.parseSignFromText(el.text, true, roiCenterX, whiteInterior)?.let {
+                                        signCandidates.add(it)
+                                    }
+                                }
                             }
                         }
                     }
@@ -234,7 +249,7 @@ class RoadVisionPipeline @Inject constructor(
                 for (block in fullOcrTask.result.textBlocks) {
                     val box = block.boundingBox ?: continue
                     val normTop = box.top / h
-                    if (normTop <= 0.88f) {
+                    if (normTop <= 0.92f) {
                         val hasBorder = SignCandidateParser.hasSignBorderColor(bitmap, box)
                         val whiteInterior = SignCandidateParser.hasWhiteInterior(bitmap, box)
                         val centerX = box.centerX() / w
@@ -243,8 +258,15 @@ class RoadVisionPipeline @Inject constructor(
                             signCandidates.add(blockDet)
                         } else {
                             for (line in block.lines) {
-                                SignCandidateParser.parseSignFromText(line.text, hasBorder, centerX, whiteInterior)?.let {
-                                    signCandidates.add(it)
+                                val lineDet = SignCandidateParser.parseSignFromText(line.text, hasBorder, centerX, whiteInterior)
+                                if (lineDet != null) {
+                                    signCandidates.add(lineDet)
+                                } else {
+                                    for (el in line.elements) {
+                                        SignCandidateParser.parseSignFromText(el.text, hasBorder, centerX, whiteInterior)?.let {
+                                            signCandidates.add(it)
+                                        }
+                                    }
                                 }
                             }
                         }

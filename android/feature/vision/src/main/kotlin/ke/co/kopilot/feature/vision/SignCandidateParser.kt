@@ -29,22 +29,23 @@ object SignCandidateParser {
             rawUpper.contains("LIMIT") ||
             rawUpper.contains("MAX")
 
-        // Check numeric speed limits FIRST when white interior or red/yellow border or speed text is present
+        // Check numeric speed limits FIRST using lookarounds so "50KM", "50KPH", "50" all match
         val speedCategory = when {
-            Regex("\\b30\\b").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_30
-            Regex("\\b50\\b").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_50
-            Regex("\\b60\\b").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_60
-            Regex("\\b80\\b").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_80
-            Regex("\\b100\\b").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_100
-            Regex("\\b110\\b").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_110
+            Regex("(?<!\\d)30(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_30
+            Regex("(?<!\\d)50(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_50
+            Regex("(?<!\\d)60(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_60
+            Regex("(?<!\\d)80(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_80
+            Regex("(?<!\\d)100(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_100
+            Regex("(?<!\\d)110(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_110
             else -> null
         }
 
-        if (speedCategory != null && (hasSignBorderColor || explicitSpeedText || hasWhiteInterior)) {
+        if (speedCategory != null) {
             val confidence = when {
                 hasSignBorderColor && hasWhiteInterior -> 0.92f
-                hasSignBorderColor || explicitSpeedText -> 0.84f
-                else -> 0.54f // < 60% unsure: triggers auto-zoom & "unsure" advisory
+                hasSignBorderColor || explicitSpeedText -> 0.86f
+                hasWhiteInterior -> 0.72f
+                else -> 0.54f // < 60% unsure: still reports the sign, triggers auto-zoom & "unsure" advisory
             }
             return RawSignDetection(
                 category = speedCategory,
@@ -119,21 +120,23 @@ object SignCandidateParser {
                 val r = Color.red(px)
                 val g = Color.green(px)
                 val b = Color.blue(px)
-                if (r > 155 && g > 155 && b > 155) whiteHits++
+                val lum = 0.299f * r + 0.587f * g + 0.114f * b
+                val spread = maxOf(r, g, b) - minOf(r, g, b)
+                if (lum > 115f && spread < 60) whiteHits++
                 sampled++
                 x += stepX
             }
             y += stepY
         }
-        return sampled > 0 && (whiteHits.toFloat() / sampled) >= 0.25f
+        return sampled > 0 && (whiteHits.toFloat() / sampled) >= 0.20f
     }
 
     /**
-     * Checks a ring around [box] for red or yellow sign border pixels.
+     * Checks a ring around [box] for red, yellow, or blue sign border pixels.
      */
     fun hasSignBorderColor(bitmap: Bitmap, box: Rect): Boolean {
-        val padX = (box.width() * 0.50f).toInt().coerceAtLeast(10)
-        val padY = (box.height() * 0.50f).toInt().coerceAtLeast(10)
+        val padX = (box.width() * 0.55f).toInt().coerceAtLeast(12)
+        val padY = (box.height() * 0.55f).toInt().coerceAtLeast(12)
         val left = (box.left - padX).coerceIn(0, bitmap.width - 1)
         val top = (box.top - padY).coerceIn(0, bitmap.height - 1)
         val right = (box.right + padX).coerceIn(0, bitmap.width - 1)
@@ -150,18 +153,13 @@ object SignCandidateParser {
             while (x <= right) {
                 if (!box.contains(x, y)) {
                     val pixel = bitmap.getPixel(x, y)
-                    val r = Color.red(pixel)
-                    val g = Color.green(pixel)
-                    val b = Color.blue(pixel)
-                    val isRed = r > 135 && g < 95 && b < 95 && (r - g) > 50
-                    val isYellow = r > 155 && g > 125 && b < 90
-                    if (isRed || isYellow) signColorHits++
+                    if (SignRoiExtractor.classifySignPixel(pixel) != null) signColorHits++
                     sampled++
                 }
                 x += stepX
             }
             y += stepY
         }
-        return sampled > 0 && (signColorHits.toFloat() / sampled.toFloat()) >= 0.05f
+        return sampled > 0 && (signColorHits.toFloat() / sampled.toFloat()) >= 0.03f
     }
 }

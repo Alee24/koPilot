@@ -19,10 +19,14 @@ class SignCandidateParserTest {
         val speed3O = SignCandidateParser.parseSignFromText("3O", hasSignBorderColor = true, normalizedCenterX = 0.4f, hasWhiteInterior = true)
         assertEquals(TrafficSignCategory.SPEED_LIMIT_30, speed3O?.category)
 
-        // Unclear bare "30" without border -> low confidence (< 60%) for auto-zoom & "unsure" feedback
-        val unsure30 = SignCandidateParser.parseSignFromText("30", hasSignBorderColor = false, normalizedCenterX = 0.5f, hasWhiteInterior = true)
+        // Unclear bare "30" without border or white interior -> low confidence (< 60%) for auto-zoom & "unsure" feedback
+        val unsure30 = SignCandidateParser.parseSignFromText("30", hasSignBorderColor = false, normalizedCenterX = 0.5f, hasWhiteInterior = false)
         assertNotNull(unsure30)
         assertEquals(true, (unsure30?.confidence ?: 1f) < 0.60f)
+
+        // Compact "50KM/H" without space -> SPEED_LIMIT_50
+        val speed50Km = SignCandidateParser.parseSignFromText("50KM/H", hasSignBorderColor = false, normalizedCenterX = 0.5f, hasWhiteInterior = true)
+        assertEquals(TrafficSignCategory.SPEED_LIMIT_50, speed50Km?.category)
 
         // Solid red STOP sign -> STOP
         val stop = SignCandidateParser.parseSignFromText("STOP", hasSignBorderColor = true, normalizedCenterX = 0.3f, hasWhiteInterior = false)

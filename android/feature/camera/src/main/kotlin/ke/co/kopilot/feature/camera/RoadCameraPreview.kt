@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,10 +34,12 @@ import java.util.concurrent.Executors
 fun RoadCameraPreview(
     permissionGranted: Boolean,
     isDrivingSessionActive: Boolean,
+    cameraSensorEnabled: Boolean = true,
     analysisIntervalMs: Long,
     zoomRatio: Float = 1.3f,
     performanceController: CameraPerformanceController,
     onFrameListener: RoadFrameListener,
+    onStartDrivingClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -65,6 +68,51 @@ fun RoadCameraPreview(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+        return
+    }
+
+    if (!isDrivingSessionActive || !cameraSensorEnabled) {
+        DisposableEffect(Unit) {
+            runCatching { ProcessCameraProvider.getInstance(context).get().unbindAll() }
+            performanceController.setCameraActive(
+                false,
+                if (!cameraSensorEnabled) "Camera sensor disabled in Settings" else "Standby — Press Start Driving",
+            )
+            onDispose {}
+        }
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(20.dp),
+            ) {
+                Text(
+                    text = if (!cameraSensorEnabled) "Camera Sensor Off" else "Sensors & Camera Standby",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = if (!cameraSensorEnabled) {
+                        "Enable Camera in Settings > Sensors & Hardware to scan road signs."
+                    } else {
+                        "Tap Start Driving to activate the camera and enabled sensors."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!isDrivingSessionActive && cameraSensorEnabled && onStartDrivingClick != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(onClick = onStartDrivingClick) {
+                        Text("Start Driving & Camera")
+                    }
+                }
             }
         }
         return

@@ -422,9 +422,11 @@ private fun ViewportCard(
                 RoadCameraPreview(
                     permissionGranted = state.cameraStatus.permissionGranted,
                     isDrivingSessionActive = state.isDrivingSessionActive,
+                    cameraSensorEnabled = state.settings.sensorCameraEnabled,
                     analysisIntervalMs = viewModel.analysisIntervalFor(state.settings.detectionQuality),
                     zoomRatio = state.visionState.recommendedZoomRatio,
                     performanceController = viewModel.cameraController,
+                    onStartDrivingClick = viewModel::startDriving,
                     onFrameListener = { imageProxy, rotation, ts ->
                         viewModel.visionPipeline.analyzeFrame(
                             imageProxy = imageProxy,

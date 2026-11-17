@@ -419,10 +419,7 @@ class DashboardViewModel @Inject constructor(
         cameraController.setPermissionGranted(cameraGranted)
         locationTracker.setPermissionGranted(locationGranted)
         voiceClient.setMicPermissionGranted(micGranted)
-        if (locationGranted) {
-            locationTracker.startTracking(highAccuracy = true)
-            sensorManagerRepo.startMonitoring(SensorSamplingProfile.DRIVING)
-        }
+        // Sensors remain idle until the user explicitly taps Start Driving.
     }
 
     fun acceptSafetyDisclosure() = viewModelScope.launch {
@@ -458,9 +455,21 @@ class DashboardViewModel @Inject constructor(
             longitude = fix?.longitude,
         )
 
+        val s = uiState.value.settings
         locationTracker.resetTripDistance()
-        locationTracker.startTracking(highAccuracy = true)
-        sensorManagerRepo.startMonitoring(SensorSamplingProfile.DRIVING)
+        if (s.sensorGpsEnabled) {
+            locationTracker.startTracking(highAccuracy = true)
+        }
+        if (s.sensorMotionEnabled) {
+            sensorManagerRepo.startMonitoring(SensorSamplingProfile.DRIVING)
+        }
+        if (isDriving.value) {
+            tripActivityLogger.logActivity(
+                type = "SENSORS_ACTIVE",
+                details = "Camera=${s.sensorCameraEnabled}, GPS=${s.sensorGpsEnabled}, Motion=${s.sensorMotionEnabled}, Mic=${s.sensorMicEnabled}, OBD=${s.sensorObdEnabled}",
+                timestampMillis = started,
+            )
+        }
     }
 
     fun endTrip() {
@@ -579,6 +588,7 @@ class DashboardViewModel @Inject constructor(
             voiceClient.disconnect()
         } else {
             val s = uiState.value.settings
+            if (!s.sensorMicEnabled) return
             if (isDriving.value) tripActivityLogger.logActivity("VOICE_ASSISTANT", "Voice assistant connected (${s.language}, voice=${s.aiVoiceName})")
             voiceClient.connect(language = s.language, voice = s.aiVoiceName)
         }

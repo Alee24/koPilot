@@ -49,6 +49,12 @@ data class KoPilotSettings(
     // Emergency Contact
     val emergencyContactName: String = "Kenya Emergency (999)",
     val emergencyContactPhone: String = "999",
+    // Sensors (activated only when Start Driving is pressed)
+    val sensorCameraEnabled: Boolean = true,
+    val sensorGpsEnabled: Boolean = true,
+    val sensorMotionEnabled: Boolean = true,
+    val sensorMicEnabled: Boolean = true,
+    val sensorObdEnabled: Boolean = true,
     // Privacy
     val tripHistoryEnabled: Boolean = true,
     val dataRetentionDays: Int = 90,
@@ -90,6 +96,11 @@ class PreferencesRepository @Inject constructor(
             }.getOrDefault(ResponseLength.CONCISE),
             emergencyContactName = prefs[KEY_EMERGENCY_NAME] ?: "Kenya Emergency (999)",
             emergencyContactPhone = prefs[KEY_EMERGENCY_PHONE] ?: "999",
+            sensorCameraEnabled = prefs[KEY_SENSOR_CAMERA] ?: true,
+            sensorGpsEnabled = prefs[KEY_SENSOR_GPS] ?: true,
+            sensorMotionEnabled = prefs[KEY_SENSOR_MOTION] ?: true,
+            sensorMicEnabled = prefs[KEY_SENSOR_MIC] ?: true,
+            sensorObdEnabled = prefs[KEY_SENSOR_OBD] ?: true,
             tripHistoryEnabled = prefs[KEY_TRIP_HISTORY] ?: true,
             dataRetentionDays = prefs[KEY_RETENTION_DAYS] ?: 90,
             diagnosticLoggingEnabled = prefs[KEY_DIAGNOSTIC_LOGGING] ?: false,
@@ -122,6 +133,18 @@ class PreferencesRepository @Inject constructor(
     suspend fun setEmergencyContact(name: String, phone: String) = edit {
         it[KEY_EMERGENCY_NAME] = name
         it[KEY_EMERGENCY_PHONE] = phone
+    }
+    suspend fun setSensorCameraEnabled(enabled: Boolean) = edit { it[KEY_SENSOR_CAMERA] = enabled }
+    suspend fun setSensorGpsEnabled(enabled: Boolean) = edit { it[KEY_SENSOR_GPS] = enabled }
+    suspend fun setSensorMotionEnabled(enabled: Boolean) = edit { it[KEY_SENSOR_MOTION] = enabled }
+    suspend fun setSensorMicEnabled(enabled: Boolean) = edit { it[KEY_SENSOR_MIC] = enabled }
+    suspend fun setSensorObdEnabled(enabled: Boolean) = edit { it[KEY_SENSOR_OBD] = enabled }
+    suspend fun setAllSensorsEnabled(enabled: Boolean) = edit {
+        it[KEY_SENSOR_CAMERA] = enabled
+        it[KEY_SENSOR_GPS] = enabled
+        it[KEY_SENSOR_MOTION] = enabled
+        it[KEY_SENSOR_MIC] = enabled
+        it[KEY_SENSOR_OBD] = enabled
     }
     suspend fun setTripHistoryEnabled(enabled: Boolean) = edit { it[KEY_TRIP_HISTORY] = enabled }
     suspend fun setDataRetentionDays(days: Int) = edit { it[KEY_RETENTION_DAYS] = days.coerceIn(7, 365) }
@@ -159,6 +182,11 @@ class PreferencesRepository @Inject constructor(
         val KEY_RESPONSE_LENGTH = stringPreferencesKey("response_length")
         val KEY_EMERGENCY_NAME = stringPreferencesKey("emergency_name")
         val KEY_EMERGENCY_PHONE = stringPreferencesKey("emergency_phone")
+        val KEY_SENSOR_CAMERA = booleanPreferencesKey("sensor_camera")
+        val KEY_SENSOR_GPS = booleanPreferencesKey("sensor_gps")
+        val KEY_SENSOR_MOTION = booleanPreferencesKey("sensor_motion")
+        val KEY_SENSOR_MIC = booleanPreferencesKey("sensor_mic")
+        val KEY_SENSOR_OBD = booleanPreferencesKey("sensor_obd")
         val KEY_TRIP_HISTORY = booleanPreferencesKey("trip_history")
         val KEY_RETENTION_DAYS = intPreferencesKey("retention_days")
         val KEY_DIAGNOSTIC_LOGGING = booleanPreferencesKey("diagnostic_logging")

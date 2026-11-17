@@ -189,6 +189,37 @@ fun SettingsScreen(
                 )
             }
 
+            // Sensors & Hardware (only started when Start Driving is pressed)
+            CockpitPanel {
+                val allEnabled = settings.sensorCameraEnabled &&
+                    settings.sensorGpsEnabled &&
+                    settings.sensorMotionEnabled &&
+                    settings.sensorMicEnabled &&
+                    settings.sensorObdEnabled
+                Text("Sensors & Hardware", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Sensors stay idle until you press Start Driving. Choose which sensors activate during a trip.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.setAllSensorsEnabled(!allEnabled) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (allEnabled) "Turn All Sensors OFF" else "Turn All Sensors ON")
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                SettingSwitch("Camera (Road Signs & Traffic Lights)", settings.sensorCameraEnabled, viewModel::setSensorCameraEnabled)
+                SettingSwitch("GPS Location & Speed", settings.sensorGpsEnabled, viewModel::setSensorGpsEnabled)
+                SettingSwitch("Motion / IMU (Accelerometer & Gyro)", settings.sensorMotionEnabled, viewModel::setSensorMotionEnabled)
+                SettingSwitch("Microphone (Voice Co-Pilot)", settings.sensorMicEnabled, viewModel::setSensorMicEnabled)
+                SettingSwitch("OBD-II Vehicle Bluetooth", settings.sensorObdEnabled, viewModel::setSensorObdEnabled)
+            }
+
             // Camera & Vision
             CockpitPanel {
                 Text("Camera & Road Sign Vision", style = MaterialTheme.typography.titleMedium)

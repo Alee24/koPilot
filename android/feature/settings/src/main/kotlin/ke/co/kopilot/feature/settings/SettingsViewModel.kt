@@ -91,6 +91,12 @@ class SettingsViewModel @Inject constructor(
     fun setAlertChimeEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertChimeEnabled(enabled) }
     fun setVoiceVolume(vol: Float) = viewModelScope.launch { prefsRepo.setVoiceVolume(vol) }
     fun setMicMode(mode: MicMode) = viewModelScope.launch { prefsRepo.setMicMode(mode) }
+    fun setSensorCameraEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorCameraEnabled(enabled) }
+    fun setSensorGpsEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorGpsEnabled(enabled) }
+    fun setSensorMotionEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorMotionEnabled(enabled) }
+    fun setSensorMicEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorMicEnabled(enabled) }
+    fun setSensorObdEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorObdEnabled(enabled) }
+    fun setAllSensorsEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAllSensorsEnabled(enabled) }
 
     fun testVoiceSound() {
         val s = settings.value
