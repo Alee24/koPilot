@@ -121,6 +121,8 @@ class DashboardViewModel @Inject constructor(
     private var lastLoggedWeather: String? = null
     private var lastLaneAlertMs = 0L
     private var lastTurnAlertMs = 0L
+    private var lastAnnouncedLaneDirection: String? = null
+    private var lastAnnouncedTurnState: LateralMotionState = LateralMotionState.STRAIGHT
 
     private val coreFlows = combine(
         isDriving,
@@ -196,7 +198,7 @@ class DashboardViewModel @Inject constructor(
                     lastLoggedPlate = plate
                     tripActivityLogger.logActivity("PLATE_DETECTED", "Vehicle plate spotted: $plate", now)
                 }
-                if (vision.redBrakeLightsAhead && moving) {
+                if (vision.redBrakeLightsAhead && moving && s.alertTrafficLightsEnabled) {
                     if (isDriving.value && (now - lastLoggedBrakeLightMs) >= 8_000L) {
                         lastLoggedBrakeLightMs = now
                         tripActivityLogger.logActivity("BRAKE_LIGHTS_AHEAD", "Red brake lights ahead — Slow down", now)
@@ -222,7 +224,7 @@ class DashboardViewModel @Inject constructor(
                     lastLoggedTrafficSignalMs = now
                     tripActivityLogger.logActivity("TRAFFIC_LIGHT", "${vision.trafficLightSignal.name} traffic light ahead", now)
                 }
-                when (vision.trafficLightSignal) {
+                if (s.alertTrafficLightsEnabled) when (vision.trafficLightSignal) {
                     TrafficLightSignal.RED -> alertCoordinator.submit(
                         alert = AlertMessage(
                             id = UUID.randomUUID().toString(),
@@ -264,7 +266,7 @@ class DashboardViewModel @Inject constructor(
                     )
                     TrafficLightSignal.NONE -> Unit
                 }
-                if (vision.isDarkScene && moving) {
+                if (vision.isDarkScene && moving && s.alertWeatherEnabled) {
                     if (isDriving.value && (now - lastLoggedDarkMs) >= 15_000L) {
                         lastLoggedDarkMs = now
                         tripActivityLogger.logActivity("HEADLIGHT_REMINDER", "Low ambient light (${vision.averageLuminance.toInt()}) — Turn on headlights", now)
@@ -284,31 +286,31 @@ class DashboardViewModel @Inject constructor(
                     )
                 }
                 val shift = vision.laneOverlay.shiftEvent
-                if (isDriving.value && vision.laneOverlay.lanesDetected && shift != LaneShiftEvent.NONE && (now - lastLaneAlertMs) >= 6_000L) {
+                val laneDirection = when (shift) {
+                    LaneShiftEvent.SHIFTING_LEFT, LaneShiftEvent.LANE_DEPARTURE_LEFT -> "LEFT"
+                    LaneShiftEvent.SHIFTING_RIGHT, LaneShiftEvent.LANE_DEPARTURE_RIGHT -> "RIGHT"
+                    LaneShiftEvent.NONE -> null
+                }
+                if (!vision.laneOverlay.lanesDetected || laneDirection == null) {
+                    lastAnnouncedLaneDirection = null
+                } else if (isDriving.value && s.alertLaneTurnEnabled && laneDirection != lastAnnouncedLaneDirection && (now - lastLaneAlertMs) >= 1_500L) {
+                    lastAnnouncedLaneDirection = laneDirection
                     lastLaneAlertMs = now
-                    val laneText = when (shift) {
-                        LaneShiftEvent.SHIFTING_LEFT -> "Changing lane left"
-                        LaneShiftEvent.SHIFTING_RIGHT -> "Changing lane right"
-                        LaneShiftEvent.LANE_DEPARTURE_LEFT -> "Drifting left across lane"
-                        LaneShiftEvent.LANE_DEPARTURE_RIGHT -> "Drifting right across lane"
-                        LaneShiftEvent.NONE -> ""
-                    }
-                    if (laneText.isNotEmpty()) {
-                        tripActivityLogger.logActivity("LANE_SHIFT", laneText, now)
-                        alertCoordinator.submit(
-                            alert = AlertMessage(
-                                id = UUID.randomUUID().toString(),
-                                priority = AlertPriority.ROAD_OBSERVATION,
-                                spokenText = laneText,
-                                displayText = laneText,
-                                dedupKey = "lane_shift_${shift.name}",
-                                timestampMillis = now,
-                            ),
-                            speechRate = s.voiceSpeed,
-                            language = s.language,
-                            globalMute = s.alertsMuted,
-                        )
-                    }
+                    val laneText = if (laneDirection == "LEFT") "Drifting left" else "Drifting right"
+                    tripActivityLogger.logActivity("LANE_SHIFT", laneText, now)
+                    alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = AlertPriority.ROAD_OBSERVATION,
+                            spokenText = laneText,
+                            displayText = laneText,
+                            dedupKey = "lane_shift_$laneDirection",
+                            timestampMillis = now,
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
                 }
             }
         }
@@ -316,17 +318,22 @@ class DashboardViewModel @Inject constructor(
             sensorManagerRepo.state.collect { sensorState ->
                 if (!isDriving.value) return@collect
                 val lat = sensorState.motionAnalysis.lateralState
-                if (lat == LateralMotionState.STRAIGHT) return@collect
-                val now = System.currentTimeMillis()
-                if ((now - lastTurnAlertMs) < 6_000L) return@collect
-                lastTurnAlertMs = now
+                if (lat == LateralMotionState.STRAIGHT) {
+                    lastAnnouncedTurnState = LateralMotionState.STRAIGHT
+                    return@collect
+                }
                 val s = uiState.value.settings
+                if (!s.alertLaneTurnEnabled) return@collect
+                val now = System.currentTimeMillis()
+                if (lat == lastAnnouncedTurnState || (now - lastTurnAlertMs) < 1_500L) return@collect
+                lastAnnouncedTurnState = lat
+                lastTurnAlertMs = now
                 val (tag, msg) = when (lat) {
-                    LateralMotionState.LANE_SHIFT_LEFT -> "LANE_CHANGE" to "Changing lane left"
-                    LateralMotionState.LANE_SHIFT_RIGHT -> "LANE_CHANGE" to "Changing lane right"
+                    LateralMotionState.LANE_SHIFT_LEFT -> "LANE_CHANGE" to "Drifting left"
+                    LateralMotionState.LANE_SHIFT_RIGHT -> "LANE_CHANGE" to "Drifting right"
                     LateralMotionState.LEFT_TURN -> "TURNING_LEFT" to "Turning left"
                     LateralMotionState.RIGHT_TURN -> "TURNING_RIGHT" to "Turning right"
-                    LateralMotionState.SHARP_CORNERING -> "SHARP_CORNERING" to "Sharp turn detected — Slow down"
+                    LateralMotionState.SHARP_CORNERING -> "SHARP_CORNERING" to if (sensorState.motionAnalysis.yawRateRadPerSec >= 0f) "Turning left" else "Turning right"
                     LateralMotionState.STRAIGHT -> return@collect
                 }
                 tripActivityLogger.logActivity(tag, msg, now)
@@ -336,7 +343,7 @@ class DashboardViewModel @Inject constructor(
                         priority = AlertPriority.ROAD_OBSERVATION,
                         spokenText = msg,
                         displayText = msg,
-                        dedupKey = "sensor_lat_${lat.name}",
+                        dedupKey = "sensor_lat_${msg.replace(' ', '_')}",
                         timestampMillis = now,
                     ),
                     speechRate = s.voiceSpeed,
@@ -370,7 +377,7 @@ class DashboardViewModel @Inject constructor(
                 navigationRepo.refreshRoadIntelligence(fix.latitude, fix.longitude)
                 val roadIntel = navigationRepo.state.value.roadIntelligence
                 val camDist = roadIntel.nearestSpeedCameraMeters
-                if (camDist != null && camDist <= 500) {
+                if (camDist != null && camDist <= 500 && uiState.value.settings.alertSpeedLimitEnabled) {
                     val s = uiState.value.settings
                     val now = System.currentTimeMillis()
                     if (isDriving.value && (now - lastLoggedCameraMs) >= 15_000L) {
@@ -393,6 +400,7 @@ class DashboardViewModel @Inject constructor(
                 }
                 weatherRepo.state.value.advisoryMessage?.let { weatherAdv ->
                     val s = uiState.value.settings
+                    if (!s.alertWeatherEnabled) return@let
                     if (isDriving.value && weatherAdv != lastLoggedWeather) {
                         lastLoggedWeather = weatherAdv
                         tripActivityLogger.logActivity("WEATHER", weatherAdv)
@@ -418,7 +426,8 @@ class DashboardViewModel @Inject constructor(
                     thresholdKmh = uiState.value.settings.speedAlertThresholdKmh,
                 )
                 if (speedEval.decision == SpeedAlertDecision.POSSIBLE_OVERSPEED_WARNING &&
-                    speedEval.applicableSpeedLimitKmh != null
+                    speedEval.applicableSpeedLimitKmh != null &&
+                    uiState.value.settings.alertSpeedLimitEnabled
                 ) {
                     val s = uiState.value.settings
                     val limit = speedEval.applicableSpeedLimitKmh!!
@@ -510,6 +519,8 @@ class DashboardViewModel @Inject constructor(
         lastLoggedWeather = null
         lastLaneAlertMs = 0L
         lastTurnAlertMs = 0L
+        lastAnnouncedLaneDirection = null
+        lastAnnouncedTurnState = LateralMotionState.STRAIGHT
 
         val fix = locationTracker.state.value.currentFix
         val dest = navigationRepo.state.value.destinationName
@@ -594,6 +605,7 @@ class DashboardViewModel @Inject constructor(
             )
         }
         val settings = uiState.value.settings
+        if (!settings.alertRoadSignsEnabled) return
         if (!settings.announceAllSigns && observation.category.speedLimitKmh == null) {
             return
         }

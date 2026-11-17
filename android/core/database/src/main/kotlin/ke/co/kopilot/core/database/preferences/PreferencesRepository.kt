@@ -49,6 +49,12 @@ data class KoPilotSettings(
     // Emergency Contact
     val emergencyContactName: String = "Kenya Emergency (999)",
     val emergencyContactPhone: String = "999",
+    // Alert Preferences
+    val alertRoadSignsEnabled: Boolean = true,
+    val alertLaneTurnEnabled: Boolean = true,
+    val alertTrafficLightsEnabled: Boolean = true,
+    val alertSpeedLimitEnabled: Boolean = true,
+    val alertWeatherEnabled: Boolean = true,
     // Sensors (activated only when Start Driving is pressed)
     val sensorCameraEnabled: Boolean = true,
     val sensorGpsEnabled: Boolean = true,
@@ -96,6 +102,11 @@ class PreferencesRepository @Inject constructor(
             }.getOrDefault(ResponseLength.CONCISE),
             emergencyContactName = prefs[KEY_EMERGENCY_NAME] ?: "Kenya Emergency (999)",
             emergencyContactPhone = prefs[KEY_EMERGENCY_PHONE] ?: "999",
+            alertRoadSignsEnabled = prefs[KEY_ALERT_ROAD_SIGNS] ?: true,
+            alertLaneTurnEnabled = prefs[KEY_ALERT_LANE_TURN] ?: true,
+            alertTrafficLightsEnabled = prefs[KEY_ALERT_TRAFFIC_LIGHTS] ?: true,
+            alertSpeedLimitEnabled = prefs[KEY_ALERT_SPEED_LIMIT] ?: true,
+            alertWeatherEnabled = prefs[KEY_ALERT_WEATHER] ?: true,
             sensorCameraEnabled = prefs[KEY_SENSOR_CAMERA] ?: true,
             sensorGpsEnabled = prefs[KEY_SENSOR_GPS] ?: true,
             sensorMotionEnabled = prefs[KEY_SENSOR_MOTION] ?: true,
@@ -134,6 +145,11 @@ class PreferencesRepository @Inject constructor(
         it[KEY_EMERGENCY_NAME] = name
         it[KEY_EMERGENCY_PHONE] = phone
     }
+    suspend fun setAlertRoadSignsEnabled(enabled: Boolean) = edit { it[KEY_ALERT_ROAD_SIGNS] = enabled }
+    suspend fun setAlertLaneTurnEnabled(enabled: Boolean) = edit { it[KEY_ALERT_LANE_TURN] = enabled }
+    suspend fun setAlertTrafficLightsEnabled(enabled: Boolean) = edit { it[KEY_ALERT_TRAFFIC_LIGHTS] = enabled }
+    suspend fun setAlertSpeedLimitEnabled(enabled: Boolean) = edit { it[KEY_ALERT_SPEED_LIMIT] = enabled }
+    suspend fun setAlertWeatherEnabled(enabled: Boolean) = edit { it[KEY_ALERT_WEATHER] = enabled }
     suspend fun setSensorCameraEnabled(enabled: Boolean) = edit { it[KEY_SENSOR_CAMERA] = enabled }
     suspend fun setSensorGpsEnabled(enabled: Boolean) = edit { it[KEY_SENSOR_GPS] = enabled }
     suspend fun setSensorMotionEnabled(enabled: Boolean) = edit { it[KEY_SENSOR_MOTION] = enabled }
@@ -182,6 +198,11 @@ class PreferencesRepository @Inject constructor(
         val KEY_RESPONSE_LENGTH = stringPreferencesKey("response_length")
         val KEY_EMERGENCY_NAME = stringPreferencesKey("emergency_name")
         val KEY_EMERGENCY_PHONE = stringPreferencesKey("emergency_phone")
+        val KEY_ALERT_ROAD_SIGNS = booleanPreferencesKey("alert_road_signs")
+        val KEY_ALERT_LANE_TURN = booleanPreferencesKey("alert_lane_turn")
+        val KEY_ALERT_TRAFFIC_LIGHTS = booleanPreferencesKey("alert_traffic_lights")
+        val KEY_ALERT_SPEED_LIMIT = booleanPreferencesKey("alert_speed_limit")
+        val KEY_ALERT_WEATHER = booleanPreferencesKey("alert_weather")
         val KEY_SENSOR_CAMERA = booleanPreferencesKey("sensor_camera")
         val KEY_SENSOR_GPS = booleanPreferencesKey("sensor_gps")
         val KEY_SENSOR_MOTION = booleanPreferencesKey("sensor_motion")

@@ -53,6 +53,7 @@ import ke.co.kopilot.core.designsystem.component.CockpitPanel
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
+    onOpenObd: () -> Unit = {},
     bluetoothPermissionGranted: Boolean,
     onExportJson: (String) -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -145,24 +146,35 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(10.dp))
+                val openAiReady = openAiKeyInput.trim().startsWith("sk-")
+                val googleReady = googleKeyInput.trim().startsWith("AIza")
+                Text(
+                    text = "Status • OpenAI: ${if (openAiReady) "Configured" else "Not set"} | Google Maps: ${if (googleReady) "Configured" else "Not set"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = {
                             viewModel.saveApiConfiguration(backendUrlInput, openAiKeyInput, googleKeyInput)
+                            viewModel.testEnteredApiKeys(openAiKeyInput, googleKeyInput)
                         },
                     ) {
-                        Text("Save Keys")
-                    }
-                    OutlinedButton(onClick = { viewModel.testEnteredApiKeys(openAiKeyInput, googleKeyInput) }) {
-                        Text("Test Keys")
+                        Text("Save & Connect")
                     }
                     OutlinedButton(onClick = { viewModel.testBackendConnection(backendUrlInput) }) {
                         Text("Test Server")
                     }
                 }
                 Spacer(Modifier.height(6.dp))
-                OutlinedButton(onClick = viewModel::clearApiCredentials) {
-                    Text("Clear Saved Keys")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onOpenObd) {
+                        Text("Connect OBD-II Page")
+                    }
+                    OutlinedButton(onClick = viewModel::clearApiCredentials) {
+                        Text("Clear Keys")
+                    }
                 }
             }
 
@@ -220,6 +232,23 @@ fun SettingsScreen(
                 SettingSwitch("Motion / IMU (Accelerometer & Gyro)", settings.sensorMotionEnabled, viewModel::setSensorMotionEnabled)
                 SettingSwitch("Microphone (Voice Co-Pilot)", settings.sensorMicEnabled, viewModel::setSensorMicEnabled)
                 SettingSwitch("OBD-II Vehicle Bluetooth", settings.sensorObdEnabled, viewModel::setSensorObdEnabled)
+            }
+
+            // Alert Preferences
+            CockpitPanel {
+                Text("Alert Preferences", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Choose which spoken & visual alerts KoPilot announces while driving.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                SettingSwitch("Road Sign Alerts", settings.alertRoadSignsEnabled, viewModel::setAlertRoadSignsEnabled)
+                SettingSwitch("Lane Drifting & Turning Alerts", settings.alertLaneTurnEnabled, viewModel::setAlertLaneTurnEnabled)
+                SettingSwitch("Traffic Light & Brake Light Alerts", settings.alertTrafficLightsEnabled, viewModel::setAlertTrafficLightsEnabled)
+                SettingSwitch("Overspeed & Speed Camera Alerts", settings.alertSpeedLimitEnabled, viewModel::setAlertSpeedLimitEnabled)
+                SettingSwitch("Weather & Headlight Advisories", settings.alertWeatherEnabled, viewModel::setAlertWeatherEnabled)
             }
 
             // Camera & Vision

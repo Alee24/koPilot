@@ -91,6 +91,11 @@ class SettingsViewModel @Inject constructor(
     fun setAlertChimeEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertChimeEnabled(enabled) }
     fun setVoiceVolume(vol: Float) = viewModelScope.launch { prefsRepo.setVoiceVolume(vol) }
     fun setMicMode(mode: MicMode) = viewModelScope.launch { prefsRepo.setMicMode(mode) }
+    fun setAlertRoadSignsEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertRoadSignsEnabled(enabled) }
+    fun setAlertLaneTurnEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertLaneTurnEnabled(enabled) }
+    fun setAlertTrafficLightsEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertTrafficLightsEnabled(enabled) }
+    fun setAlertSpeedLimitEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertSpeedLimitEnabled(enabled) }
+    fun setAlertWeatherEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertWeatherEnabled(enabled) }
     fun setSensorCameraEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorCameraEnabled(enabled) }
     fun setSensorGpsEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorGpsEnabled(enabled) }
     fun setSensorMotionEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorMotionEnabled(enabled) }

@@ -165,6 +165,7 @@ class MainActivity : ComponentActivity() {
                         }
                         SettingsScreen(
                             onBack = { navController.popBackStack() },
+                            onOpenObd = { navController.navigate("obd") },
                             bluetoothPermissionGranted = btGranted,
                             onExportJson = { json ->
                                 val share = Intent(Intent.ACTION_SEND).apply {

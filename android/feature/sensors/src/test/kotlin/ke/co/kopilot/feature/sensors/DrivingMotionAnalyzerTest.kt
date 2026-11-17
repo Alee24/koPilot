@@ -56,4 +56,37 @@ class DrivingMotionAnalyzerTest {
         assertEquals(RoadVibrationLevel.ROUGH_ROAD_EXPERIMENTAL, vibResult.roadVibrationLevel)
         assertTrue(vibResult.verticalVibrationRmsMps2 >= DrivingMotionAnalyzer.ROUGH_ROAD_RMS_MPS2)
     }
+
+    @Test
+    fun `detects left and right lane shifts without inverting direction`() {
+        val analyzer = DrivingMotionAnalyzer()
+
+        val shiftLeft = analyzer.analyze(
+            linearAccelX = 1.2f,
+            linearAccelY = 0f,
+            linearAccelZ = 0f,
+            gyroX = 0f,
+            gyroY = 0.16f,
+            gyroZ = 0f,
+            azimuthDeg = 90f,
+            pitchDeg = 0f,
+            rollDeg = 0f,
+            gpsSpeedKmh = 50f,
+        )
+        assertEquals(LateralMotionState.LANE_SHIFT_LEFT, shiftLeft.lateralState)
+
+        val shiftRight = analyzer.analyze(
+            linearAccelX = -1.2f,
+            linearAccelY = 0f,
+            linearAccelZ = 0f,
+            gyroX = 0f,
+            gyroY = -0.16f,
+            gyroZ = 0f,
+            azimuthDeg = 90f,
+            pitchDeg = 0f,
+            rollDeg = 0f,
+            gpsSpeedKmh = 50f,
+        )
+        assertEquals(LateralMotionState.LANE_SHIFT_RIGHT, shiftRight.lateralState)
+    }
 }

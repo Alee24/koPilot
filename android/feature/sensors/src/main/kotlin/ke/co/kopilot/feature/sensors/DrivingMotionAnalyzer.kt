@@ -50,8 +50,8 @@ class DrivingMotionAnalyzer @Inject constructor() {
                 LateralMotionState.SHARP_CORNERING
             yawRate >= TURN_RAD_S -> LateralMotionState.LEFT_TURN
             yawRate <= -TURN_RAD_S -> LateralMotionState.RIGHT_TURN
-            yawRate >= LANE_SHIFT_RAD_S || lateral <= -LANE_SHIFT_LATERAL_MPS2 -> LateralMotionState.LANE_SHIFT_LEFT
-            yawRate <= -LANE_SHIFT_RAD_S || lateral >= LANE_SHIFT_LATERAL_MPS2 -> LateralMotionState.LANE_SHIFT_RIGHT
+            yawRate >= LANE_SHIFT_RAD_S || lateral >= LANE_SHIFT_LATERAL_MPS2 -> LateralMotionState.LANE_SHIFT_LEFT
+            yawRate <= -LANE_SHIFT_RAD_S || lateral <= -LANE_SHIFT_LATERAL_MPS2 -> LateralMotionState.LANE_SHIFT_RIGHT
             else -> LateralMotionState.STRAIGHT
         }
 
