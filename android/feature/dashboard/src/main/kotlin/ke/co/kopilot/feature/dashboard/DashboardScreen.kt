@@ -110,6 +110,7 @@ fun DashboardScreen(
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val ctx = LocalContext.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var showDestinationDialog by remember { mutableStateOf(false) }
     var showTripsDialog by remember { mutableStateOf(false) }
@@ -134,7 +135,6 @@ fun DashboardScreen(
     }
 
         if (showDestinationDialog) {
-            val ctx = LocalContext.current
             DestinationPickerDialog(
                 state = state,
                 presets = viewModel.kenyanCityPresets,
@@ -157,20 +157,20 @@ fun DashboardScreen(
         }
 
     var viewingLogFile by remember { mutableStateOf<File?>(null) }
+    val shareTxtFile: (File) -> Unit = { logFile ->
+        runCatching {
+            val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", logFile)
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "KoPilot Trip Activity Log (${logFile.name})")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            ctx.startActivity(Intent.createChooser(shareIntent, "Share Trip Activity Log (.txt)"))
+        }
+    }
 
     if (showTripsDialog) {
-        val shareTxtFile: (File) -> Unit = { file ->
-            runCatching {
-                val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_SUBJECT, "KoPilot Trip Activity Log (${file.name})")
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                ctx.startActivity(Intent.createChooser(shareIntent, "Share Trip Activity Log (.txt)"))
-            }
-        }
         TripsHistoryDialog(
             trips = state.savedTrips,
             activeLogFile = if (state.isDrivingSessionActive) viewModel.tripActivityLogger.getActiveLogFile() else null,
@@ -184,18 +184,7 @@ fun DashboardScreen(
     viewingLogFile?.let { file ->
         TripLogViewerDialog(
             file = file,
-            onShare = {
-                runCatching {
-                    val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
-                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_STREAM, uri)
-                        putExtra(Intent.EXTRA_SUBJECT, "KoPilot Trip Activity Log (${file.name})")
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    ctx.startActivity(Intent.createChooser(shareIntent, "Share Trip Activity Log (.txt)"))
-                }
-            },
+            onShare = { shareTxtFile(file) },
             onDismiss = { viewingLogFile = null },
         )
     }
