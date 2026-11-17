@@ -49,6 +49,7 @@ data class TrackedRoadObject(
     val normalizedTop: Float,
     val normalizedRight: Float,
     val normalizedBottom: Float,
+    val timestampMillis: Long = 0L,
 )
 
 data class VisionPipelineState(
@@ -58,6 +59,7 @@ data class VisionPipelineState(
     val lastObservation: TrafficSignObservation? = null,
     val lastSpeedLimitKmh: Int? = null,
     val lastDetectedPlate: String? = null,
+    val lastPlateObservation: PlateObservation? = null,
     val redBrakeLightsAhead: Boolean = false,
     val trafficLightSignal: TrafficLightSignal = TrafficLightSignal.NONE,
     val isDarkScene: Boolean = false,
@@ -67,6 +69,7 @@ data class VisionPipelineState(
     val signRoiBoxes: List<TrackedRoadObject> = emptyList(),
     val laneOverlay: LaneOverlayState = LaneOverlayState(),
     val lastInferenceLatencyMs: Long = 0L,
+    val recentErrors: List<String> = emptyList(),
     val statusMessage: String = "Initializing offline vision...",
 )
 
@@ -76,6 +79,9 @@ class RoadVisionPipeline @Inject constructor(
     private val temporalTracker: SignTemporalTracker,
     val signCatalog: LocalRoadSignCatalog,
     private val liteRtClassifier: LiteRtSignClassifier,
+    private val liteRtObjectDetector: LiteRtObjectDetector,
+    private val multiObjectTracker: MultiObjectTracker,
+    val platePipeline: PlateRecognitionPipeline,
     private val connectivityObserver: ConnectivityObserver,
     private val tokenStore: SecureTokenStore,
     private val okHttpClient: OkHttpClient,
@@ -181,31 +187,35 @@ class RoadVisionPipeline @Inject constructor(
 
             val detectedObjects = if (objTask.isSuccessful) objTask.result.orEmpty() else emptyList()
 
-            val tracked = detectedObjects.mapNotNull { obj ->
-                val box = obj.boundingBox
-                val bestLabel = obj.labels.maxByOrNull { it.confidence }
-                val rawLabel = bestLabel?.text?.takeIf { it.isNotBlank() } ?: "Object"
-                val nLeft = (box.left / w).coerceIn(0f, 1f)
-                val nTop = (box.top / h).coerceIn(0f, 1f)
-                val nRight = (box.right / w).coerceIn(0f, 1f)
-                val nBottom = (box.bottom / h).coerceIn(0f, 1f)
-                val roadLabel = FrontRoadAnalyzer.classifyObjectByGeometry(
-                    normLeft = nLeft,
-                    normTop = nTop,
-                    normRight = nRight,
-                    normBottom = nBottom,
-                    mlKitLabel = rawLabel,
-                )
-                TrackedRoadObject(
-                    trackingId = obj.trackingId ?: -1,
-                    label = roadLabel,
-                    confidence = bestLabel?.confidence ?: 0.7f,
-                    normalizedLeft = nLeft,
-                    normalizedTop = nTop,
-                    normalizedRight = nRight,
-                    normalizedBottom = nBottom,
-                )
+            val rawObjects = if (liteRtObjectDetector.isAvailable) {
+                liteRtObjectDetector.detect(bitmap)
+            } else {
+                detectedObjects.mapNotNull { obj ->
+                    val box = obj.boundingBox
+                    val bestLabel = obj.labels.maxByOrNull { it.confidence }
+                    val rawLabel = bestLabel?.text?.takeIf { it.isNotBlank() } ?: "Object"
+                    val nLeft = (box.left / w).coerceIn(0f, 1f)
+                    val nTop = (box.top / h).coerceIn(0f, 1f)
+                    val nRight = (box.right / w).coerceIn(0f, 1f)
+                    val nBottom = (box.bottom / h).coerceIn(0f, 1f)
+                    val roadLabel = FrontRoadAnalyzer.classifyObjectByGeometry(
+                        normLeft = nLeft,
+                        normTop = nTop,
+                        normRight = nRight,
+                        normBottom = nBottom,
+                        mlKitLabel = rawLabel,
+                    )
+                    RawObjectDetection(
+                        label = roadLabel,
+                        confidence = bestLabel?.confidence ?: 0.7f,
+                        normalizedLeft = nLeft,
+                        normalizedTop = nTop,
+                        normalizedRight = nRight,
+                        normalizedBottom = nBottom,
+                    )
+                }
             }
+            val tracked = multiObjectTracker.update(rawObjects, timestampMillis)
 
             val lighting = FrontRoadAnalyzer.analyzeLightingAndLights(bitmap)
             brakeLightStreak = if (lighting.redBrakeLightsAhead) brakeLightStreak + 1 else 0
@@ -220,6 +230,7 @@ class RoadVisionPipeline @Inject constructor(
 
             val signCandidates = mutableListOf<RawSignDetection>()
             var detectedPlate: String? = null
+            var confirmedPlateObs: PlateObservation? = null
 
             if (topRoi != null && topRoiTask != null && topRoiTask.isSuccessful) {
                 val roiCenterX = (topRoi.normLeft + topRoi.normRight) / 2f
@@ -272,8 +283,11 @@ class RoadVisionPipeline @Inject constructor(
                             }
                         }
                     }
-                    if (detectedPlate == null) {
-                        detectedPlate = FrontRoadAnalyzer.extractKenyanPlate(block.text)
+                    if (confirmedPlateObs == null) {
+                        platePipeline.evaluateOcrBlock(bitmap, block, timestampMillis)?.let { obs ->
+                            confirmedPlateObs = obs
+                            detectedPlate = obs.maskedPlate
+                        }
                     }
                 }
             }
@@ -369,6 +383,8 @@ class RoadVisionPipeline @Inject constructor(
             } else {
                 _state.value.lastSpeedLimitKmh
             }
+            val prevPlateObs = _state.value.lastPlateObservation
+            val activePlateObs = confirmedPlateObs ?: prevPlateObs?.takeIf { (timestampMillis - it.timestampMillis) <= 30_000L }
             _state.value = _state.value.copy(
                 trackedObjects = tracked,
                 signRoiBoxes = roiOverlayBoxes,
@@ -376,7 +392,8 @@ class RoadVisionPipeline @Inject constructor(
                 lastInferenceLatencyMs = latencyMs,
                 lastObservation = confirmed ?: _state.value.lastObservation,
                 lastSpeedLimitKmh = nextSpeedLimit,
-                lastDetectedPlate = detectedPlate ?: _state.value.lastDetectedPlate,
+                lastDetectedPlate = activePlateObs?.maskedPlate,
+                lastPlateObservation = activePlateObs,
                 redBrakeLightsAhead = brakeLightStreak >= 2,
                 trafficLightSignal = confirmedTrafficLight,
                 isDarkScene = darkStreak >= 3,

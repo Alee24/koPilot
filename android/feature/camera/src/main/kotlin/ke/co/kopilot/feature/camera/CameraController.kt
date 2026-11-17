@@ -1,6 +1,9 @@
 package ke.co.kopilot.feature.camera
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
 import androidx.camera.core.ImageProxy
@@ -22,7 +25,15 @@ data class CameraStatusState(
     val cameraAvailable: Boolean = false,
     val isPreviewActive: Boolean = false,
     val thermalState: ThermalState = ThermalState.NORMAL,
-    val targetAnalysisIntervalMs: Long = 200L,
+    val targetAnalysisIntervalMs: Long = 80L,
+    val actualResolution: String = "Pending",
+    val cameraFps: Float = 0f,
+    val inferenceFps: Float = 0f,
+    val analyzedFrames: Long = 0L,
+    val droppedFrames: Long = 0L,
+    val batteryPercent: Int = -1,
+    val isBatteryLow: Boolean = false,
+    val recentErrors: List<String> = emptyList(),
     val statusMessage: String = "Camera permission required",
 )
 
@@ -35,6 +46,9 @@ class CameraPerformanceController @Inject constructor(
     val status: StateFlow<CameraStatusState> = _status.asStateFlow()
 
     private var lastAnalyzedTimestampMs = 0L
+    private var fpsWindowStartMs = 0L
+    private var cameraFramesInWindow = 0
+    private var analyzedFramesInWindow = 0
 
     init {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -55,6 +69,21 @@ class CameraPerformanceController @Inject constructor(
                 )
             }
         }
+        refreshBatteryStatus()
+    }
+
+    fun refreshBatteryStatus() {
+        runCatching {
+            val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+            val pct = if (level >= 0 && scale > 0) (level * 100) / scale else -1
+            val low = pct in 0..15
+            _status.value = _status.value.copy(
+                batteryPercent = pct,
+                isBatteryLow = low,
+            )
+        }
     }
 
     fun setPermissionGranted(granted: Boolean) {
@@ -72,13 +101,47 @@ class CameraPerformanceController @Inject constructor(
         )
     }
 
-    fun shouldAnalyzeFrame(nowMillis: Long, qualityIntervalMs: Long): Boolean {
-        val effectiveInterval = maxOf(qualityIntervalMs, _status.value.targetAnalysisIntervalMs)
-        if ((nowMillis - lastAnalyzedTimestampMs) < effectiveInterval) {
-            return false
+    fun recordResolution(width: Int, height: Int) {
+        val label = "${width}x${height}"
+        if (_status.value.actualResolution != label) {
+            _status.value = _status.value.copy(actualResolution = label)
         }
-        lastAnalyzedTimestampMs = nowMillis
-        return true
+    }
+
+    fun recordError(message: String) {
+        val updated = (_status.value.recentErrors + message).takeLast(25)
+        _status.value = _status.value.copy(recentErrors = updated)
+    }
+
+    fun shouldAnalyzeFrame(nowMillis: Long, qualityIntervalMs: Long): Boolean {
+        if (fpsWindowStartMs == 0L) fpsWindowStartMs = nowMillis
+        cameraFramesInWindow++
+
+        val batteryFloor = if (_status.value.isBatteryLow) 300L else 0L
+        val effectiveInterval = maxOf(qualityIntervalMs, _status.value.targetAnalysisIntervalMs, batteryFloor)
+        val analyze = (nowMillis - lastAnalyzedTimestampMs) >= effectiveInterval
+
+        if (analyze) {
+            lastAnalyzedTimestampMs = nowMillis
+            analyzedFramesInWindow++
+            _status.value = _status.value.copy(analyzedFrames = _status.value.analyzedFrames + 1)
+        } else {
+            _status.value = _status.value.copy(droppedFrames = _status.value.droppedFrames + 1)
+        }
+
+        val elapsed = nowMillis - fpsWindowStartMs
+        if (elapsed >= 1_000L) {
+            val sec = elapsed / 1000f
+            _status.value = _status.value.copy(
+                cameraFps = cameraFramesInWindow / sec,
+                inferenceFps = analyzedFramesInWindow / sec,
+            )
+            cameraFramesInWindow = 0
+            analyzedFramesInWindow = 0
+            fpsWindowStartMs = nowMillis
+            refreshBatteryStatus()
+        }
+        return analyze
     }
 }
 

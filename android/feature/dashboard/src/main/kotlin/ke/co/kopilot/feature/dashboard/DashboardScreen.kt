@@ -118,6 +118,8 @@ fun DashboardScreen(
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var showDestinationDialog by remember { mutableStateOf(false) }
     var showTripsDialog by remember { mutableStateOf(false) }
+    var showVisionDiagDialog by remember { mutableStateOf(false) }
+    val isParked = (state.speedEvaluation.currentSpeedKmh ?: 0f) < 5f
 
     if (!state.settings.safetyDisclosureAccepted) {
         AlertDialog(
@@ -193,6 +195,23 @@ fun DashboardScreen(
         )
     }
 
+    if (showVisionDiagDialog) {
+        VisionDiagnosticsDialog(
+            state = state,
+            isParked = isParked,
+            onSavePlateEvidence = {
+                state.visionState.lastPlateObservation?.let { obs ->
+                    viewModel.visionPipeline.platePipeline.saveEncryptedEvidence(obs)
+                }
+            },
+            onDeletePlateEvidence = {
+                viewModel.visionPipeline.platePipeline.deleteAllEvidence()
+            },
+            evidenceCount = viewModel.visionPipeline.platePipeline.listEvidenceFiles().size,
+            onDismiss = { showVisionDiagDialog = false },
+        )
+    }
+
     val screenBgColor by animateColorAsState(
         targetValue = when (state.speedZone) {
             SpeedZone.OPTIMAL_CRUISE -> Color(0xFF0A244D)
@@ -216,7 +235,12 @@ fun DashboardScreen(
                     modifier = Modifier.weight(1.1f).fillMaxHeight(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    TopCockpitHeader(isOnline = state.isOnline, onOpenSensors = onOpenSensors)
+                    TopCockpitHeader(
+                    isOnline = state.isOnline,
+                    isParked = isParked,
+                    onOpenSensors = onOpenSensors,
+                    onOpenVisionDiag = { if (isParked) showVisionDiagDialog = true },
+                )
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         ViewportCard(state = state, viewModel = viewModel)
                     }
@@ -281,7 +305,12 @@ fun DashboardScreen(
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                TopCockpitHeader(isOnline = state.isOnline, onOpenSensors = onOpenSensors)
+                TopCockpitHeader(
+                    isOnline = state.isOnline,
+                    isParked = isParked,
+                    onOpenSensors = onOpenSensors,
+                    onOpenVisionDiag = { if (isParked) showVisionDiagDialog = true },
+                )
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -339,7 +368,9 @@ fun DashboardScreen(
 @Composable
 private fun TopCockpitHeader(
     isOnline: Boolean,
+    isParked: Boolean = true,
     onOpenSensors: () -> Unit,
+    onOpenVisionDiag: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -383,28 +414,46 @@ private fun TopCockpitHeader(
             }
         }
 
-        Surface(
-            shape = RoundedCornerShape(50),
-            color = CockpitCardBg,
-            border = BorderStroke(1.dp, if (isOnline) Color(0xFF174B44) else Color(0xFF4D3B1A)),
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (isParked) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = CockpitCardBg,
+                    border = BorderStroke(1.dp, NavBlue),
+                    modifier = Modifier.clickable(onClick = onOpenVisionDiag),
+                ) {
+                    Text(
+                        text = "Vision Diag",
+                        color = NavBlue,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
+            }
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = CockpitCardBg,
+                border = BorderStroke(1.dp, if (isOnline) Color(0xFF174B44) else Color(0xFF4D3B1A)),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(if (isOnline) MintTeal else KoPilotColors.WarningAmber),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = if (isOnline) "Online" else "Offline",
-                    color = if (isOnline) MintTeal else KoPilotColors.WarningAmber,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(if (isOnline) MintTeal else KoPilotColors.WarningAmber),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = if (isOnline) "Online" else "Offline",
+                        color = if (isOnline) MintTeal else KoPilotColors.WarningAmber,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
     }
@@ -1505,6 +1554,125 @@ private fun DestinationPickerDialog(
                         }
                         TextButton(onClick = { onOpenExternalGoogleMaps(name, latLng.latitude, latLng.longitude) }) {
                             Text("GMaps")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+@Composable
+private fun VisionDiagnosticsDialog(
+    state: DashboardUiState,
+    isParked: Boolean,
+    onSavePlateEvidence: () -> Unit,
+    onDeletePlateEvidence: () -> Unit,
+    evidenceCount: Int,
+    onDismiss: () -> Unit,
+) {
+    val cam = state.cameraStatus
+    val vis = state.visionState
+    val allErrors = (cam.recentErrors + vis.recentErrors).takeLast(10)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Vision Diagnostics (Parked)") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "Actual measured on-device metrics (never simulated):",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Camera Resolution: ${cam.actualResolution}", fontWeight = FontWeight.Medium)
+                        Text("Camera FPS: ${"%.1f".format(cam.cameraFps)} | Inference FPS: ${"%.1f".format(cam.inferenceFps)}")
+                        Text("Frames Analyzed: ${cam.analyzedFrames} | Dropped: ${cam.droppedFrames}")
+                        Text("Inference Latency: ${vis.lastInferenceLatencyMs} ms")
+                        Text("Model: ${vis.modelVersion} (${vis.validationStatus})")
+                        Text("Thermal: ${cam.thermalState.name} | Battery: ${if (cam.batteryPercent >= 0) "${cam.batteryPercent}%" else "Unknown"}")
+                        Text("Scene Luminance: ${vis.averageLuminance.toInt()} | Zoom: ${"%.1f".format(vis.recommendedZoomRatio)}x")
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Detected Objects (${vis.trackedObjects.size})", fontWeight = FontWeight.SemiBold)
+                        if (vis.trackedObjects.isEmpty()) {
+                            Text("None in current frame", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            vis.trackedObjects.take(5).forEach { obj ->
+                                Text(
+                                    text = "#${obj.trackingId} ${obj.label} (${(obj.confidence * 100).toInt()}%)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                        val signObs = vis.lastObservation
+                        Text(
+                            text = if (signObs != null) {
+                                "Last Sign: ${signObs.category.displayName} (${(signObs.confidence * 100).toInt()}%, ${signObs.consecutiveFrames}f)"
+                            } else {
+                                "Last Sign: None"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        val plateObs = vis.lastPlateObservation
+                        Text(
+                            text = if (plateObs != null) {
+                                "Last Plate (Masked): ${plateObs.maskedPlate} (${plateObs.formatCategory}, OCR ${(plateObs.ocrConfidence * 100).toInt()}%)"
+                            } else {
+                                "Last Plate: None"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                if (isParked) {
+                    Text("Encrypted Evidence ($evidenceCount saved)", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onSavePlateEvidence,
+                            enabled = vis.lastPlateObservation != null,
+                        ) {
+                            Text("Save Plate")
+                        }
+                        OutlinedButton(
+                            onClick = onDeletePlateEvidence,
+                            enabled = evidenceCount > 0,
+                        ) {
+                            Text("Delete All")
+                        }
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Error Logs (${allErrors.size})", fontWeight = FontWeight.SemiBold)
+                        if (allErrors.isEmpty()) {
+                            Text("No vision/camera errors logged.", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            allErrors.forEach { err ->
+                                Text(err, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                            }
                         }
                     }
                 }

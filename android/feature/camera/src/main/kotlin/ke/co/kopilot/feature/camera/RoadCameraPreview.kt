@@ -2,8 +2,10 @@ package ke.co.kopilot.feature.camera
 
 import android.util.Size
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
+import androidx.camera.core.SurfaceOrientedMeteringPointFactory
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -165,6 +167,7 @@ fun RoadCameraPreview(
 
                 imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
                     val now = System.currentTimeMillis()
+                    performanceController.recordResolution(imageProxy.width, imageProxy.height)
                     if (performanceController.shouldAnalyzeFrame(now, analysisIntervalMs)) {
                         onFrameListener.onFrame(
                             imageProxy = imageProxy,
@@ -183,15 +186,25 @@ fun RoadCameraPreview(
                     val maxZoom = cam.cameraInfo.zoomState.value?.maxZoomRatio ?: 2.0f
                     val minZoom = cam.cameraInfo.zoomState.value?.minZoomRatio ?: 1.0f
                     cam.cameraControl.setZoomRatio(zoomRatio.coerceIn(minZoom, maxZoom))
+                    // Continuous road-corridor autofocus & auto-exposure metering
+                    runCatching {
+                        val factory = SurfaceOrientedMeteringPointFactory(1f, 1f)
+                        val roadPoint = factory.createPoint(0.5f, 0.42f)
+                        val action = FocusMeteringAction.Builder(
+                            roadPoint,
+                            FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE,
+                        ).setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS).build()
+                        cam.cameraControl.startFocusAndMetering(action)
+                    }
                     performanceController.setCameraActive(true, "Rear camera active (HD)")
                 } else {
+                    performanceController.recordError("Rear camera not found on this device")
                     performanceController.setCameraActive(false, "Rear camera not found on this device")
                 }
             }.onFailure { err ->
-                performanceController.setCameraActive(
-                    false,
-                    "Camera unavailable: ${err.localizedMessage ?: "hardware error"}",
-                )
+                val msg = "Camera unavailable: ${err.localizedMessage ?: "hardware error"}"
+                performanceController.recordError(msg)
+                performanceController.setCameraActive(false, msg)
             }
         }, mainExecutor)
 
