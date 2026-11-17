@@ -3,11 +3,14 @@ package ke.co.kopilot.feature.dashboard
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,7 +53,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -151,10 +156,47 @@ fun DashboardScreen(
             )
         }
 
+    var viewingLogFile by remember { mutableStateOf<File?>(null) }
+
     if (showTripsDialog) {
+        val shareTxtFile: (File) -> Unit = { file ->
+            runCatching {
+                val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, "KoPilot Trip Activity Log (${file.name})")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                ctx.startActivity(Intent.createChooser(shareIntent, "Share Trip Activity Log (.txt)"))
+            }
+        }
         TripsHistoryDialog(
             trips = state.savedTrips,
+            activeLogFile = if (state.isDrivingSessionActive) viewModel.tripActivityLogger.getActiveLogFile() else null,
+            findLogFile = { startedAt -> viewModel.tripActivityLogger.findLogFileForTrip(startedAt) },
+            onViewLog = { file -> viewingLogFile = file },
+            onShareLog = shareTxtFile,
             onDismiss = { showTripsDialog = false },
+        )
+    }
+
+    viewingLogFile?.let { file ->
+        TripLogViewerDialog(
+            file = file,
+            onShare = {
+                runCatching {
+                    val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(Intent.EXTRA_SUBJECT, "KoPilot Trip Activity Log (${file.name})")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    ctx.startActivity(Intent.createChooser(shareIntent, "Share Trip Activity Log (.txt)"))
+                }
+            },
+            onDismiss = { viewingLogFile = null },
         )
     }
 
@@ -1199,6 +1241,10 @@ private fun BottomCircleAction(
 @Composable
 private fun TripsHistoryDialog(
     trips: List<TripEntity>,
+    activeLogFile: File?,
+    findLogFile: (Long) -> File?,
+    onViewLog: (File) -> Unit,
+    onShareLog: (File) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val formatter = remember { SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()) }
@@ -1210,16 +1256,43 @@ private fun TripsHistoryDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (trips.isEmpty()) {
+                if (activeLogFile != null) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "Active Trip Log (.txt)",
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = activeLogFile.name,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { onViewLog(activeLogFile) }) {
+                                    Text("View Log")
+                                }
+                                Button(onClick = { onShareLog(activeLogFile) }) {
+                                    Text("Share .txt")
+                                }
+                            }
+                        }
+                    }
+                }
+                if (trips.isEmpty() && activeLogFile == null) {
                     Text("No saved trips yet. Tap Start Driving to record a trip.")
                 } else {
                     trips.forEach { trip ->
+                        val logFile = remember(trip.id, trip.startedAtMillis) { findLogFile(trip.startedAtMillis) }
                         Surface(
                             shape = RoundedCornerShape(10.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Column(modifier = Modifier.padding(10.dp)) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
                                     text = trip.destinationLabel ?: "Local Drive",
                                     fontWeight = FontWeight.SemiBold,
@@ -1228,6 +1301,16 @@ private fun TripsHistoryDialog(
                                     text = "${formatter.format(Date(trip.startedAtMillis))} • ${"%.1f".format(trip.distanceKm)} km • ${trip.durationSeconds / 60} min",
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
+                                if (logFile != null) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(onClick = { onViewLog(logFile) }) {
+                                            Text("View .txt")
+                                        }
+                                        Button(onClick = { onShareLog(logFile) }) {
+                                            Text("Share .txt")
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1236,6 +1319,56 @@ private fun TripsHistoryDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+@Composable
+private fun TripLogViewerDialog(
+    file: File,
+    onShare: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val content = remember(file.absolutePath, file.length()) {
+        runCatching { file.readText() }.getOrElse { "Unable to read log file: ${it.localizedMessage}" }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(file.name, maxLines = 1) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "Saved at: ${file.absolutePath}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = content,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        modifier = Modifier
+                            .padding(10.dp)
+                            .horizontalScroll(rememberScrollState()),
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+        confirmButton = {
+            Button(onClick = onShare) { Text("Share .txt") }
         },
     )
 }

@@ -34,6 +34,7 @@ import ke.co.kopilot.feature.navigation.NavigationRepository
 import ke.co.kopilot.feature.navigation.NavigationUiState
 import ke.co.kopilot.feature.traffic.TrafficAdvisor
 import ke.co.kopilot.feature.traffic.TrafficEvaluation
+import ke.co.kopilot.feature.trips.TripActivityLogger
 import ke.co.kopilot.feature.trips.TripRepository
 import ke.co.kopilot.feature.vision.RoadVisionPipeline
 import ke.co.kopilot.feature.vision.TrafficLightSignal
@@ -73,6 +74,7 @@ data class DashboardUiState(
     val alertState: AlertCoordinatorState = AlertCoordinatorState(),
     val diagnosticsState: VehicleDiagnosticsState = VehicleDiagnosticsState(),
     val savedTrips: List<TripEntity> = emptyList(),
+    val activeTripLogPath: String? = null,
     val speedZone: SpeedZone = SpeedZone.NORMAL,
     val motionAnalysis: DrivingMotionAnalysis = DrivingMotionAnalysis(),
 )
@@ -93,6 +95,7 @@ class DashboardViewModel @Inject constructor(
     private val speechSink: SpeechSink,
     private val obdManager: ObdBluetoothManager,
     private val tripRepo: TripRepository,
+    val tripActivityLogger: TripActivityLogger,
     private val sensorManagerRepo: SensorManagerRepository,
     connectivityObserver: ConnectivityObserver,
 ) : ViewModel() {
@@ -104,6 +107,16 @@ class DashboardViewModel @Inject constructor(
     private var speedSampleSum = 0f
     private var speedSampleCount = 0
     private var signsDetectedInTrip = 0
+    private var lastSpeedLogMs = 0L
+    private var lastLoggedSpeedKmh = -1f
+    private var lastLoggedPlate: String? = null
+    private var lastLoggedTrafficSignal = TrafficLightSignal.NONE
+    private var lastLoggedTrafficSignalMs = 0L
+    private var lastLoggedBrakeLightMs = 0L
+    private var lastLoggedDarkMs = 0L
+    private var lastLoggedCameraMs = 0L
+    private var lastLoggedOverspeedMs = 0L
+    private var lastLoggedWeather: String? = null
 
     private val coreFlows = combine(
         isDriving,
@@ -157,6 +170,7 @@ class DashboardViewModel @Inject constructor(
             alertState = alerts,
             diagnosticsState = obd,
             savedTrips = trips,
+            activeTripLogPath = tripActivityLogger.activeLogPath.value,
             speedZone = currentSpeedZone.value,
             motionAnalysis = sensorManagerRepo.state.value.motionAnalysis,
         )
@@ -172,7 +186,17 @@ class DashboardViewModel @Inject constructor(
             visionPipeline.state.collect { vision ->
                 val s = uiState.value.settings
                 val moving = (locationTracker.state.value.currentFix?.speedKmh ?: 0f) >= 8f || isDriving.value
+                val now = System.currentTimeMillis()
+                val plate = vision.lastDetectedPlate
+                if (isDriving.value && plate != null && plate != lastLoggedPlate) {
+                    lastLoggedPlate = plate
+                    tripActivityLogger.logActivity("PLATE_DETECTED", "Vehicle plate spotted: $plate", now)
+                }
                 if (vision.redBrakeLightsAhead && moving) {
+                    if (isDriving.value && (now - lastLoggedBrakeLightMs) >= 8_000L) {
+                        lastLoggedBrakeLightMs = now
+                        tripActivityLogger.logActivity("BRAKE_LIGHTS_AHEAD", "Red brake lights ahead — Slow down", now)
+                    }
                     alertCoordinator.submit(
                         alert = AlertMessage(
                             id = UUID.randomUUID().toString(),
@@ -186,6 +210,13 @@ class DashboardViewModel @Inject constructor(
                         language = s.language,
                         globalMute = s.alertsMuted,
                     )
+                }
+                if (isDriving.value && vision.trafficLightSignal != TrafficLightSignal.NONE &&
+                    (vision.trafficLightSignal != lastLoggedTrafficSignal || (now - lastLoggedTrafficSignalMs) >= 8_000L)
+                ) {
+                    lastLoggedTrafficSignal = vision.trafficLightSignal
+                    lastLoggedTrafficSignalMs = now
+                    tripActivityLogger.logActivity("TRAFFIC_LIGHT", "${vision.trafficLightSignal.name} traffic light ahead", now)
                 }
                 when (vision.trafficLightSignal) {
                     TrafficLightSignal.RED -> alertCoordinator.submit(
@@ -230,6 +261,10 @@ class DashboardViewModel @Inject constructor(
                     TrafficLightSignal.NONE -> Unit
                 }
                 if (vision.isDarkScene && moving) {
+                    if (isDriving.value && (now - lastLoggedDarkMs) >= 15_000L) {
+                        lastLoggedDarkMs = now
+                        tripActivityLogger.logActivity("HEADLIGHT_REMINDER", "Low ambient light (${vision.averageLuminance.toInt()}) — Turn on headlights", now)
+                    }
                     alertCoordinator.submit(
                         alert = AlertMessage(
                             id = UUID.randomUUID().toString(),
@@ -254,6 +289,18 @@ class DashboardViewModel @Inject constructor(
                     maxSpeedObservedKmh = maxOf(maxSpeedObservedKmh, kmh)
                     speedSampleSum += kmh
                     speedSampleCount += 1
+                    val now = System.currentTimeMillis()
+                    val speedDelta = kotlin.math.abs(kmh - lastLoggedSpeedKmh)
+                    if ((now - lastSpeedLogMs) >= 20_000L || (lastLoggedSpeedKmh >= 0f && speedDelta >= 15f)) {
+                        lastSpeedLogMs = now
+                        lastLoggedSpeedKmh = kmh
+                        val distKm = locState.distanceTraveledMeters / 1000.0
+                        tripActivityLogger.logActivity(
+                            type = "GPS_SPEED",
+                            details = "Speed=${"%.1f".format(kmh)} km/h | Distance=${"%.2f".format(distKm)} km | GPS=${"%.5f".format(fix.latitude)},${"%.5f".format(fix.longitude)}",
+                            timestampMillis = now,
+                        )
+                    }
                 }
                 weatherRepo.refreshWeather(fix.latitude, fix.longitude)
                 navigationRepo.refreshRoadIntelligence(fix.latitude, fix.longitude)
@@ -261,6 +308,11 @@ class DashboardViewModel @Inject constructor(
                 val camDist = roadIntel.nearestSpeedCameraMeters
                 if (camDist != null && camDist <= 500) {
                     val s = uiState.value.settings
+                    val now = System.currentTimeMillis()
+                    if (isDriving.value && (now - lastLoggedCameraMs) >= 15_000L) {
+                        lastLoggedCameraMs = now
+                        tripActivityLogger.logActivity("SPEED_CAMERA", "Mapped speed camera $camDist m ahead", now)
+                    }
                     alertCoordinator.submit(
                         alert = AlertMessage(
                             id = UUID.randomUUID().toString(),
@@ -277,6 +329,10 @@ class DashboardViewModel @Inject constructor(
                 }
                 weatherRepo.state.value.advisoryMessage?.let { weatherAdv ->
                     val s = uiState.value.settings
+                    if (isDriving.value && weatherAdv != lastLoggedWeather) {
+                        lastLoggedWeather = weatherAdv
+                        tripActivityLogger.logActivity("WEATHER", weatherAdv)
+                    }
                     alertCoordinator.submit(
                         alert = AlertMessage(
                             id = UUID.randomUUID().toString(),
@@ -302,6 +358,12 @@ class DashboardViewModel @Inject constructor(
                 ) {
                     val s = uiState.value.settings
                     val limit = speedEval.applicableSpeedLimitKmh!!
+                    val now = System.currentTimeMillis()
+                    if (isDriving.value && (now - lastLoggedOverspeedMs) >= 10_000L) {
+                        lastLoggedOverspeedMs = now
+                        val cur = speedEval.currentSpeedKmh?.toInt() ?: 0
+                        tripActivityLogger.logActivity("OVERSPEED_WARNING", "Current speed $cur km/h exceeds $limit km/h limit", now)
+                    }
                     val msg = "You are exceeding the observed $limit kilometres per hour speed limit. Please slow down."
                     alertCoordinator.submit(
                         alert = AlertMessage(
@@ -327,6 +389,9 @@ class DashboardViewModel @Inject constructor(
                 currentSpeedZone.value = zoneEval.zone
                 val spoken = zoneEval.zone.spokenAlert
                 if (zoneEval.shouldNotify && spoken != null) {
+                    if (isDriving.value) {
+                        tripActivityLogger.logActivity("SPEED_ZONE", "${zoneEval.zone.name}: $spoken")
+                    }
                     val s = uiState.value.settings
                     alertCoordinator.submit(
                         alert = AlertMessage(
@@ -365,12 +430,34 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun startDriving() {
+        val started = System.currentTimeMillis()
         isDriving.value = true
-        tripStartedAt.value = System.currentTimeMillis()
+        tripStartedAt.value = started
         maxSpeedObservedKmh = 0f
         speedSampleSum = 0f
         speedSampleCount = 0
         signsDetectedInTrip = 0
+        lastSpeedLogMs = 0L
+        lastLoggedSpeedKmh = -1f
+        lastLoggedPlate = null
+        lastLoggedTrafficSignal = TrafficLightSignal.NONE
+        lastLoggedTrafficSignalMs = 0L
+        lastLoggedBrakeLightMs = 0L
+        lastLoggedDarkMs = 0L
+        lastLoggedCameraMs = 0L
+        lastLoggedOverspeedMs = 0L
+        lastLoggedWeather = null
+
+        val fix = locationTracker.state.value.currentFix
+        val dest = navigationRepo.state.value.destinationName
+        tripActivityLogger.startTripLog(
+            startedAtMillis = started,
+            originLabel = "Current Location",
+            destinationLabel = dest,
+            latitude = fix?.latitude,
+            longitude = fix?.longitude,
+        )
+
         locationTracker.resetTripDistance()
         locationTracker.startTracking(highAccuracy = true)
         sensorManagerRepo.startMonitoring(SensorSamplingProfile.DRIVING)
@@ -383,6 +470,15 @@ class DashboardViewModel @Inject constructor(
         val avgKmh = if (speedSampleCount > 0) speedSampleSum / speedSampleCount else 0f
         val destLabel = navigationRepo.state.value.destinationName
         val alertsCount = alertCoordinator.state.value.alertsTriggeredCount
+
+        tripActivityLogger.endTripLog(
+            endedAtMillis = ended,
+            distanceKm = distanceKm,
+            maxSpeedKmh = maxSpeedObservedKmh,
+            avgSpeedKmh = avgKmh,
+            signsDetectedCount = signsDetectedInTrip,
+            alertsTriggeredCount = alertsCount,
+        )
 
         isDriving.value = false
         tripStartedAt.value = null
@@ -412,11 +508,20 @@ class DashboardViewModel @Inject constructor(
 
     fun onConfirmedSign(observation: TrafficSignObservation) {
         signsDetectedInTrip += 1
+        val label = observation.customLabel ?: observation.category.displayName
+        if (isDriving.value) {
+            val pct = (observation.confidence * 100).toInt()
+            val certainty = if (observation.isUncertain) "unsure" else "confirmed"
+            tripActivityLogger.logActivity(
+                type = "SIGN_DETECTED",
+                details = "$label ($pct% $certainty, source=${observation.modelVersion})",
+                timestampMillis = observation.timestampMillis,
+            )
+        }
         val settings = uiState.value.settings
         if (!settings.announceAllSigns && observation.category.speedLimitKmh == null) {
             return
         }
-        val label = observation.customLabel ?: observation.category.displayName
         val text = if (observation.isUncertain) {
             "Road sign ahead is unsure. Possible $label. Adjusting camera."
         } else {
@@ -470,9 +575,11 @@ class DashboardViewModel @Inject constructor(
             voiceState.connectionState == ke.co.kopilot.feature.voice.VoiceConnectionState.CONNECTING ||
             (voiceState.connectionState == ke.co.kopilot.feature.voice.VoiceConnectionState.LOCAL_FALLBACK && voiceState.isListening)
         if (isActive) {
+            if (isDriving.value) tripActivityLogger.logActivity("VOICE_ASSISTANT", "Voice assistant disconnected")
             voiceClient.disconnect()
         } else {
             val s = uiState.value.settings
+            if (isDriving.value) tripActivityLogger.logActivity("VOICE_ASSISTANT", "Voice assistant connected (${s.language}, voice=${s.aiVoiceName})")
             voiceClient.connect(language = s.language, voice = s.aiVoiceName)
         }
     }
@@ -511,6 +618,12 @@ class DashboardViewModel @Inject constructor(
                     ""
                 }
                 val s = uiState.value.settings
+                if (isDriving.value) {
+                    tripActivityLogger.logActivity(
+                        type = "NAVIGATION_ROUTE",
+                        details = "Route to $name: $mins min, $km km via ${active.summary}",
+                    )
+                }
                 alertCoordinator.submit(
                     alert = AlertMessage(
                         id = UUID.randomUUID().toString(),
