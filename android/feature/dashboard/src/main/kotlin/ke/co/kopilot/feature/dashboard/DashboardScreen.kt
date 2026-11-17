@@ -52,6 +52,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -76,6 +77,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import ke.co.kopilot.feature.diagnostics.ObdLiveTelemetry
+import ke.co.kopilot.feature.diagnostics.ObdPidCapability
+import ke.co.kopilot.feature.diagnostics.PidSupportStatus
 import ke.co.kopilot.feature.sensors.LateralMotionState
 import ke.co.kopilot.feature.vision.LaneShiftEvent
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -119,6 +123,7 @@ fun DashboardScreen(
     var showDestinationDialog by remember { mutableStateOf(false) }
     var showTripsDialog by remember { mutableStateOf(false) }
     var showVisionDiagDialog by remember { mutableStateOf(false) }
+    var showObdLiveDialog by remember { mutableStateOf(false) }
     val isParked = (state.speedEvaluation.currentSpeedKmh ?: 0f) < 5f
 
     if (!state.settings.safetyDisclosureAccepted) {
@@ -212,6 +217,19 @@ fun DashboardScreen(
         )
     }
 
+    if (showObdLiveDialog) {
+        val obdTel by viewModel.obdManager.liveTelemetry.collectAsStateWithLifecycle()
+        val obdCaps by viewModel.obdManager.capabilities.collectAsStateWithLifecycle()
+        val obdConn by viewModel.obdManager.connectionState.collectAsStateWithLifecycle()
+        ObdLiveDashboardDialog(
+            connectionStateName = obdConn.name,
+            gpsSpeedKmh = state.speedEvaluation.currentSpeedKmh,
+            telemetry = obdTel,
+            capabilities = obdCaps,
+            onDismiss = { showObdLiveDialog = false },
+        )
+    }
+
     val screenBgColor by animateColorAsState(
         targetValue = when (state.speedZone) {
             SpeedZone.OPTIMAL_CRUISE -> Color(0xFF0A244D)
@@ -240,6 +258,7 @@ fun DashboardScreen(
                     isParked = isParked,
                     onOpenSensors = onOpenSensors,
                     onOpenVisionDiag = { if (isParked) showVisionDiagDialog = true },
+                    onOpenObdLive = { showObdLiveDialog = true },
                 )
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         ViewportCard(state = state, viewModel = viewModel)
@@ -310,6 +329,7 @@ fun DashboardScreen(
                     isParked = isParked,
                     onOpenSensors = onOpenSensors,
                     onOpenVisionDiag = { if (isParked) showVisionDiagDialog = true },
+                    onOpenObdLive = { showObdLiveDialog = true },
                 )
                 Box(
                     modifier = Modifier
@@ -371,6 +391,7 @@ private fun TopCockpitHeader(
     isParked: Boolean = true,
     onOpenSensors: () -> Unit,
     onOpenVisionDiag: () -> Unit = {},
+    onOpenObdLive: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -415,6 +436,20 @@ private fun TopCockpitHeader(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = CockpitCardBg,
+                border = BorderStroke(1.dp, MintTeal),
+                modifier = Modifier.clickable(onClick = onOpenObdLive),
+            ) {
+                Text(
+                    text = "OBD",
+                    color = MintTeal,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
             if (isParked) {
                 Surface(
                     shape = RoundedCornerShape(50),
@@ -1673,6 +1708,96 @@ private fun VisionDiagnosticsDialog(
                             allErrors.forEach { err ->
                                 Text(err, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
                             }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+@Composable
+private fun ObdLiveDashboardDialog(
+    connectionStateName: String,
+    gpsSpeedKmh: Float?,
+    telemetry: ObdLiveTelemetry,
+    capabilities: List<ObdPidCapability>,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Engine & CVT Live OBD-II") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("State: $connectionStateName • ${telemetry.protocolName ?: "Not connected"}", fontWeight = FontWeight.Medium)
+                telemetry.adapterInfo?.let { Text("Adapter: $it (${telemetry.transportType.name})", style = MaterialTheme.typography.bodySmall) }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val rpm = telemetry.engineRpm ?: 0
+                        Text("Engine RPM (010C): ${telemetry.engineRpm ?: "--"} rpm", fontWeight = FontWeight.SemiBold)
+                        LinearProgressIndicator(
+                            progress = { (rpm / 7000f).coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        val coolant = telemetry.coolantTempC
+                        Text("Coolant Temp (0105): ${coolant?.let { "$it°C" } ?: "--"}")
+                        if (telemetry.coolantHistoryC.isNotEmpty()) {
+                            Text(
+                                text = "Coolant Trend: ${telemetry.coolantHistoryC.takeLast(8).joinToString("° → ")}°C",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Text("OBD Speed (010D): ${telemetry.vehicleSpeedKmh ?: "--"} km/h | GPS Speed: ${gpsSpeedKmh?.toInt() ?: "--"} km/h")
+                        Text("Engine Load (0104): ${telemetry.engineLoadPct?.let { "${"%.1f".format(it)}%" } ?: "--"} | Throttle (0111): ${telemetry.throttlePositionPct?.let { "${"%.1f".format(it)}%" } ?: "--"}")
+                        Text("Intake Temp (010F): ${telemetry.intakeAirTempC?.let { "$it°C" } ?: "--"} | Ambient (0146): ${telemetry.ambientAirTempC?.let { "$it°C" } ?: "--"}")
+                        Text("STFT: ${telemetry.shortTermFuelTrimPct?.let { "${"%.1f".format(it)}%" } ?: "--"} | LTFT: ${telemetry.longTermFuelTrimPct?.let { "${"%.1f".format(it)}%" } ?: "--"} | MAP: ${telemetry.mapKpa ?: "--"} kPa")
+                        Text("MAF: ${telemetry.mafGramsPerSec?.let { "${"%.2f".format(it)} g/s" } ?: "--"} | Timing: ${telemetry.timingAdvanceDeg?.let { "${"%.1f".format(it)}°" } ?: "--"} | O2: ${telemetry.o2SensorVoltageV?.let { "${"%.2f".format(it)}V" } ?: "--"}")
+                        Text("Fuel Level: ${telemetry.fuelLevelPct?.let { "${"%.1f".format(it)}%" } ?: "--"} | Voltage: ${telemetry.controlModuleVoltageV?.let { "${"%.2f".format(it)}V" } ?: "--"} | Runtime: ${telemetry.runtimeSinceStartSec ?: "--"}s")
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Transmission & CVT Monitoring", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "Transmission DTCs (P07xx–P09xx): ${telemetry.transmissionDtcCodes.ifEmpty { listOf("None") }.joinToString(", ")}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        telemetry.observedRpmSpeedRatio?.let { ratio ->
+                            Text("Observed RPM/Speed Ratio: ${"%.1f".format(ratio)} rpm per km/h", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text(telemetry.transmissionStatusNote, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        val supportedCount = capabilities.count { it.status == PidSupportStatus.SUPPORTED }
+                        Text("ECU Capability Registry ($supportedCount/${capabilities.size} supported)", fontWeight = FontWeight.SemiBold)
+                        capabilities.forEach { cap ->
+                            Text(
+                                text = "${cap.pidHex} ${cap.name}: ${cap.status.name}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                         }
                     }
                 }

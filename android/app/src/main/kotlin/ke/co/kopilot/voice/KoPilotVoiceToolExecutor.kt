@@ -98,10 +98,12 @@ class KoPilotVoiceToolExecutor @Inject constructor(
         }
         "get_vehicle_diagnostics" -> {
             val obd = obdManager.state.value
+            val tel = obdManager.liveTelemetry.value
+            val conn = obdManager.connectionState.value
             if (!obd.obdConnected) {
-                """{"status":"unavailable","reason":"${obd.statusMessage}"}"""
+                """{"status":"unavailable","connection_state":"${conn.name}","reason":"${obd.statusMessage}"}"""
             } else {
-                """{"status":"ok","rpm":${obd.engineRpm ?: "null"},"coolant_c":${obd.coolantTempC ?: "null"},"dtc_count":${obd.dtcCodes.size},"tpms":"${obd.tpmsStatusMessage}"}"""
+                """{"status":"ok","connection_state":"${conn.name}","adapter":"${tel.adapterInfo ?: obd.adapterName ?: "OBD-II"}","protocol":"${tel.protocolName ?: obd.protocolName ?: "Auto"}","rpm":${tel.engineRpm ?: "null"},"obd_speed_kmh":${tel.vehicleSpeedKmh ?: "null"},"coolant_c":${tel.coolantTempC ?: "null"},"engine_load_pct":${tel.engineLoadPct ?: "null"},"throttle_pct":${tel.throttlePositionPct ?: "null"},"voltage_v":${tel.controlModuleVoltageV ?: "null"},"dtc_count":${obd.dtcCodes.size},"transmission_dtc_count":${tel.transmissionDtcCodes.size},"transmission_note":"${tel.transmissionStatusNote}"}"""
             }
         }
         "get_trip_summary" -> {

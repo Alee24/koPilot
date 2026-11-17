@@ -213,6 +213,25 @@ class SettingsViewModel @Inject constructor(
         _statusBanner.value = "Vehicle profile saved"
     }
 
+    val obdConnectionState = obdManager.connectionState
+    val discoveredObdDevices = obdManager.discoveredDevices
+    val liveObdTelemetry = obdManager.liveTelemetry
+    val obdCapabilities = obdManager.capabilities
+    val obdStatusMessage = obdManager.connectionManager.statusMessage
+
+    fun startObdDiscovery(bluetoothPermissionGranted: Boolean) {
+        obdManager.startScan(bluetoothPermissionGranted)
+        _pairedDevices.value = obdManager.listPairedDevices(bluetoothPermissionGranted)
+    }
+
+    fun stopObdDiscovery() {
+        obdManager.stopScan()
+    }
+
+    fun disconnectObd() {
+        obdManager.disconnect()
+    }
+
     fun refreshPairedBluetoothDevices(bluetoothPermissionGranted: Boolean) {
         _pairedDevices.value = obdManager.listPairedDevices(bluetoothPermissionGranted)
     }

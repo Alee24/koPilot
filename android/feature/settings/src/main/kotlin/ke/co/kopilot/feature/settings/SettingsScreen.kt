@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -31,6 +32,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -341,20 +343,97 @@ fun SettingsScreen(
                     Text("Save Vehicle Profile")
                 }
                 Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = { viewModel.refreshPairedBluetoothDevices(bluetoothPermissionGranted) }) {
-                    Text("Scan Paired OBD-II Bluetooth Devices")
+                val obdConnState by viewModel.obdConnectionState.collectAsStateWithLifecycle()
+                val discoveredDevices by viewModel.discoveredObdDevices.collectAsStateWithLifecycle()
+                val obdTel by viewModel.liveObdTelemetry.collectAsStateWithLifecycle()
+                val obdCaps by viewModel.obdCapabilities.collectAsStateWithLifecycle()
+                val obdMsg by viewModel.obdStatusMessage.collectAsStateWithLifecycle()
+                var showCapabilityDialog by remember { mutableStateOf(false) }
+
+                Text(
+                    text = "OBD State: ${obdConnState.name} • $obdMsg",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { viewModel.startObdDiscovery(bluetoothPermissionGranted) }) {
+                        Text("Scan Classic + BLE")
+                    }
+                    OutlinedButton(onClick = { viewModel.disconnectObd() }) {
+                        Text("Disconnect")
+                    }
                 }
-                pairedDevices.forEach { dev ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("${dev.name} (${dev.address})", style = MaterialTheme.typography.bodyMedium)
-                        OutlinedButton(onClick = { viewModel.connectObd(dev.address, bluetoothPermissionGranted) }) {
-                            Text("Connect")
+                if (discoveredDevices.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    discoveredDevices.forEach { dev ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = buildString {
+                                        append(dev.name)
+                                        if (dev.isHhobdHint) append(" [HHOBD Hint]")
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = "${dev.address} • ${dev.transportHint.name}${if (dev.rssiDbm != null) " • ${dev.rssiDbm} dBm" else ""}${if (dev.isPaired) " • Paired" else ""}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            OutlinedButton(onClick = { viewModel.connectObd(dev.address, bluetoothPermissionGranted) }) {
+                                Text("Connect")
+                            }
                         }
                     }
+                }
+                if (obdTel.lastUpdatedMillis != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "RPM: ${obdTel.engineRpm ?: "--"} • Speed: ${obdTel.vehicleSpeedKmh ?: "--"} km/h • Coolant: ${obdTel.coolantTempC ?: "--"}°C • Load: ${obdTel.engineLoadPct?.toInt() ?: "--"}% • Volt: ${obdTel.controlModuleVoltageV?.let { "%.1fV".format(it) } ?: "--"}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        text = obdTel.transmissionStatusNote,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(onClick = { showCapabilityDialog = true }) {
+                    Text("View ECU Capabilities & Engine/CVT Data")
+                }
+                if (showCapabilityDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showCapabilityDialog = false },
+                        title = { Text("ECU Capability Registry & CVT") },
+                        text = {
+                            Column(
+                                modifier = Modifier.verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text("Transmission DTCs: ${obdTel.transmissionDtcCodes.ifEmpty { listOf("None") }.joinToString(", ")}")
+                                obdTel.observedRpmSpeedRatio?.let { ratio ->
+                                    Text("Observed RPM/Speed Ratio: ${"%.1f".format(ratio)} rpm per km/h")
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                obdCaps.forEach { cap ->
+                                    Text(
+                                        text = "${cap.pidHex} ${cap.name}: ${cap.status.name}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showCapabilityDialog = false }) { Text("Close") }
+                        },
+                    )
                 }
             }
 

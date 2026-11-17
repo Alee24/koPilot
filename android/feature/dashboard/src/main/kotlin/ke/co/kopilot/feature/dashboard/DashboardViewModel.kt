@@ -95,7 +95,7 @@ class DashboardViewModel @Inject constructor(
     private val voiceClient: OpenAiRealtimeVoiceClient,
     private val alertCoordinator: LocalAlertCoordinator,
     private val speechSink: SpeechSink,
-    private val obdManager: ObdBluetoothManager,
+    val obdManager: ObdBluetoothManager,
     private val tripRepo: TripRepository,
     val tripActivityLogger: TripActivityLogger,
     private val sensorManagerRepo: SensorManagerRepository,
