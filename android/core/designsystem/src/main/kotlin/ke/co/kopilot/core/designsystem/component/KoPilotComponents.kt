@@ -33,6 +33,26 @@ import ke.co.kopilot.core.designsystem.theme.KoPilotRadii
 import ke.co.kopilot.core.designsystem.theme.KoPilotSpacing
 
 @Composable
+fun KoPilotGlassCard(
+    modifier: Modifier = Modifier,
+    borderColor: Color = KoPilotClusterTokens.SubtleGlassBorder,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(KoPilotRadii.Card),
+        color = KoPilotClusterTokens.GlassCardSurface,
+        border = BorderStroke(1.dp, borderColor),
+    ) {
+        Column(
+            modifier = Modifier.padding(KoPilotSpacing.Lg),
+            verticalArrangement = Arrangement.spacedBy(KoPilotSpacing.Sm),
+            content = content,
+        )
+    }
+}
+
+@Composable
 fun CockpitPanel(
     modifier: Modifier = Modifier,
     borderColor: Color = MaterialTheme.colorScheme.outline,

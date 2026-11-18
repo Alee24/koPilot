@@ -25,18 +25,18 @@ object KoPilotColors {
 }
 
 private val DarkAutomotiveScheme = darkColorScheme(
-    primary = KoPilotColors.AccentTeal,
-    onPrimary = Color(0xFF00201B),
-    secondary = KoPilotColors.AccentBlue,
-    onSecondary = Color.White,
-    background = KoPilotColors.CockpitBg,
-    onBackground = KoPilotColors.TextPrimary,
-    surface = KoPilotColors.CockpitSurface,
-    onSurface = KoPilotColors.TextPrimary,
-    surfaceVariant = KoPilotColors.CockpitSurfaceElevated,
-    onSurfaceVariant = KoPilotColors.TextSecondary,
-    outline = KoPilotColors.CockpitBorder,
-    error = KoPilotColors.DangerRed,
+    primary = KoPilotClusterTokens.PrimaryAccent,
+    onPrimary = KoPilotClusterTokens.Background,
+    secondary = KoPilotClusterTokens.SecondaryAccent,
+    onSecondary = Color(0xFF202020),
+    background = KoPilotClusterTokens.Background,
+    onBackground = KoPilotClusterTokens.PrimaryText,
+    surface = KoPilotClusterTokens.CardSurface,
+    onSurface = KoPilotClusterTokens.PrimaryText,
+    surfaceVariant = KoPilotClusterTokens.ElevatedSurface,
+    onSurfaceVariant = KoPilotClusterTokens.SecondaryText,
+    outline = KoPilotClusterTokens.Border,
+    error = KoPilotClusterTokens.VeryRough,
     onError = Color.White,
 )
 
@@ -58,14 +58,26 @@ private val LightAutomotiveScheme = lightColorScheme(
 
 val KoPilotTypography = Typography(
     displayLarge = TextStyle(
-        fontSize = 56.sp,
-        lineHeight = 60.sp,
+        fontSize = 48.sp,
+        lineHeight = 52.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = (-1).sp,
+        fontFeatureSettings = "tnum",
+    ),
+    headlineLarge = TextStyle(
+        fontSize = 24.sp,
+        lineHeight = 32.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.25).sp,
     ),
     headlineMedium = TextStyle(
-        fontSize = 24.sp,
-        lineHeight = 30.sp,
+        fontSize = 20.sp,
+        lineHeight = 28.sp,
+        fontWeight = FontWeight.SemiBold,
+    ),
+    titleLarge = TextStyle(
+        fontSize = 18.sp,
+        lineHeight = 24.sp,
         fontWeight = FontWeight.SemiBold,
     ),
     titleMedium = TextStyle(
@@ -75,7 +87,7 @@ val KoPilotTypography = Typography(
     ),
     bodyLarge = TextStyle(
         fontSize = 16.sp,
-        lineHeight = 22.sp,
+        lineHeight = 24.sp,
         fontWeight = FontWeight.Normal,
     ),
     bodyMedium = TextStyle(
@@ -83,10 +95,23 @@ val KoPilotTypography = Typography(
         lineHeight = 20.sp,
         fontWeight = FontWeight.Normal,
     ),
+    labelLarge = TextStyle(
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.SemiBold,
+    ),
     labelMedium = TextStyle(
         fontSize = 12.sp,
         lineHeight = 16.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 0.5.sp,
+    ),
+    labelSmall = TextStyle(
+        fontSize = 11.sp,
+        lineHeight = 14.sp,
         fontWeight = FontWeight.Medium,
+        letterSpacing = 0.5.sp,
+        fontFeatureSettings = "tnum",
     ),
 )
 
