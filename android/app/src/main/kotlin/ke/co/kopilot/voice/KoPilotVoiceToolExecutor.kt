@@ -1,5 +1,7 @@
 package ke.co.kopilot.voice
 
+import ke.co.kopilot.core.database.preferences.PreferencesRepository
+import ke.co.kopilot.core.database.preferences.VoiceMode
 import ke.co.kopilot.feature.diagnostics.ObdBluetoothManager
 import ke.co.kopilot.feature.location.LocationTracker
 import ke.co.kopilot.feature.location.SpeedAlertEngine
@@ -25,6 +27,7 @@ class KoPilotVoiceToolExecutor @Inject constructor(
     private val visionPipeline: RoadVisionPipeline,
     private val obdManager: ObdBluetoothManager,
     private val tripRepo: TripRepository,
+    private val prefsRepo: PreferencesRepository,
 ) : VoiceToolExecutor {
 
     override suspend fun executeTool(name: String, arguments: JsonObject): String = when (name) {
@@ -89,12 +92,19 @@ class KoPilotVoiceToolExecutor @Inject constructor(
             }
         }
         "get_recent_road_observations" -> {
-            val obs = visionPipeline.state.value.lastObservation
+            val v = visionPipeline.state.value
+            val obs = v.lastObservation
             if (obs == null) {
-                """{"status":"unavailable","reason":"No traffic signs observed recently"}"""
+                """{"status":"unavailable","last_sign":"none","last_speed_limit_kmh":${v.lastSpeedLimitKmh ?: "null"}}"""
             } else {
-                """{"status":"ok","sign":"${obs.category.displayName}","confidence":${obs.confidence},"advisory_only":true}"""
+                """{"status":"ok","last_sign":"${obs.category.displayName}","last_speed_limit_kmh":${v.lastSpeedLimitKmh ?: "null"},"confidence":${obs.confidence}}"""
             }
+        }
+        "set_voice_mode" -> {
+            val raw = arguments["mode"]?.jsonPrimitive?.content?.uppercase() ?: "SMART_CO_DRIVER"
+            val mode = runCatching { VoiceMode.valueOf(raw) }.getOrDefault(VoiceMode.SMART_CO_DRIVER)
+            prefsRepo.setVoiceMode(mode)
+            """{"status":"ok","voice_mode":"${mode.name}"}"""
         }
         "get_vehicle_diagnostics" -> {
             val obd = obdManager.state.value

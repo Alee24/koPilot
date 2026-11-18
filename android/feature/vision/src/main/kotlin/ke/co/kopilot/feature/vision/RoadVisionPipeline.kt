@@ -59,6 +59,7 @@ data class VisionPipelineState(
     val validationStatus: String = "On-Device Offline",
     val supportedSignClasses: List<String> = emptyList(),
     val detectedClassCounts: Map<String, Int> = emptyMap(),
+    val recentSignHistory: List<TrafficSignObservation> = emptyList(),
     val lastObservation: TrafficSignObservation? = null,
     val lastSpeedLimitKmh: Int? = null,
     val lastDetectedPlate: String? = null,
@@ -447,6 +448,11 @@ class RoadVisionPipeline @Inject constructor(
                 val key = confirmed.category.name
                 updatedCounts[key] = (updatedCounts[key] ?: 0) + 1
             }
+            val updatedHistory = if (confirmed != null) {
+                (listOf(confirmed) + _state.value.recentSignHistory).take(15)
+            } else {
+                _state.value.recentSignHistory
+            }
             _state.value = _state.value.copy(
                 trackedObjects = tracked,
                 signRoiBoxes = roiOverlayBoxes,
@@ -454,6 +460,7 @@ class RoadVisionPipeline @Inject constructor(
                 laneOverlay = laneState,
                 lastInferenceLatencyMs = latencyMs,
                 detectedClassCounts = updatedCounts,
+                recentSignHistory = updatedHistory,
                 lastObservation = confirmed ?: _state.value.lastObservation,
                 lastSpeedLimitKmh = nextSpeedLimit,
                 lastDetectedPlate = activePlateObs?.maskedPlate,

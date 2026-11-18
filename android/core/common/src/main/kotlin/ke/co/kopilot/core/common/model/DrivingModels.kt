@@ -24,6 +24,7 @@ data class GpsFix(
 }
 
 enum class TrafficSignCategory(val displayName: String, val speedLimitKmh: Int? = null) {
+    SPEED_LIMIT_10("10 km/h Speed Limit", 10),
     SPEED_LIMIT_20("20 km/h Speed Limit", 20),
     SPEED_LIMIT_30("30 km/h Speed Limit", 30),
     SPEED_LIMIT_40("40 km/h Speed Limit", 40),

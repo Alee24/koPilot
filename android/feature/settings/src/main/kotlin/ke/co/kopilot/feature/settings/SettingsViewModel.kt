@@ -11,6 +11,7 @@ import ke.co.kopilot.core.database.preferences.KoPilotSettings
 import ke.co.kopilot.core.database.preferences.MicMode
 import ke.co.kopilot.core.database.preferences.PreferencesRepository
 import ke.co.kopilot.core.database.preferences.ResponseLength
+import ke.co.kopilot.core.database.preferences.VoiceMode
 import ke.co.kopilot.core.network.api.KoPilotApiService
 import ke.co.kopilot.core.security.SecureTokenStore
 import ke.co.kopilot.feature.alerts.AndroidTtsSpeechSink
@@ -94,6 +95,7 @@ class SettingsViewModel @Inject constructor(
     fun setAvoidTolls(avoid: Boolean) = viewModelScope.launch { prefsRepo.setAvoidTolls(avoid) }
     fun setTrafficAlerts(enabled: Boolean) = viewModelScope.launch { prefsRepo.setTrafficAlertsEnabled(enabled) }
     fun setNavVoice(enabled: Boolean) = viewModelScope.launch { prefsRepo.setNavVoiceGuidanceEnabled(enabled) }
+    fun setVoiceMode(mode: VoiceMode) = viewModelScope.launch { prefsRepo.setVoiceMode(mode) }
     fun setAiVoiceName(voice: String) = viewModelScope.launch { prefsRepo.setAiVoiceName(voice) }
     fun setAlertChimeEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertChimeEnabled(enabled) }
     fun setVoiceVolume(vol: Float) = viewModelScope.launch { prefsRepo.setVoiceVolume(vol) }

@@ -46,6 +46,7 @@ object SignCandidateParser {
 
         // Check numeric speed limits FIRST using lookarounds so "50KM", "50KPH", "50" all match
         val speedCategory = when {
+            Regex("(?<!\\d)10(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_10
             Regex("(?<!\\d)20(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_20
             Regex("(?<!\\d)30(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_30
             Regex("(?<!\\d)40(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_40

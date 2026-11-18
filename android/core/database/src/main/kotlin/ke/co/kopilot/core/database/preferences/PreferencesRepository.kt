@@ -20,6 +20,7 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 enum class DetectionQuality { FAST, BALANCED, HIGH }
 enum class MicMode { HANDS_FREE, PUSH_TO_TALK }
 enum class ResponseLength { CONCISE, STANDARD }
+enum class VoiceMode { QUIET, SMART_CO_DRIVER, LEARNING }
 
 data class KoPilotSettings(
     // General
@@ -42,6 +43,7 @@ data class KoPilotSettings(
     val trafficAlertsEnabled: Boolean = true,
     val navVoiceGuidanceEnabled: Boolean = true,
     // AI Assistant
+    val voiceMode: VoiceMode = VoiceMode.SMART_CO_DRIVER,
     val aiVoiceName: String = "marin",
     val alertChimeEnabled: Boolean = true,
     val micMode: MicMode = MicMode.HANDS_FREE,
@@ -97,6 +99,9 @@ class PreferencesRepository @Inject constructor(
             avoidTolls = prefs[KEY_AVOID_TOLLS] ?: false,
             trafficAlertsEnabled = prefs[KEY_TRAFFIC_ALERTS] ?: true,
             navVoiceGuidanceEnabled = prefs[KEY_NAV_VOICE] ?: true,
+            voiceMode = runCatching {
+                VoiceMode.valueOf(prefs[KEY_VOICE_MODE] ?: "SMART_CO_DRIVER")
+            }.getOrDefault(VoiceMode.SMART_CO_DRIVER),
             aiVoiceName = prefs[KEY_AI_VOICE] ?: "marin",
             alertChimeEnabled = prefs[KEY_ALERT_CHIME] ?: true,
             micMode = runCatching {
@@ -144,6 +149,7 @@ class PreferencesRepository @Inject constructor(
     suspend fun setAvoidTolls(avoid: Boolean) = edit { it[KEY_AVOID_TOLLS] = avoid }
     suspend fun setTrafficAlertsEnabled(enabled: Boolean) = edit { it[KEY_TRAFFIC_ALERTS] = enabled }
     suspend fun setNavVoiceGuidanceEnabled(enabled: Boolean) = edit { it[KEY_NAV_VOICE] = enabled }
+    suspend fun setVoiceMode(mode: VoiceMode) = edit { it[KEY_VOICE_MODE] = mode.name }
     suspend fun setAiVoiceName(voice: String) = edit { it[KEY_AI_VOICE] = voice }
     suspend fun setAlertChimeEnabled(enabled: Boolean) = edit { it[KEY_ALERT_CHIME] = enabled }
     suspend fun setMicMode(mode: MicMode) = edit { it[KEY_MIC_MODE] = mode.name }
@@ -212,6 +218,7 @@ class PreferencesRepository @Inject constructor(
         val KEY_AVOID_TOLLS = booleanPreferencesKey("avoid_tolls")
         val KEY_TRAFFIC_ALERTS = booleanPreferencesKey("traffic_alerts")
         val KEY_NAV_VOICE = booleanPreferencesKey("nav_voice")
+        val KEY_VOICE_MODE = stringPreferencesKey("voice_mode")
         val KEY_AI_VOICE = stringPreferencesKey("ai_voice")
         val KEY_ALERT_CHIME = booleanPreferencesKey("alert_chime")
         val KEY_MIC_MODE = stringPreferencesKey("mic_mode")

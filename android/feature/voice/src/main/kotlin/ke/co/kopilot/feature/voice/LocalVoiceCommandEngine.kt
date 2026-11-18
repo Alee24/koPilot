@@ -94,6 +94,7 @@ class LocalVoiceCommandEngine @Inject constructor(
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (language == "sw") "sw-KE" else "en-KE")
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             }
             sr.startListening(intent)
@@ -111,6 +112,30 @@ class LocalVoiceCommandEngine @Inject constructor(
     internal suspend fun handleSpokenCommand(utterance: String, language: String): String {
         val q = utterance.lowercase()
         return when {
+            q.contains("quiet mode") || q.contains("warnings only") -> {
+                toolExecutor.executeTool("set_voice_mode", buildJsonObject { put("mode", "QUIET") })
+                "Switched to Quiet Mode. Only critical safety warnings will be announced."
+            }
+            q.contains("learning mode") -> {
+                toolExecutor.executeTool("set_voice_mode", buildJsonObject { put("mode", "LEARNING") })
+                "Switched to Learning Mode. I will explain each newly spotted road sign once."
+            }
+            q.contains("smart mode") || q.contains("co-driver") || q.contains("codriver") || q.contains("co driver") -> {
+                toolExecutor.executeTool("set_voice_mode", buildJsonObject { put("mode", "SMART_CO_DRIVER") })
+                "Switched to Smart Co-Driver Mode."
+            }
+            q.contains("last sign") || q.contains("what sign") || q.contains("previous sign") -> {
+                val res = parseObj(toolExecutor.executeTool("get_recent_road_observations", emptyObj()))
+                val lastSign = res["last_sign"]?.jsonPrimitive?.content
+                val limit = res["last_speed_limit_kmh"]?.jsonPrimitive?.content
+                when {
+                    lastSign != null && lastSign != "none" && lastSign != "null" ->
+                        "The last confirmed road sign was $lastSign."
+                    limit != null && limit != "null" ->
+                        "The last recognized speed limit was $limit kilometres per hour."
+                    else -> "No road sign has been confirmed yet."
+                }
+            }
             q.contains("speed") || q.contains("how fast") || q.contains("limit") || q.contains("kasi") -> {
                 val res = parseObj(toolExecutor.executeTool("get_current_speed", emptyObj()))
                 val speed = res["speed_kmh"]?.jsonPrimitive?.content

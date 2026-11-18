@@ -5,7 +5,9 @@ import android.content.res.Configuration
 import android.net.Uri
 import androidx.core.content.FileProvider
 import java.io.File
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import ke.co.kopilot.core.database.preferences.VoiceMode
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -354,6 +356,7 @@ fun DashboardScreen(
                             TopCockpitHeader(
                                 isOnline = state.isOnline,
                                 obdConnected = state.diagnosticsState.obdConnected,
+                                hasVehicleWarning = (state.diagnosticsState.coolantTempC ?: 0) >= 102 || state.diagnosticsState.dtcCodes.isNotEmpty(),
                                 isDriving = state.isDrivingSessionActive,
                                 onOpenMenu = { showToolsDialog = true },
                                 onOpenObdLive = { showObdLiveDialog = true },
@@ -370,6 +373,7 @@ fun DashboardScreen(
                                 state = state,
                                 onToggleVoice = viewModel::toggleVoiceConnection,
                                 onToggleMute = viewModel::toggleVoiceMute,
+                                onSelectVoiceMode = viewModel::setVoiceMode,
                             )
                         }
                         Column(
@@ -409,6 +413,7 @@ fun DashboardScreen(
                         TopCockpitHeader(
                             isOnline = state.isOnline,
                             obdConnected = state.diagnosticsState.obdConnected,
+                            hasVehicleWarning = (state.diagnosticsState.coolantTempC ?: 0) >= 102 || state.diagnosticsState.dtcCodes.isNotEmpty(),
                             isDriving = state.isDrivingSessionActive,
                             onOpenMenu = { showToolsDialog = true },
                             onOpenObdLive = { showObdLiveDialog = true },
@@ -447,6 +452,7 @@ fun DashboardScreen(
                             state = state,
                             onToggleVoice = viewModel::toggleVoiceConnection,
                             onToggleMute = viewModel::toggleVoiceMute,
+                            onSelectVoiceMode = viewModel::setVoiceMode,
                         )
                     }
                 }
@@ -477,6 +483,7 @@ private fun ActiveAlertBanner(alertText: String) {
 private fun TopCockpitHeader(
     isOnline: Boolean,
     obdConnected: Boolean,
+    hasVehicleWarning: Boolean = false,
     isDriving: Boolean,
     onOpenMenu: () -> Unit,
     onOpenObdLive: () -> Unit = {},
@@ -530,6 +537,13 @@ private fun TopCockpitHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            if (hasVehicleWarning) {
+                KoPilotStatusPill(
+                    label = "WARN",
+                    accentColor = KoPilotColors.DangerRed,
+                    modifier = Modifier.clickable(onClick = onOpenObdLive),
+                )
+            }
             if (obdConnected) {
                 KoPilotStatusPill(
                     label = "OBD",
@@ -1191,6 +1205,7 @@ private fun VoiceAssistantBar(
     state: DashboardUiState,
     onToggleVoice: () -> Unit,
     onToggleMute: () -> Unit,
+    onSelectVoiceMode: (VoiceMode) -> Unit = {},
 ) {
     val active = state.voiceState.isListening || state.voiceState.isSpeaking ||
         state.voiceState.connectionState == VoiceConnectionState.CONNECTED
@@ -1201,66 +1216,103 @@ private fun VoiceAssistantBar(
         color = CockpitCardBg,
         border = BorderStroke(1.dp, if (active) MintTeal.copy(alpha = 0.6f) else CockpitCardBorder),
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 10.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            if (active || state.voiceState.isMuted) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (active || state.voiceState.isMuted) {
+                    Surface(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clickable(onClick = onToggleMute),
+                        shape = CircleShape,
+                        color = Color(0xFF0E292E),
+                        border = BorderStroke(1.dp, MintTeal.copy(alpha = 0.7f)),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.GraphicEq,
+                                contentDescription = "Voice Waveform",
+                                tint = MintTeal,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "KoPilot Voice",
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = state.voiceState.lastTranscript.ifBlank {
+                            if (active) "Listening..." else state.voiceState.statusMessage
+                        },
+                        color = KoPilotClusterTokens.SecondaryText,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
                 Surface(
                     modifier = Modifier
-                        .size(36.dp)
-                        .clickable(onClick = onToggleMute),
+                        .size(44.dp)
+                        .clickable(onClick = onToggleVoice),
                     shape = CircleShape,
-                    color = Color(0xFF0E292E),
-                    border = BorderStroke(1.dp, MintTeal.copy(alpha = 0.7f)),
+                    color = if (active) MintTeal else Color(0xFF102A30),
+                    border = BorderStroke(1.5.dp, MintTeal),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Default.GraphicEq,
-                            contentDescription = "Voice Waveform",
-                            tint = MintTeal,
+                            imageVector = if (state.voiceState.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                            contentDescription = "Talk",
+                            tint = if (active) CockpitDarkBg else Color.White,
                             modifier = Modifier.size(18.dp),
                         )
                     }
                 }
-                Spacer(Modifier.width(10.dp))
             }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "KoPilot Voice",
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                )
-                Text(
-                    text = state.voiceState.lastTranscript.ifBlank {
-                        if (active) "Listening..." else state.voiceState.statusMessage
-                    },
-                    color = KoPilotClusterTokens.SecondaryText,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Surface(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clickable(onClick = onToggleVoice),
-                shape = CircleShape,
-                color = if (active) MintTeal else Color(0xFF102A30),
-                border = BorderStroke(1.5.dp, MintTeal),
+
+            // Three Voice Modes quick selector
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = if (state.voiceState.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
-                        contentDescription = "Talk",
-                        tint = if (active) CockpitDarkBg else Color.White,
-                        modifier = Modifier.size(18.dp),
-                    )
+                listOf(
+                    VoiceMode.SMART_CO_DRIVER to "Smart Co-Driver",
+                    VoiceMode.QUIET to "Quiet",
+                    VoiceMode.LEARNING to "Learning",
+                ).forEach { (mode, label) ->
+                    val selected = state.settings.voiceMode == mode
+                    Surface(
+                        onClick = { onSelectVoiceMode(mode) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (selected) MintTeal.copy(alpha = 0.2f) else CockpitDarkBg,
+                        border = BorderStroke(1.dp, if (selected) MintTeal else CockpitCardBorder),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (selected) MintTeal else KoPilotClusterTokens.SecondaryText,
+                            fontSize = 10.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
+                    }
                 }
             }
         }
@@ -1985,6 +2037,18 @@ private fun VisionDiagnosticsDialog(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
+                        if (vis.recentSignHistory.isNotEmpty()) {
+                            val timeFmt = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+                            Spacer(Modifier.height(4.dp))
+                            Text("Recent Road-Sign History (${vis.recentSignHistory.size})", fontWeight = FontWeight.Medium)
+                            vis.recentSignHistory.take(8).forEach { obs ->
+                                val pct = (obs.confidence * 100).toInt()
+                                Text(
+                                    text = "• ${timeFmt.format(Date(obs.timestampMillis))} — ${obs.customLabel ?: obs.category.displayName} ($pct%)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
                         }
                     }
                 }

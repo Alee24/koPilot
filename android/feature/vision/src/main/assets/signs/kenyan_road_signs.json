@@ -1,4 +1,5 @@
 [
+  {"category":"SPEED_LIMIT_10","code":"R1-10","title":"10 km/h Speed Limit","spokenAdvice":"Speed limit 10 kilometres per hour. Crawl speed zone ahead.","shape":"RED_RING_WHITE"},
   {"category":"SPEED_LIMIT_20","code":"R1-20","title":"20 km/h Speed Limit","spokenAdvice":"Speed limit 20 kilometres per hour. Very slow zone ahead.","shape":"RED_RING_WHITE"},
   {"category":"SPEED_LIMIT_30","code":"R1-30","title":"30 km/h Speed Limit","spokenAdvice":"Speed limit 30 kilometres per hour. Keep your speed at or below 30.","shape":"RED_RING_WHITE"},
   {"category":"SPEED_LIMIT_40","code":"R1-40","title":"40 km/h Speed Limit","spokenAdvice":"Speed limit 40 kilometres per hour.","shape":"RED_RING_WHITE"},

@@ -11,6 +11,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -281,6 +284,8 @@ class MainActivity : ComponentActivity() {
                                 navController = navController,
                                 startDestination = "dashboard",
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
+                                enterTransition = { fadeIn(animationSpec = tween(200)) },
+                                exitTransition = { fadeOut(animationSpec = tween(160)) },
                             ) {
                                 composable("dashboard") {
                                     DashboardScreen(

@@ -12,7 +12,9 @@ import ke.co.kopilot.core.common.model.VehicleDiagnosticsState
 import ke.co.kopilot.core.database.entity.TripEntity
 import ke.co.kopilot.core.database.preferences.DetectionQuality
 import ke.co.kopilot.core.database.preferences.KoPilotSettings
+import ke.co.kopilot.core.common.model.TrafficSignCategory
 import ke.co.kopilot.core.database.preferences.PreferencesRepository
+import ke.co.kopilot.core.database.preferences.VoiceMode
 import ke.co.kopilot.core.network.connectivity.ConnectivityObserver
 import ke.co.kopilot.feature.alerts.AlertCoordinatorState
 import ke.co.kopilot.feature.alerts.AndroidTtsSpeechSink
@@ -132,6 +134,7 @@ class DashboardViewModel @Inject constructor(
     private var lastWatchedPlateAlertMs = 0L
     private var lastWatchedPlateAlerted: String? = null
     private var lastEcuAlertMs = 0L
+    private val explainedSignsInTrip = mutableSetOf<TrafficSignCategory>()
 
     private val coreFlows = combine(
         isDriving,
@@ -436,7 +439,7 @@ class DashboardViewModel @Inject constructor(
                         language = s.language,
                         globalMute = s.alertsMuted,
                     )
-                    TrafficLightSignal.GREEN -> alertCoordinator.submit(
+                    TrafficLightSignal.GREEN -> if (s.voiceMode != VoiceMode.QUIET) alertCoordinator.submit(
                         alert = AlertMessage(
                             id = UUID.randomUUID().toString(),
                             priority = AlertPriority.TRAFFIC_UPDATE,
@@ -710,6 +713,7 @@ class DashboardViewModel @Inject constructor(
         lastTutorBusyRoadMs = 0L
         lastTutorClearRoadMs = 0L
         clearRoadSinceMs = 0L
+        explainedSignsInTrip.clear()
 
         val fix = locationTracker.state.value.currentFix
         val dest = navigationRepo.state.value.destinationName
@@ -829,6 +833,28 @@ class DashboardViewModel @Inject constructor(
         if (!settings.announceAllSigns && observation.category.speedLimitKmh == null) {
             return
         }
+
+        // Three Voice Modes: QUIET (warnings only), SMART_CO_DRIVER (default), LEARNING (explain each sign once)
+        when (settings.voiceMode) {
+            VoiceMode.QUIET -> {
+                val isCriticalWarningSign = observation.category in setOf(
+                    TrafficSignCategory.STOP,
+                    TrafficSignCategory.GIVE_WAY,
+                    TrafficSignCategory.NO_ENTRY,
+                    TrafficSignCategory.RAILWAY_CROSSING,
+                    TrafficSignCategory.BLACKSPOT,
+                    TrafficSignCategory.POLICE_CHECKPOINT,
+                )
+                if (!isCriticalWarningSign) return
+            }
+            VoiceMode.LEARNING -> {
+                if (!explainedSignsInTrip.add(observation.category)) {
+                    return
+                }
+            }
+            VoiceMode.SMART_CO_DRIVER -> Unit
+        }
+
         val text = visionPipeline.signCatalog.getSpokenAdvice(observation.category, observation.customLabel)
         if (settings.alertChimeEnabled && !settings.alertsMuted && speechSink is AndroidTtsSpeechSink) {
             speechSink.playChime()
@@ -846,6 +872,10 @@ class DashboardViewModel @Inject constructor(
             language = settings.language,
             globalMute = settings.alertsMuted,
         )
+    }
+
+    fun setVoiceMode(mode: VoiceMode) = viewModelScope.launch {
+        prefsRepo.setVoiceMode(mode)
     }
 
     fun cycleCameraZoom() = viewModelScope.launch {

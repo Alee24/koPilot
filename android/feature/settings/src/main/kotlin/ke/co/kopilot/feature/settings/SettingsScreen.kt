@@ -56,6 +56,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ke.co.kopilot.core.database.preferences.DetectionQuality
 import ke.co.kopilot.core.database.preferences.MicMode
 import ke.co.kopilot.core.database.preferences.ResponseLength
+import ke.co.kopilot.core.database.preferences.VoiceMode
 import ke.co.kopilot.core.designsystem.theme.KoPilotClusterTokens
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -369,6 +370,22 @@ fun SettingsScreen(
             // 7. Navigation, Voice & Emergency Contact
             SettingsCard {
                 SectionTitle("Navigation & Voice")
+                Text("Co-Driver Voice Mode", color = KoPilotClusterTokens.PrimaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    VoiceMode.entries.forEach { vm ->
+                        val label = when (vm) {
+                            VoiceMode.QUIET -> "Quiet (Warnings Only)"
+                            VoiceMode.SMART_CO_DRIVER -> "Smart Co-Driver"
+                            VoiceMode.LEARNING -> "Learning (Explain Once)"
+                        }
+                        FilterChip(
+                            selected = settings.voiceMode == vm,
+                            onClick = { viewModel.setVoiceMode(vm) },
+                            label = { Text(label) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
                 SettingSwitch("Avoid Tolls (e.g. Nairobi Expressway)", settings.avoidTolls, viewModel::setAvoidTolls)
                 SettingSwitch("Traffic Reroute Alerts", settings.trafficAlertsEnabled, viewModel::setTrafficAlerts)
                 SettingSwitch("Navigation Voice Prompts", settings.navVoiceGuidanceEnabled, viewModel::setNavVoice)
