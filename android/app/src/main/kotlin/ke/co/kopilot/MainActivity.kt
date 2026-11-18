@@ -15,13 +15,37 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.SatelliteAlt
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.navigation.compose.currentBackStackEntryAsState
+import ke.co.kopilot.core.designsystem.theme.KoPilotClusterTokens
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -140,67 +164,186 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                NavHost(navController = navController, startDestination = "dashboard") {
-                    composable("dashboard") {
-                        DashboardScreen(
-                            onOpenSettings = { navController.navigate("settings") },
-                            onOpenSensors = { navController.navigate("sensors") },
-                            onOpenRoadQuality = { navController.navigate("road_quality") },
-                            onOpenDrivingBehaviour = { navController.navigate("driving_behaviour") },
-                            onOpenObd = { navController.navigate("obd") },
-                            onOpenTrips = { navController.navigate("trips") },
-                            onCallEmergency = { phone ->
-                                startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
-                            },
-                            viewModel = dashboardViewModel,
-                        )
+                val navBackStackEntry by navController.currentBackStackEntryAsState()
+                val currentRoute = navBackStackEntry?.destination?.route ?: "dashboard"
+                val navigateTopLevel: (String) -> Unit = { route ->
+                    navController.navigate(route) {
+                        popUpTo("dashboard") { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
                     }
-                    composable("trips") {
-                        TripsScreen(onBack = { navController.popBackStack() })
+                }
+                val topLevelDestinations = listOf(
+                    TopLevelDestination("dashboard", "Home", Icons.Default.Home),
+                    TopLevelDestination("sensors", "Sensors", Icons.Default.SatelliteAlt),
+                    TopLevelDestination("obd", "Vehicle", Icons.Default.DirectionsCar),
+                    TopLevelDestination("trips", "Trips", Icons.Default.Route),
+                    TopLevelDestination("settings", "Settings", Icons.Default.Settings),
+                )
+                val isSelectedRoute: (String) -> Boolean = { route ->
+                    when (route) {
+                        "sensors" -> currentRoute in setOf("sensors", "road_quality", "driving_behaviour")
+                        else -> currentRoute == route
                     }
-                    composable("obd") {
-                        ObdScreen(onBack = { navController.popBackStack() })
-                    }
-                    composable("sensors") {
-                        SensorsScreen(
-                            onBack = { navController.popBackStack() },
-                            onOpenTrips = { navController.navigate("trips") },
-                            initialTab = 0,
-                        )
-                    }
-                    composable("road_quality") {
-                        SensorsScreen(
-                            onBack = { navController.popBackStack() },
-                            onOpenTrips = { navController.navigate("trips") },
-                            initialTab = 1,
-                        )
-                    }
-                    composable("driving_behaviour") {
-                        SensorsScreen(
-                            onBack = { navController.popBackStack() },
-                            onOpenTrips = { navController.navigate("trips") },
-                            initialTab = 2,
-                        )
-                    }
-                    composable("settings") {
-                        val btGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
-                        } else {
-                            true
-                        }
-                        SettingsScreen(
-                            onBack = { navController.popBackStack() },
-                            onOpenObd = { navController.navigate("obd") },
-                            bluetoothPermissionGranted = btGranted,
-                            onExportJson = { json ->
-                                val share = Intent(Intent.ACTION_SEND).apply {
-                                    type = "application/json"
-                                    putExtra(Intent.EXTRA_SUBJECT, "KoPilot Trip Export")
-                                    putExtra(Intent.EXTRA_TEXT, json)
+                }
+
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val useRail = maxWidth >= 600.dp
+                    Scaffold(
+                        containerColor = KoPilotClusterTokens.Background,
+                        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                        bottomBar = {
+                            if (!useRail) {
+                                NavigationBar(
+                                    containerColor = KoPilotClusterTokens.CardSurface,
+                                    contentColor = KoPilotClusterTokens.PrimaryText,
+                                    windowInsets = WindowInsets.navigationBars,
+                                ) {
+                                    topLevelDestinations.forEach { dest ->
+                                        val selected = isSelectedRoute(dest.route)
+                                        NavigationBarItem(
+                                            selected = selected,
+                                            onClick = { navigateTopLevel(dest.route) },
+                                            icon = {
+                                                Icon(
+                                                    imageVector = dest.icon,
+                                                    contentDescription = dest.label,
+                                                    modifier = Modifier.size(20.dp),
+                                                )
+                                            },
+                                            label = {
+                                                Text(
+                                                    text = dest.label,
+                                                    fontSize = 11.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            },
+                                            colors = NavigationBarItemDefaults.colors(
+                                                selectedIconColor = KoPilotClusterTokens.PrimaryAccent,
+                                                selectedTextColor = KoPilotClusterTokens.PrimaryAccent,
+                                                unselectedIconColor = KoPilotClusterTokens.SecondaryText,
+                                                unselectedTextColor = KoPilotClusterTokens.SecondaryText,
+                                                indicatorColor = KoPilotClusterTokens.ElevatedSurface,
+                                            ),
+                                        )
+                                    }
                                 }
-                                startActivity(Intent.createChooser(share, "Export KoPilot Trips"))
-                            },
-                        )
+                            }
+                        },
+                    ) { innerPadding ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding),
+                        ) {
+                            if (useRail) {
+                                NavigationRail(
+                                    modifier = Modifier.fillMaxHeight(),
+                                    containerColor = KoPilotClusterTokens.CardSurface,
+                                    contentColor = KoPilotClusterTokens.PrimaryText,
+                                ) {
+                                    Spacer(Modifier.height(8.dp))
+                                    topLevelDestinations.forEach { dest ->
+                                        val selected = isSelectedRoute(dest.route)
+                                        NavigationRailItem(
+                                            selected = selected,
+                                            onClick = { navigateTopLevel(dest.route) },
+                                            icon = {
+                                                Icon(
+                                                    imageVector = dest.icon,
+                                                    contentDescription = dest.label,
+                                                    modifier = Modifier.size(20.dp),
+                                                )
+                                            },
+                                            label = {
+                                                Text(
+                                                    text = dest.label,
+                                                    fontSize = 11.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            },
+                                            colors = NavigationRailItemDefaults.colors(
+                                                selectedIconColor = KoPilotClusterTokens.PrimaryAccent,
+                                                selectedTextColor = KoPilotClusterTokens.PrimaryAccent,
+                                                unselectedIconColor = KoPilotClusterTokens.SecondaryText,
+                                                unselectedTextColor = KoPilotClusterTokens.SecondaryText,
+                                                indicatorColor = KoPilotClusterTokens.ElevatedSurface,
+                                            ),
+                                        )
+                                    }
+                                }
+                            }
+
+                            NavHost(
+                                navController = navController,
+                                startDestination = "dashboard",
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                            ) {
+                                composable("dashboard") {
+                                    DashboardScreen(
+                                        onOpenSettings = { navigateTopLevel("settings") },
+                                        onOpenSensors = { navigateTopLevel("sensors") },
+                                        onOpenRoadQuality = { navController.navigate("road_quality") },
+                                        onOpenDrivingBehaviour = { navController.navigate("driving_behaviour") },
+                                        onOpenObd = { navigateTopLevel("obd") },
+                                        onOpenTrips = { navigateTopLevel("trips") },
+                                        onCallEmergency = { phone ->
+                                            startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
+                                        },
+                                        viewModel = dashboardViewModel,
+                                    )
+                                }
+                                composable("trips") {
+                                    TripsScreen(onBack = { navController.popBackStack() })
+                                }
+                                composable("obd") {
+                                    ObdScreen(onBack = { navController.popBackStack() })
+                                }
+                                composable("sensors") {
+                                    SensorsScreen(
+                                        onBack = { navController.popBackStack() },
+                                        onOpenTrips = { navigateTopLevel("trips") },
+                                        initialTab = 0,
+                                    )
+                                }
+                                composable("road_quality") {
+                                    SensorsScreen(
+                                        onBack = { navController.popBackStack() },
+                                        onOpenTrips = { navigateTopLevel("trips") },
+                                        initialTab = 1,
+                                    )
+                                }
+                                composable("driving_behaviour") {
+                                    SensorsScreen(
+                                        onBack = { navController.popBackStack() },
+                                        onOpenTrips = { navigateTopLevel("trips") },
+                                        initialTab = 2,
+                                    )
+                                }
+                                composable("settings") {
+                                    val btGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                        hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                                    } else {
+                                        true
+                                    }
+                                    SettingsScreen(
+                                        onBack = { navController.popBackStack() },
+                                        onOpenObd = { navigateTopLevel("obd") },
+                                        bluetoothPermissionGranted = btGranted,
+                                        onExportJson = { json ->
+                                            val share = Intent(Intent.ACTION_SEND).apply {
+                                                type = "application/json"
+                                                putExtra(Intent.EXTRA_SUBJECT, "KoPilot Trip Export")
+                                                putExtra(Intent.EXTRA_TEXT, json)
+                                            }
+                                            startActivity(Intent.createChooser(share, "Export KoPilot Trips"))
+                                        },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -210,3 +353,9 @@ class MainActivity : ComponentActivity() {
     private fun hasPermission(permission: String): Boolean =
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 }
+
+private data class TopLevelDestination(
+    val route: String,
+    val label: String,
+    val icon: ImageVector,
+)

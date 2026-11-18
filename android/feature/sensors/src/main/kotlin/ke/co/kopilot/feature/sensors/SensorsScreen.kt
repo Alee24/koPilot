@@ -116,13 +116,14 @@ fun SensorsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Segmented Cluster Tabs
-            Row(
+            // Responsive Segmented Cluster Tabs (wraps cleanly on 320dp / large font)
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 tabs.forEachIndexed { idx, title ->
                     val selected = selectedTab == idx
@@ -133,18 +134,15 @@ fun SensorsScreen(
                             1.dp,
                             if (selected) KoPilotClusterTokens.PrimaryAccent else KoPilotClusterTokens.Border,
                         ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { selectedTab = idx },
+                        modifier = Modifier.clickable { selectedTab = idx },
                     ) {
                         Text(
                             text = title,
                             color = if (selected) KoPilotClusterTokens.Background else KoPilotClusterTokens.SecondaryText,
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             maxLines = 1,
-                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp),
                         )
                     }
                 }
@@ -598,14 +596,24 @@ private fun ConditionProgressRow(label: String, pct: Int, totalKm: Double, color
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(label, fontSize = 11.sp, color = KoPilotClusterTokens.SecondaryText, modifier = Modifier.width(96.dp))
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            color = KoPilotClusterTokens.SecondaryText,
+            modifier = Modifier.weight(0.95f),
+        )
         LinearProgressIndicator(
             progress = { (pct / 100f).coerceIn(0f, 1f) },
             color = color,
             trackColor = KoPilotClusterTokens.ElevatedSurface,
-            modifier = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(4.dp)),
+            modifier = Modifier.weight(1.1f).height(6.dp).clip(RoundedCornerShape(4.dp)),
         )
-        Text("$pct% (${"%.1f".format(segKm)} km)", fontSize = 11.sp, color = KoPilotClusterTokens.PrimaryText, modifier = Modifier.width(84.dp))
+        Text(
+            text = "$pct% (${"%.1f".format(segKm)} km)",
+            fontSize = 11.sp,
+            color = KoPilotClusterTokens.PrimaryText,
+            modifier = Modifier.weight(0.9f),
+        )
     }
 }
 

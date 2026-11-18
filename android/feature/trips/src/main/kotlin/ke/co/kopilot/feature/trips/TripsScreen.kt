@@ -4,6 +4,8 @@ import android.content.Intent
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -47,7 +49,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TripsScreen(
     onBack: () -> Unit,
@@ -146,7 +148,11 @@ fun TripsScreen(
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Driving Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         TripStatChip("Trips", "${trips.size}")
                         TripStatChip("Distance", "${"%.1f".format(totalKm)} km")
                         TripStatChip("Drive Time", "${totalMins}m")
@@ -234,19 +240,31 @@ fun TripsScreen(
                                 }
                             }
 
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
                                 TripStatChip("Distance", "${"%.2f".format(trip.distanceKm)} km")
                                 TripStatChip("Duration", "${trip.durationSeconds / 60}m ${trip.durationSeconds % 60}s")
                                 TripStatChip("Max Speed", "${trip.maxSpeedKmh.toInt()} km/h")
                                 TripStatChip("Avg Speed", "${trip.avgSpeedKmh.toInt()} km/h")
                             }
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
                                 TripStatChip("Signs Detected", "${trip.signsDetectedCount}")
                                 TripStatChip("Alerts Triggered", "${trip.alertsTriggeredCount}")
                             }
 
                             if (logFile != null) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
                                     OutlinedButton(onClick = { viewingFile = logFile }) {
                                         Text("View Activity Log (.txt)")
                                     }

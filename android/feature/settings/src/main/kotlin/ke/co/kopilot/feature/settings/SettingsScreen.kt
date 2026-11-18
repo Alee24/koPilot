@@ -154,7 +154,7 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Button(
                         onClick = {
                             viewModel.saveApiConfiguration(backendUrlInput, openAiKeyInput, googleKeyInput)
@@ -168,7 +168,7 @@ fun SettingsScreen(
                     }
                 }
                 Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = onOpenObd) {
                         Text("Connect OBD-II Page")
                     }
@@ -182,7 +182,7 @@ fun SettingsScreen(
             CockpitPanel {
                 Text("General", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(
                         selected = settings.language == "en",
                         onClick = { viewModel.setLanguage("en") },
@@ -218,7 +218,7 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Button(
                         onClick = { viewModel.setAllSensorsEnabled(!allEnabled) },
                         modifier = Modifier.fillMaxWidth(),
@@ -261,7 +261,7 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     DetectionQuality.entries.forEach { q ->
                         FilterChip(
                             selected = settings.detectionQuality == q,
@@ -272,7 +272,7 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(6.dp))
                 Text("Camera Zoom for Road Signs (${"%.1f".format(settings.cameraZoomRatio)}x)")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(1.0f, 1.3f, 1.6f, 2.0f).forEach { z ->
                         FilterChip(
                             selected = kotlin.math.abs(settings.cameraZoomRatio - z) < 0.05f,
@@ -373,7 +373,7 @@ fun SettingsScreen(
                     valueRange = 0.6f..1.5f,
                 )
                 SettingSwitch("Play Alert Chime Before Warnings", settings.alertChimeEnabled, viewModel::setAlertChimeEnabled)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     MicMode.entries.forEach { mode ->
                         FilterChip(
                             selected = settings.micMode == mode,
@@ -382,7 +382,7 @@ fun SettingsScreen(
                         )
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     ResponseLength.entries.forEach { len ->
                         FilterChip(
                             selected = settings.responseLength == len,
@@ -436,7 +436,7 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = { viewModel.startObdDiscovery(bluetoothPermissionGranted) }) {
                         Text("Scan Classic + BLE")
                     }
@@ -546,7 +546,7 @@ fun SettingsScreen(
                 SettingSwitch("Save Local Trip History", settings.tripHistoryEnabled, viewModel::setTripHistory)
                 SettingSwitch("Diagnostic Telemetry Opt-In", settings.telemetryOptIn, viewModel::setTelemetryOptIn)
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = { viewModel.exportTripsJson(onExportJson) }) {
                         Text("Export Trip Data")
                     }

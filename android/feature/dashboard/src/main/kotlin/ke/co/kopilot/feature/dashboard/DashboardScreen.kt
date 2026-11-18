@@ -13,16 +13,26 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -82,7 +92,10 @@ import androidx.compose.ui.graphics.toArgb
 import ke.co.kopilot.feature.diagnostics.ObdLiveTelemetry
 import ke.co.kopilot.feature.diagnostics.ObdPidCapability
 import ke.co.kopilot.feature.diagnostics.PidSupportStatus
+import ke.co.kopilot.core.designsystem.component.KoPilotStatusPill
+import ke.co.kopilot.core.designsystem.theme.KoPilotSpacing
 import ke.co.kopilot.feature.sensors.LateralMotionState
+import ke.co.kopilot.feature.sensors.RoadVibrationLevel
 import ke.co.kopilot.feature.vision.LaneShiftEvent
 import ke.co.kopilot.feature.vision.LocalRoadSignEntry
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -133,6 +146,8 @@ fun DashboardScreen(
     var showVisionDiagDialog by remember { mutableStateOf(false) }
     var showObdLiveDialog by remember { mutableStateOf(false) }
     var showSignsDbDialog by remember { mutableStateOf(false) }
+    var showToolsDialog by remember { mutableStateOf(false) }
+    var isCameraFullscreen by remember { mutableStateOf(false) }
     val isParked = (state.speedEvaluation.currentSpeedKmh ?: 0f) < 5f
 
     if (!state.settings.safetyDisclosureAccepted) {
@@ -246,6 +261,47 @@ fun DashboardScreen(
         )
     }
 
+    if (showToolsDialog) {
+        DashboardToolsDialog(
+            state = state,
+            isParked = isParked,
+            onDismiss = { showToolsDialog = false },
+            onOpenDrivingBehaviour = {
+                showToolsDialog = false
+                onOpenDrivingBehaviour()
+            },
+            onOpenRoadQuality = {
+                showToolsDialog = false
+                onOpenRoadQuality()
+            },
+            onOpenSensors = {
+                showToolsDialog = false
+                onOpenSensors()
+            },
+            onOpenObd = {
+                showToolsDialog = false
+                onOpenObd()
+            },
+            onOpenTrips = {
+                showToolsDialog = false
+                onOpenTrips()
+            },
+            onOpenSignsDb = {
+                showToolsDialog = false
+                showSignsDbDialog = true
+            },
+            onOpenVisionDiag = {
+                showToolsDialog = false
+                showVisionDiagDialog = true
+            },
+            onToggleMuteAlerts = viewModel::toggleAlertsMute,
+            onCallEmergency = {
+                showToolsDialog = false
+                onCallEmergency(state.settings.emergencyContactPhone)
+            },
+        )
+    }
+
     val screenBgColor by animateColorAsState(
         targetValue = when (state.speedZone) {
             SpeedZone.OPTIMAL_CRUISE -> Color(0xFF0A244D)
@@ -256,198 +312,192 @@ fun DashboardScreen(
         label = "speedZoneBg",
     )
 
-    Scaffold(containerColor = screenBgColor) { padding ->
-        if (isLandscape) {
-            Row(
+    Scaffold(
+        containerColor = screenBgColor,
+        contentWindowInsets = WindowInsets.statusBars,
+    ) { padding ->
+        if (isCameraFullscreen) {
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(KoPilotSpacing.Sm),
             ) {
-                Column(
-                    modifier = Modifier.weight(1.1f).fillMaxHeight(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    TopCockpitHeader(
-                    isOnline = state.isOnline,
-                    isParked = isParked,
-                    onOpenSensors = onOpenSensors,
-                    onOpenVisionDiag = { if (isParked) showVisionDiagDialog = true },
-                    onOpenObdLive = { showObdLiveDialog = true },
+                ViewportCard(
+                    state = state,
+                    viewModel = viewModel,
+                    isFullscreen = true,
+                    onToggleFullscreen = { isCameraFullscreen = false },
                 )
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                        ViewportCard(state = state, viewModel = viewModel)
-                    }
-                    VoiceAssistantBar(
-                        state = state,
-                        onToggleVoice = viewModel::toggleVoiceConnection,
-                        onToggleMute = viewModel::toggleVoiceMute,
-                    )
-                }
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    SpeedCockpitRow(state = state, onOpenSensors = onOpenSensors)
-                SpeedZoneBanner(state.speedZone)
-                state.alertState.activeAlert?.let { alert ->
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color(0xFF102A30),
-                        border = BorderStroke(1.dp, MintTeal.copy(alpha = 0.6f)),
-                    ) {
-                        Text(
-                            text = "Alert: ${alert.displayText}",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                        )
-                    }
-                }
-                    QuickPagesStrip(
-                        isParked = isParked,
-                        onOpenRoadQuality = onOpenRoadQuality,
-                        onOpenDrivingBehaviour = onOpenDrivingBehaviour,
-                        onOpenSensors = onOpenSensors,
-                        onOpenObd = onOpenObd,
-                        onOpenTrips = onOpenTrips,
-                        onOpenSignsDb = { showSignsDbDialog = true },
-                        onOpenVisionDiag = { showVisionDiagDialog = true },
-                    )
-                    QuickInfoCardsRow(
-                        state = state,
-                        onOpenDestination = { showDestinationDialog = true },
-                        onOpenObd = onOpenObd,
-                    )
-                    PrimaryActionButtonsRow(
-                        state = state,
-                        onToggleDrive = {
-                            if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
-                        },
-                        onOpenNavigate = { showDestinationDialog = true },
-                    )
-                    BottomQuickActionsBar(
-                        alertsMuted = state.settings.alertsMuted,
-                        onToggleMuteAlerts = viewModel::toggleAlertsMute,
-                        onCallEmergency = { onCallEmergency(state.settings.emergencyContactPhone) },
-                        onOpenTrips = onOpenTrips,
-                        onOpenObd = onOpenObd,
-                        onOpenSettings = onOpenSettings,
-                    )
-                }
             }
         } else {
-            Column(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(padding),
             ) {
-                TopCockpitHeader(
-                    isOnline = state.isOnline,
-                    isParked = isParked,
-                    onOpenSensors = onOpenSensors,
-                    onOpenVisionDiag = { if (isParked) showVisionDiagDialog = true },
-                    onOpenObdLive = { showObdLiveDialog = true },
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(215.dp),
-                ) {
-                    ViewportCard(state = state, viewModel = viewModel)
-                }
-                SpeedCockpitRow(state = state, onOpenSensors = onOpenSensors)
-                SpeedZoneBanner(state.speedZone)
-                state.alertState.activeAlert?.let { alert ->
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color(0xFF102A30),
-                        border = BorderStroke(1.dp, MintTeal.copy(alpha = 0.6f)),
+                val horizontalPad = if (maxWidth < 360.dp) KoPilotSpacing.Md else KoPilotSpacing.Lg
+                val compactCameraHeight = (maxHeight * 0.29f).coerceIn(142.dp, 200.dp)
+
+                if (isLandscape || maxWidth >= 600.dp) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = horizontalPad, vertical = KoPilotSpacing.Sm),
+                        horizontalArrangement = Arrangement.spacedBy(KoPilotSpacing.Md),
                     ) {
-                        Text(
-                            text = "Alert: ${alert.displayText}",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        Column(
+                            modifier = Modifier.weight(1.1f).fillMaxHeight(),
+                            verticalArrangement = Arrangement.spacedBy(KoPilotSpacing.Sm),
+                        ) {
+                            TopCockpitHeader(
+                                isOnline = state.isOnline,
+                                obdConnected = state.diagnosticsState.obdConnected,
+                                isDriving = state.isDrivingSessionActive,
+                                onOpenMenu = { showToolsDialog = true },
+                                onOpenObdLive = { showObdLiveDialog = true },
+                            )
+                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                ViewportCard(
+                                    state = state,
+                                    viewModel = viewModel,
+                                    isFullscreen = false,
+                                    onToggleFullscreen = { isCameraFullscreen = true },
+                                )
+                            }
+                            VoiceAssistantBar(
+                                state = state,
+                                onToggleVoice = viewModel::toggleVoiceConnection,
+                                onToggleMute = viewModel::toggleVoiceMute,
+                            )
+                        }
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(KoPilotSpacing.Sm),
+                        ) {
+                            SpeedCockpitRow(state = state, onOpenSensors = onOpenSensors)
+                            SpeedZoneBanner(state.speedZone)
+                            state.alertState.activeAlert?.let { alert ->
+                                ActiveAlertBanner(alertText = alert.displayText)
+                            }
+                            RoadQualityLiveCard(
+                                state = state,
+                                onClick = onOpenRoadQuality,
+                            )
+                            PrimaryActionButtonsRow(
+                                state = state,
+                                onToggleDrive = {
+                                    if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
+                                },
+                                onOpenNavigate = { showDestinationDialog = true },
+                                onCallEmergency = { onCallEmergency(state.settings.emergencyContactPhone) },
+                            )
+                        }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = horizontalPad, vertical = KoPilotSpacing.Sm),
+                        verticalArrangement = Arrangement.spacedBy(KoPilotSpacing.Md),
+                    ) {
+                        TopCockpitHeader(
+                            isOnline = state.isOnline,
+                            obdConnected = state.diagnosticsState.obdConnected,
+                            isDriving = state.isDrivingSessionActive,
+                            onOpenMenu = { showToolsDialog = true },
+                            onOpenObdLive = { showObdLiveDialog = true },
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(16f / 9f)
+                                .heightIn(min = 140.dp, max = compactCameraHeight),
+                        ) {
+                            ViewportCard(
+                                state = state,
+                                viewModel = viewModel,
+                                isFullscreen = false,
+                                onToggleFullscreen = { isCameraFullscreen = true },
+                            )
+                        }
+                        SpeedCockpitRow(state = state, onOpenSensors = onOpenSensors)
+                        SpeedZoneBanner(state.speedZone)
+                        state.alertState.activeAlert?.let { alert ->
+                            ActiveAlertBanner(alertText = alert.displayText)
+                        }
+                        RoadQualityLiveCard(
+                            state = state,
+                            onClick = onOpenRoadQuality,
+                        )
+                        PrimaryActionButtonsRow(
+                            state = state,
+                            onToggleDrive = {
+                                if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
+                            },
+                            onOpenNavigate = { showDestinationDialog = true },
+                            onCallEmergency = { onCallEmergency(state.settings.emergencyContactPhone) },
+                        )
+                        VoiceAssistantBar(
+                            state = state,
+                            onToggleVoice = viewModel::toggleVoiceConnection,
+                            onToggleMute = viewModel::toggleVoiceMute,
                         )
                     }
                 }
-                RoadQualityLiveCard(
-                    state = state,
-                    onClick = onOpenRoadQuality,
-                )
-                QuickPagesStrip(
-                    isParked = isParked,
-                    onOpenRoadQuality = onOpenRoadQuality,
-                    onOpenDrivingBehaviour = onOpenDrivingBehaviour,
-                    onOpenSensors = onOpenSensors,
-                    onOpenObd = onOpenObd,
-                    onOpenTrips = onOpenTrips,
-                    onOpenSignsDb = { showSignsDbDialog = true },
-                    onOpenVisionDiag = { showVisionDiagDialog = true },
-                )
-                VoiceAssistantBar(
-                    state = state,
-                    onToggleVoice = viewModel::toggleVoiceConnection,
-                    onToggleMute = viewModel::toggleVoiceMute,
-                )
-                QuickInfoCardsRow(
-                    state = state,
-                    onOpenDestination = { showDestinationDialog = true },
-                    onOpenObd = onOpenObd,
-                )
-                PrimaryActionButtonsRow(
-                    state = state,
-                    onToggleDrive = {
-                        if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
-                    },
-                    onOpenNavigate = { showDestinationDialog = true },
-                )
-                BottomQuickActionsBar(
-                    alertsMuted = state.settings.alertsMuted,
-                    onToggleMuteAlerts = viewModel::toggleAlertsMute,
-                    onCallEmergency = { onCallEmergency(state.settings.emergencyContactPhone) },
-                    onOpenTrips = onOpenTrips,
-                    onOpenObd = onOpenObd,
-                    onOpenSettings = onOpenSettings,
-                )
             }
         }
     }
 }
 
 @Composable
+private fun ActiveAlertBanner(alertText: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFF102A30),
+        border = BorderStroke(1.dp, MintTeal.copy(alpha = 0.6f)),
+    ) {
+        Text(
+            text = "Alert: $alertText",
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+        )
+    }
+}
+
+@Composable
 private fun TopCockpitHeader(
     isOnline: Boolean,
-    isParked: Boolean = true,
-    onOpenSensors: () -> Unit,
-    onOpenVisionDiag: () -> Unit = {},
+    obdConnected: Boolean,
+    isDriving: Boolean,
+    onOpenMenu: () -> Unit,
     onOpenObdLive: () -> Unit = {},
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onOpenSensors, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.Menu, contentDescription = "Sensors & Motion", tint = Color.White)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f),
+        ) {
+            IconButton(onClick = onOpenMenu, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Menu, contentDescription = "Tools & Menu", tint = Color.White)
             }
             Spacer(Modifier.width(4.dp))
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(28.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Brush.linearGradient(listOf(MintTeal, NavBlue))),
                 contentAlignment = Alignment.Center,
@@ -456,25 +506,40 @@ private fun TopCockpitHeader(
                     text = "K",
                     color = CockpitDarkBg,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 18.sp,
+                    fontSize = 16.sp,
                 )
             }
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text(
-                    text = "KoPilot",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    lineHeight = 20.sp,
-                )
-                Text(
-                    text = "Your Intelligent Driving Assistant",
-                    color = Color(0xFF8C9EB2),
-                    fontSize = 11.sp,
-                    lineHeight = 13.sp,
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "KoPilot",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp,
+                maxLines = 1,
+            )
+            if (isDriving) {
+                Spacer(Modifier.width(8.dp))
+                KoPilotStatusPill(
+                    label = "DRIVE",
+                    accentColor = MintTeal,
                 )
             }
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (obdConnected) {
+                KoPilotStatusPill(
+                    label = "OBD",
+                    accentColor = MintTeal,
+                    modifier = Modifier.clickable(onClick = onOpenObdLive),
+                )
+            }
+            KoPilotStatusPill(
+                label = if (isOnline) "Online" else "Offline",
+                accentColor = if (isOnline) KoPilotClusterTokens.SmoothRoad else KoPilotClusterTokens.ModerateRoad,
+            )
         }
     }
 }
@@ -483,6 +548,8 @@ private fun TopCockpitHeader(
 private fun ViewportCard(
     state: DashboardUiState,
     viewModel: DashboardViewModel,
+    isFullscreen: Boolean = false,
+    onToggleFullscreen: () -> Unit = {},
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -796,16 +863,29 @@ private fun ViewportCard(
                     }
                 }
                 Surface(
+                    modifier = Modifier.clickable(onClick = viewModel::toggleCameraPrimaryLayout),
+                    shape = RoundedCornerShape(50),
+                    color = Color(0xCC0D141C),
+                ) {
+                    Text(
+                        text = if (state.settings.cameraPrimaryLayout) "Map" else "Cam",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                    )
+                }
+                Surface(
                     modifier = Modifier
                         .size(34.dp)
-                        .clickable(onClick = viewModel::toggleCameraPrimaryLayout),
+                        .clickable(onClick = onToggleFullscreen),
                     shape = CircleShape,
                     color = Color(0xCC0D141C),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Default.OpenInFull,
-                            contentDescription = "Switch View",
+                            imageVector = if (isFullscreen) Icons.Default.CloseFullscreen else Icons.Default.OpenInFull,
+                            contentDescription = if (isFullscreen) "Exit Fullscreen" else "Fullscreen Camera",
                             tint = Color.White,
                             modifier = Modifier.size(16.dp),
                         )
@@ -896,38 +976,47 @@ private fun SpeedCockpitRow(
     state: DashboardUiState,
     onOpenSensors: () -> Unit,
 ) {
-    val speedKmh = state.speedEvaluation.currentSpeedKmh
+    val fix = state.locationState.currentFix
+    val isGpsAvailable = state.speedEvaluation.signalState != GpsSignalState.UNAVAILABLE && fix != null
+    val isStale = fix != null && (System.currentTimeMillis() - fix.timestampMillis) > 6_000L
+    val speedKmh = if (isGpsAvailable && !isStale) state.speedEvaluation.currentSpeedKmh else null
     val speedText = speedKmh?.let { "%.0f".format(it) } ?: "--"
     val isOverspeed = state.speedEvaluation.decision == SpeedAlertDecision.POSSIBLE_OVERSPEED_WARNING ||
         state.speedZone == SpeedZone.REDUCE_SPEED ||
         state.speedZone == SpeedZone.DANGEROUS_DRIVING
-    val arcColor = when {
+    val accentColor = when {
         isOverspeed -> KoPilotColors.DangerRed
         state.speedZone == SpeedZone.OPTIMAL_CRUISE -> NavBlue
         state.speedZone == SpeedZone.ENCOURAGE_PACE -> KoPilotColors.WarningAmber
         else -> MintTeal
     }
     val progress = ((speedKmh ?: 0f) / 140f).coerceIn(0f, 1f)
+    val speedAccText = fix?.speedAccuracyKmh?.let { "±${"%.0f".format(it)} km/h" }
+        ?: fix?.horizontalAccuracyMeters?.let { "±${"%.0f".format(it)}m" }
 
-    Row(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+        shape = RoundedCornerShape(16.dp),
+        color = CockpitCardBg,
+        border = BorderStroke(1.dp, CockpitCardBorder),
     ) {
-        // Left column: GPS card + Traffic Light tab right next to Speed/GPS
-        Column(
-            modifier = Modifier.width(86.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Surface(
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenSensors),
-                shape = RoundedCornerShape(14.dp),
-                color = CockpitCardBg,
-                border = BorderStroke(1.dp, CockpitCardBorder),
+            // Left: GPS + Accuracy + Traffic Light compact column
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onOpenSensors),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                Column(
-                    modifier = Modifier.padding(8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Icon(
                         imageVector = Icons.Default.SatelliteAlt,
@@ -937,22 +1026,13 @@ private fun SpeedCockpitRow(
                             GpsSignalState.UNCERTAIN -> KoPilotColors.WarningAmber
                             GpsSignalState.UNAVAILABLE -> Color(0xFF6B7C90)
                         },
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Text(
-                        text = if (state.locationState.satellitesInView > 0) {
-                            "${state.locationState.satellitesUsedInFix}/${state.locationState.satellitesInView} sats"
-                        } else {
-                            "GPS"
-                        },
-                        color = Color(0xFF8C9EB2),
-                        fontSize = 10.sp,
+                        modifier = Modifier.size(16.dp),
                     )
                     Text(
                         text = when (state.speedEvaluation.signalState) {
-                            GpsSignalState.GOOD -> "Strong"
-                            GpsSignalState.UNCERTAIN -> "Weak"
-                            GpsSignalState.UNAVAILABLE -> "Off"
+                            GpsSignalState.GOOD -> "GPS Strong"
+                            GpsSignalState.UNCERTAIN -> "GPS Weak"
+                            GpsSignalState.UNAVAILABLE -> "GPS Off"
                         },
                         color = when (state.speedEvaluation.signalState) {
                             GpsSignalState.GOOD -> MintTeal
@@ -961,44 +1041,44 @@ private fun SpeedCockpitRow(
                         },
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
                     )
                 }
-            }
-
-            // Traffic Light Tab next to GPS & Speedometer
-            val tl = state.visionState.trafficLightSignal
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = CockpitCardBg,
-                border = BorderStroke(
-                    1.dp,
-                    when (tl) {
-                        TrafficLightSignal.RED -> KoPilotColors.DangerRed
-                        TrafficLightSignal.AMBER -> KoPilotColors.WarningAmber
-                        TrafficLightSignal.GREEN -> MintTeal
-                        TrafficLightSignal.NONE -> CockpitCardBorder
+                Text(
+                    text = buildString {
+                        if (state.locationState.satellitesInView > 0) {
+                            append("${state.locationState.satellitesUsedInFix}/${state.locationState.satellitesInView} sats")
+                        } else {
+                            append("No fix")
+                        }
+                        if (speedAccText != null && isGpsAvailable) {
+                            append(" · $speedAccText")
+                        }
                     },
-                ),
-            ) {
+                    color = KoPilotClusterTokens.SecondaryText,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+
+                val tl = state.visionState.trafficLightSignal
                 Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                         Box(
-                            modifier = Modifier.size(9.dp).clip(CircleShape).background(
+                            modifier = Modifier.size(8.dp).clip(CircleShape).background(
                                 if (tl == TrafficLightSignal.RED) KoPilotColors.DangerRed else Color(0xFF3A1A1D),
                             ),
                         )
                         Box(
-                            modifier = Modifier.size(9.dp).clip(CircleShape).background(
+                            modifier = Modifier.size(8.dp).clip(CircleShape).background(
                                 if (tl == TrafficLightSignal.AMBER) KoPilotColors.WarningAmber else Color(0xFF3A2F15),
                             ),
                         )
                         Box(
-                            modifier = Modifier.size(9.dp).clip(CircleShape).background(
+                            modifier = Modifier.size(8.dp).clip(CircleShape).background(
                                 if (tl == TrafficLightSignal.GREEN) MintTeal else Color(0xFF15382F),
                             ),
                         )
@@ -1012,97 +1092,74 @@ private fun SpeedCockpitRow(
                         },
                         color = Color.White,
                         fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
             }
-        }
 
-        // Center: Speedometer Arc Gauge
-        Box(
-            modifier = Modifier.size(164.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Canvas(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-                val strokeWidth = 10.dp.toPx()
-                val arcSize = Size(size.width, size.height)
-                drawArc(
-                    color = Color(0xFF1D2A36),
-                    startAngle = 140f,
-                    sweepAngle = 260f,
-                    useCenter = false,
-                    topLeft = Offset.Zero,
-                    size = arcSize,
-                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
-                )
-                if (progress > 0f) {
-                    drawArc(
-                        color = arcColor,
-                        startAngle = 140f,
-                        sweepAngle = 260f * progress,
-                        useCenter = false,
-                        topLeft = Offset.Zero,
-                        size = arcSize,
-                        style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
-                    )
-                }
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    imageVector = Icons.Default.DirectionsCar,
-                    contentDescription = null,
-                    tint = Color(0xFF9FB0C3),
-                    modifier = Modifier.size(18.dp),
-                )
-                Text(
-                    text = speedText,
-                    color = if (isOverspeed) KoPilotColors.DangerRed else Color.White,
-                    fontSize = 44.sp,
-                    fontWeight = FontWeight.Bold,
-                    lineHeight = 46.sp,
-                )
-                Text(
-                    text = "km/h",
-                    color = MintTeal,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-        }
-
-        // Right: Speed Limit Sign card (populates from last recognized speed limit sign)
-        Surface(
-            modifier = Modifier.width(86.dp),
-            shape = RoundedCornerShape(14.dp),
-            color = CockpitCardBg,
-            border = BorderStroke(1.dp, CockpitCardBorder),
-        ) {
+            // Center: Compact Digital Speed Readout + Horizontal Bar
             Column(
-                modifier = Modifier.padding(10.dp),
+                modifier = Modifier.weight(1.1f),
                 horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                val limit = state.visionState.lastSpeedLimitKmh
-                    ?: state.navigationState.roadIntelligence.mappedSpeedLimitKmh
-                    ?: state.speedEvaluation.applicableSpeedLimitKmh
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = speedText,
+                        color = if (isOverspeed) KoPilotColors.DangerRed else Color.White,
+                        fontSize = 38.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        lineHeight = 40.sp,
+                    )
+                    Text(
+                        text = "km/h",
+                        color = MintTeal,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(bottom = 5.dp),
+                    )
+                }
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = accentColor,
+                    trackColor = Color(0xFF1D2A36),
+                )
+            }
+
+            // Right: Speed Limit Sign Badge
+            val limit = state.visionState.lastSpeedLimitKmh
+                ?: state.navigationState.roadIntelligence.mappedSpeedLimitKmh
+                ?: state.speedEvaluation.applicableSpeedLimitKmh
+            Column(
+                modifier = Modifier.weight(0.75f),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
                 Surface(
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(44.dp),
                     shape = CircleShape,
                     color = Color.White,
-                    border = BorderStroke(5.dp, Color(0xFFD32F2F)),
+                    border = BorderStroke(4.dp, Color(0xFFD32F2F)),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(
                             text = limit?.toString() ?: "--",
                             color = Color(0xFF101820),
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 18.sp,
+                            fontSize = 16.sp,
                         )
                     }
                 }
-                Spacer(Modifier.height(6.dp))
                 Text(
-                    text = state.visionState.lastObservation?.category?.displayName ?: "Speed Limit",
-                    color = Color(0xFF8C9EB2),
+                    text = state.visionState.lastObservation?.category?.displayName ?: "Limit",
+                    color = KoPilotClusterTokens.SecondaryText,
                     fontSize = 10.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -1123,64 +1180,69 @@ private fun VoiceAssistantBar(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         color = CockpitCardBg,
         border = BorderStroke(1.dp, if (active) MintTeal.copy(alpha = 0.6f) else CockpitCardBorder),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Surface(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clickable(onClick = onToggleMute),
-                shape = CircleShape,
-                color = Color(0xFF0E292E),
-                border = BorderStroke(1.5.dp, MintTeal.copy(alpha = 0.7f)),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.GraphicEq,
-                        contentDescription = "Voice Waveform",
-                        tint = MintTeal,
-                    )
+            if (active || state.voiceState.isMuted) {
+                Surface(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clickable(onClick = onToggleMute),
+                    shape = CircleShape,
+                    color = Color(0xFF0E292E),
+                    border = BorderStroke(1.dp, MintTeal.copy(alpha = 0.7f)),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.GraphicEq,
+                            contentDescription = "Voice Waveform",
+                            tint = MintTeal,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
+                Spacer(Modifier.width(10.dp))
             }
-            Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "KoPilot Voice",
                     color = Color.White,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
+                    fontSize = 13.sp,
+                    maxLines = 1,
                 )
                 Text(
                     text = state.voiceState.lastTranscript.ifBlank {
-                        if (active) "Listening for your command..." else state.voiceState.statusMessage
+                        if (active) "Listening..." else state.voiceState.statusMessage
                     },
-                    color = Color(0xFF9FB0C3),
-                    fontSize = 12.sp,
-                    maxLines = 2,
+                    color = KoPilotClusterTokens.SecondaryText,
+                    fontSize = 11.sp,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
             Spacer(Modifier.width(8.dp))
             Surface(
                 modifier = Modifier
-                    .size(46.dp)
+                    .size(40.dp)
                     .clickable(onClick = onToggleVoice),
                 shape = CircleShape,
                 color = if (active) MintTeal else Color(0xFF102A30),
-                border = BorderStroke(2.dp, MintTeal),
+                border = BorderStroke(1.5.dp, MintTeal),
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = if (state.voiceState.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
                         contentDescription = "Talk",
                         tint = if (active) CockpitDarkBg else Color.White,
+                        modifier = Modifier.size(18.dp),
                     )
                 }
             }
@@ -1314,15 +1376,17 @@ private fun PrimaryActionButtonsRow(
     state: DashboardUiState,
     onToggleDrive: () -> Unit,
     onOpenNavigate: () -> Unit,
+    onCallEmergency: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Button(
             onClick = onToggleDrive,
-            modifier = Modifier.weight(1f).height(52.dp),
-            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+            shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = if (state.isDrivingSessionActive) KoPilotColors.DangerRed else MintTeal,
                 contentColor = if (state.isDrivingSessionActive) Color.White else CockpitDarkBg,
@@ -1331,28 +1395,53 @@ private fun PrimaryActionButtonsRow(
             Icon(
                 imageVector = if (state.isDrivingSessionActive) Icons.Default.Stop else Icons.Default.PlayArrow,
                 contentDescription = null,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(18.dp),
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(5.dp))
             Text(
                 text = if (state.isDrivingSessionActive) "End Trip" else "Start Driving",
                 fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
         Button(
             onClick = onOpenNavigate,
-            modifier = Modifier.weight(1f).height(52.dp),
-            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.weight(0.9f).heightIn(min = 48.dp),
+            shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = NavBlue,
                 contentColor = Color.White,
             ),
         ) {
-            Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Navigate", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(
+                text = "Navigate",
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        Surface(
+            onClick = onCallEmergency,
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF2B1116),
+            border = BorderStroke(1.dp, KoPilotColors.DangerRed.copy(alpha = 0.6f)),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Default.Call,
+                    contentDescription = "Emergency Call",
+                    tint = KoPilotColors.DangerRed,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }
@@ -1362,75 +1451,124 @@ private fun RoadQualityLiveCard(
     state: DashboardUiState,
     onClick: () -> Unit,
 ) {
-    val stats = state.motionAnalysis.behaviourStats
-    val rms = state.motionAnalysis.verticalVibrationRmsMps2
-    val score = stats.roadSmoothnessScore
-    val (label, badgeColor) = when {
-        score >= 80 -> "Smooth" to KoPilotClusterTokens.SmoothRoad
-        score >= 55 -> "Moderate" to KoPilotClusterTokens.ModerateRoad
-        score >= 30 -> "Rough" to KoPilotClusterTokens.RoughRoad
-        else -> "Very Rough" to KoPilotClusterTokens.VeryRough
+    val motion = state.motionAnalysis
+    val stats = motion.behaviourStats
+    val rms = motion.verticalVibrationRmsMps2
+    val now = System.currentTimeMillis()
+    val isStale = motion.updatedAtMillis > 0L && (now - motion.updatedAtMillis) > 8_000L
+    val isInvalid = !state.isDrivingSessionActive ||
+        motion.phoneMovementDetected ||
+        motion.roadVibrationLevel == RoadVibrationLevel.UNKNOWN ||
+        isStale
+
+    val scoreText: String
+    val label: String
+    val badgeColor: Color
+    when {
+        !state.isDrivingSessionActive -> {
+            scoreText = "--"
+            label = "Paused"
+            badgeColor = KoPilotClusterTokens.SecondaryText
+        }
+        motion.phoneMovementDetected -> {
+            scoreText = "--"
+            label = "Mount Moving"
+            badgeColor = KoPilotClusterTokens.ModerateRoad
+        }
+        isStale -> {
+            scoreText = "--"
+            label = "Stale"
+            badgeColor = KoPilotClusterTokens.ModerateRoad
+        }
+        motion.roadVibrationLevel == RoadVibrationLevel.UNKNOWN -> {
+            scoreText = "--"
+            label = "Unavailable"
+            badgeColor = KoPilotClusterTokens.SecondaryText
+        }
+        else -> {
+            val score = stats.roadSmoothnessScore
+            scoreText = "$score/100"
+            val pair = when {
+                score >= 80 -> "Smooth" to KoPilotClusterTokens.SmoothRoad
+                score >= 55 -> "Moderate" to KoPilotClusterTokens.ModerateRoad
+                score >= 30 -> "Rough" to KoPilotClusterTokens.RoughRoad
+                else -> "Very Rough" to KoPilotClusterTokens.VeryRough
+            }
+            label = pair.first
+            badgeColor = pair.second
+        }
     }
+
+    val samples = remember(stats.recentSamples) { stats.recentSamples.takeLast(50) }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         color = CockpitCardBg,
         border = BorderStroke(1.dp, CockpitCardBorder),
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column {
-                    Text(
-                        text = "Road Quality (Live)",
-                        color = KoPilotClusterTokens.PrimaryText,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                    )
-                    Text(
-                        text = "Vibration • Smoothness • Bumps",
-                        color = KoPilotClusterTokens.SecondaryText,
-                        fontSize = 11.sp,
-                    )
-                }
+                Text(
+                    text = "Road Quality",
+                    color = KoPilotClusterTokens.PrimaryText,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                )
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(8.dp),
                     color = KoPilotClusterTokens.ElevatedSurface,
-                    border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.7f)),
+                    border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.65f)),
                 ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Score", fontSize = 9.sp, color = KoPilotClusterTokens.SecondaryText)
-                        Text("$score/100", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = KoPilotClusterTokens.PrimaryText)
-                        Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = badgeColor)
+                        Text(
+                            text = scoreText,
+                            color = KoPilotClusterTokens.PrimaryText,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 12.sp,
+                        )
+                        Text(
+                            text = label,
+                            color = badgeColor,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 11.sp,
+                        )
                     }
                 }
             }
 
-            // Live scrolling sparkline from actual RoadVibrationSample buffer
             Surface(
                 shape = RoundedCornerShape(8.dp),
                 color = CockpitDarkBg,
-                modifier = Modifier.fillMaxWidth().height(42.dp),
+                modifier = Modifier.fillMaxWidth().height(26.dp),
             ) {
-                val samples = stats.recentSamples.takeLast(60)
-                if (samples.size < 2) {
+                if (samples.size < 2 || isInvalid) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
-                            text = if (state.isDrivingSessionActive) "Sampling road vibration..." else "Tap Start Driving to monitor road quality",
+                            text = when {
+                                !state.isDrivingSessionActive -> "Paused — start driving to score road"
+                                motion.phoneMovementDetected -> "Phone movement detected — stabilizing"
+                                isStale -> "Sensor data stale"
+                                else -> "Sampling road vibration..."
+                            },
                             color = KoPilotClusterTokens.SecondaryText,
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 } else {
-                    Canvas(modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 5.dp)) {
+                    Canvas(modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 3.dp)) {
                         val w = size.width
                         val h = size.height
                         val maxRms = 3.5f
@@ -1452,7 +1590,7 @@ private fun RoadQualityLiveCard(
                                 color = segColor,
                                 start = Offset(x1, y1),
                                 end = Offset(x2, y2),
-                                strokeWidth = 2.dp.toPx(),
+                                strokeWidth = 1.8.dp.toPx(),
                                 cap = StrokeCap.Round,
                             )
                         }
@@ -1460,19 +1598,27 @@ private fun RoadQualityLiveCard(
                 }
             }
 
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text("Bumps / Potholes", fontSize = 10.sp, color = KoPilotClusterTokens.SecondaryText)
-                    Text("${stats.potholeBumpCount}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = KoPilotClusterTokens.PrimaryText)
-                }
-                Column {
-                    Text("RMS Vibration", fontSize = 10.sp, color = KoPilotClusterTokens.SecondaryText)
-                    Text("${"%.2f".format(rms)} m/s²", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = KoPilotClusterTokens.PrimaryText)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("Trip Avg Score", fontSize = 10.sp, color = KoPilotClusterTokens.SecondaryText)
-                    Text("${stats.averageRoadScore}/100", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = KoPilotClusterTokens.PrimaryAccent)
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = "Bumps: ${stats.potholeBumpCount}",
+                    fontSize = 11.sp,
+                    color = KoPilotClusterTokens.SecondaryText,
+                )
+                Text(
+                    text = "RMS: ${"%.2f".format(rms)} m/s²",
+                    fontSize = 11.sp,
+                    color = KoPilotClusterTokens.PrimaryText,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = "Avg: ${stats.averageRoadScore}/100",
+                    fontSize = 11.sp,
+                    color = KoPilotClusterTokens.PrimaryAccent,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
     }
@@ -1968,103 +2114,76 @@ private fun ObdLiveDashboardDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun QuickPagesStrip(
+private fun DashboardToolsDialog(
+    state: DashboardUiState,
     isParked: Boolean,
-    onOpenRoadQuality: () -> Unit,
+    onDismiss: () -> Unit,
     onOpenDrivingBehaviour: () -> Unit,
+    onOpenRoadQuality: () -> Unit,
     onOpenSensors: () -> Unit,
     onOpenObd: () -> Unit,
     onOpenTrips: () -> Unit,
     onOpenSignsDb: () -> Unit,
     onOpenVisionDiag: () -> Unit,
+    onToggleMuteAlerts: () -> Unit,
+    onCallEmergency: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        QuickPageChip(
-            icon = Icons.Default.GraphicEq,
-            label = "Road Quality",
-            accent = KoPilotClusterTokens.SmoothRoad,
-            onClick = onOpenRoadQuality,
-        )
-        QuickPageChip(
-            icon = Icons.Default.DirectionsCar,
-            label = "Driving Behaviour",
-            accent = MintTeal,
-            onClick = onOpenDrivingBehaviour,
-        )
-        QuickPageChip(
-            icon = Icons.Default.SatelliteAlt,
-            label = "Sensors Hub",
-            accent = NavBlue,
-            onClick = onOpenSensors,
-        )
-        QuickPageChip(
-            icon = Icons.Default.DirectionsCar,
-            label = "OBD-II Gauges",
-            accent = MintTeal,
-            onClick = onOpenObd,
-        )
-        QuickPageChip(
-            icon = Icons.Default.Route,
-            label = "My Trips (.txt)",
-            accent = NavBlue,
-            onClick = onOpenTrips,
-        )
-        QuickPageChip(
-            icon = Icons.Default.Navigation,
-            label = "Road Signs DB",
-            accent = KoPilotClusterTokens.ModerateRoad,
-            onClick = onOpenSignsDb,
-        )
-        if (isParked) {
-            QuickPageChip(
-                icon = Icons.Default.Videocam,
-                label = "Vision Diag",
-                accent = KoPilotClusterTokens.SecondaryText,
-                onClick = onOpenVisionDiag,
-            )
-        }
+    val w = state.weatherState
+    val weatherLine = if (w.available && w.temperatureC != null) {
+        "${"%.0f".format(w.temperatureC)}°C · ${w.conditionSummary}"
+    } else {
+        "Weather unavailable"
     }
-}
-
-@Composable
-private fun QuickPageChip(
-    icon: ImageVector,
-    label: String,
-    accent: Color,
-    onClick: () -> Unit,
-) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        color = KoPilotClusterTokens.ElevatedSurface,
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.4f)),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = accent,
-                modifier = Modifier.size(16.dp),
-            )
-            Text(
-                text = label,
-                color = KoPilotClusterTokens.PrimaryText,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-            )
-        }
-    }
+    val destLine = state.navigationState.destinationName ?: "No destination set"
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("KoPilot Tools & Pages", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "Destination: $destLine\n$weatherLine",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(onClick = onOpenRoadQuality) { Text("Road Quality") }
+                    OutlinedButton(onClick = onOpenDrivingBehaviour) { Text("Driving Behaviour") }
+                    OutlinedButton(onClick = onOpenSensors) { Text("Sensors Hub") }
+                    OutlinedButton(onClick = onOpenObd) { Text("OBD-II Gauges") }
+                    OutlinedButton(onClick = onOpenTrips) { Text("My Trips (.txt)") }
+                    OutlinedButton(onClick = onOpenSignsDb) { Text("Road Signs DB") }
+                    if (isParked) {
+                        OutlinedButton(onClick = onOpenVisionDiag) { Text("Vision Diag") }
+                    }
+                    OutlinedButton(onClick = onToggleMuteAlerts) {
+                        Text(if (state.settings.alertsMuted) "Unmute Alerts" else "Mute Alerts")
+                    }
+                    Button(
+                        onClick = onCallEmergency,
+                        colors = ButtonDefaults.buttonColors(containerColor = KoPilotColors.DangerRed),
+                    ) {
+                        Text("Emergency Call")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
 }
 
 @Composable
