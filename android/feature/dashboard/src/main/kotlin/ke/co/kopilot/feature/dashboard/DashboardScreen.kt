@@ -96,6 +96,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ke.co.kopilot.core.common.model.GpsSignalState
 import ke.co.kopilot.core.common.model.SpeedAlertDecision
 import ke.co.kopilot.core.database.entity.TripEntity
+import ke.co.kopilot.core.designsystem.theme.KoPilotClusterTokens
 import ke.co.kopilot.core.designsystem.theme.KoPilotColors
 import ke.co.kopilot.feature.camera.RoadCameraPreview
 import ke.co.kopilot.feature.location.SpeedZone
@@ -106,16 +107,17 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val CockpitDarkBg = Color(0xFF0A1016)
-private val CockpitCardBg = Color(0xFF131C26)
-private val CockpitCardBorder = Color(0xFF233242)
-private val MintTeal = Color(0xFF18E2B8)
-private val NavBlue = Color(0xFF2B7FFF)
+private val CockpitDarkBg = KoPilotClusterTokens.Background
+private val CockpitCardBg = KoPilotClusterTokens.CardSurface
+private val CockpitCardBorder = KoPilotClusterTokens.Border
+private val MintTeal = KoPilotClusterTokens.PrimaryAccent
+private val NavBlue = KoPilotClusterTokens.SecondaryAccent
 
 @Composable
 fun DashboardScreen(
     onOpenSettings: () -> Unit,
     onOpenSensors: () -> Unit = {},
+    onOpenRoadQuality: () -> Unit = {},
     onOpenObd: () -> Unit = {},
     onOpenTrips: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
@@ -361,6 +363,10 @@ fun DashboardScreen(
                         )
                     }
                 }
+                RoadQualityLiveCard(
+                    state = state,
+                    onClick = onOpenRoadQuality,
+                )
                 VoiceAssistantBar(
                     state = state,
                     onToggleVoice = viewModel::toggleVoiceConnection,
@@ -1317,6 +1323,127 @@ private fun PrimaryActionButtonsRow(
             Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text("Navigate", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        }
+    }
+}
+
+@Composable
+private fun RoadQualityLiveCard(
+    state: DashboardUiState,
+    onClick: () -> Unit,
+) {
+    val stats = state.motionAnalysis.behaviourStats
+    val rms = state.motionAnalysis.verticalVibrationRmsMps2
+    val score = stats.roadSmoothnessScore
+    val (label, badgeColor) = when {
+        score >= 80 -> "Smooth" to KoPilotClusterTokens.SmoothRoad
+        score >= 55 -> "Moderate" to KoPilotClusterTokens.ModerateRoad
+        score >= 30 -> "Rough" to KoPilotClusterTokens.RoughRoad
+        else -> "Very Rough" to KoPilotClusterTokens.VeryRough
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        color = CockpitCardBg,
+        border = BorderStroke(1.dp, CockpitCardBorder),
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text(
+                        text = "Road Quality (Live)",
+                        color = KoPilotClusterTokens.PrimaryText,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                    )
+                    Text(
+                        text = "Vibration • Smoothness • Bumps",
+                        color = KoPilotClusterTokens.SecondaryText,
+                        fontSize = 11.sp,
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = KoPilotClusterTokens.ElevatedSurface,
+                    border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.7f)),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("Score", fontSize = 9.sp, color = KoPilotClusterTokens.SecondaryText)
+                        Text("$score/100", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = KoPilotClusterTokens.PrimaryText)
+                        Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = badgeColor)
+                    }
+                }
+            }
+
+            // Live scrolling sparkline from actual RoadVibrationSample buffer
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = CockpitDarkBg,
+                modifier = Modifier.fillMaxWidth().height(42.dp),
+            ) {
+                val samples = stats.recentSamples.takeLast(60)
+                if (samples.size < 2) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = if (state.isDrivingSessionActive) "Sampling road vibration..." else "Tap Start Driving to monitor road quality",
+                            color = KoPilotClusterTokens.SecondaryText,
+                            fontSize = 11.sp,
+                        )
+                    }
+                } else {
+                    Canvas(modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 5.dp)) {
+                        val w = size.width
+                        val h = size.height
+                        val maxRms = 3.5f
+                        val stepX = w / (samples.size - 1).coerceAtLeast(1)
+                        for (i in 1 until samples.size) {
+                            val prev = samples[i - 1]
+                            val curr = samples[i]
+                            val x1 = (i - 1) * stepX
+                            val y1 = h * (1f - (prev.rmsMps2 / maxRms).coerceIn(0f, 1f))
+                            val x2 = i * stepX
+                            val y2 = h * (1f - (curr.rmsMps2 / maxRms).coerceIn(0f, 1f))
+                            val segColor = when {
+                                curr.rmsMps2 < 0.7f -> KoPilotClusterTokens.SmoothRoad
+                                curr.rmsMps2 < 1.4f -> KoPilotClusterTokens.ModerateRoad
+                                curr.rmsMps2 < 2.4f -> KoPilotClusterTokens.RoughRoad
+                                else -> KoPilotClusterTokens.VeryRough
+                            }
+                            drawLine(
+                                color = segColor,
+                                start = Offset(x1, y1),
+                                end = Offset(x2, y2),
+                                strokeWidth = 2.dp.toPx(),
+                                cap = StrokeCap.Round,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text("Bumps / Potholes", fontSize = 10.sp, color = KoPilotClusterTokens.SecondaryText)
+                    Text("${stats.potholeBumpCount}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = KoPilotClusterTokens.PrimaryText)
+                }
+                Column {
+                    Text("RMS Vibration", fontSize = 10.sp, color = KoPilotClusterTokens.SecondaryText)
+                    Text("${"%.2f".format(rms)} m/s²", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = KoPilotClusterTokens.PrimaryText)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("Trip Avg Score", fontSize = 10.sp, color = KoPilotClusterTokens.SecondaryText)
+                    Text("${stats.averageRoadScore}/100", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = KoPilotClusterTokens.PrimaryAccent)
+                }
+            }
         }
     }
 }

@@ -145,6 +145,7 @@ class MainActivity : ComponentActivity() {
                         DashboardScreen(
                             onOpenSettings = { navController.navigate("settings") },
                             onOpenSensors = { navController.navigate("sensors") },
+                            onOpenRoadQuality = { navController.navigate("road_quality") },
                             onOpenObd = { navController.navigate("obd") },
                             onOpenTrips = { navController.navigate("trips") },
                             onCallEmergency = { phone ->
@@ -160,7 +161,18 @@ class MainActivity : ComponentActivity() {
                         ObdScreen(onBack = { navController.popBackStack() })
                     }
                     composable("sensors") {
-                        SensorsScreen(onBack = { navController.popBackStack() })
+                        SensorsScreen(
+                            onBack = { navController.popBackStack() },
+                            onOpenTrips = { navController.navigate("trips") },
+                            initialTab = 0,
+                        )
+                    }
+                    composable("road_quality") {
+                        SensorsScreen(
+                            onBack = { navController.popBackStack() },
+                            onOpenTrips = { navController.navigate("trips") },
+                            initialTab = 1,
+                        )
                     }
                     composable("settings") {
                         val btGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

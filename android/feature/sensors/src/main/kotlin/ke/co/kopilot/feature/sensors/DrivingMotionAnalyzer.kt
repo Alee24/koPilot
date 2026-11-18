@@ -22,6 +22,7 @@ class DrivingMotionAnalyzer @Inject constructor() {
     private var smoothCount = 0
     private var moderateCount = 0
     private var roughCount = 0
+    private var veryRoughCount = 0
     private var potholeBumpCount = 0
     private var lastBumpMs = 0L
     private var brakingCount = 0
@@ -99,6 +100,7 @@ class DrivingMotionAnalyzer @Inject constructor() {
 
         val vibrationLevel = when {
             verticalSamples.size < 5 -> RoadVibrationLevel.UNKNOWN
+            rms >= VERY_ROUGH_RMS_MPS2 -> RoadVibrationLevel.VERY_ROUGH
             rms >= ROUGH_ROAD_RMS_MPS2 -> RoadVibrationLevel.ROUGH_ROAD_EXPERIMENTAL
             rms >= MODERATE_VIBRATION_RMS_MPS2 -> RoadVibrationLevel.MODERATE_VIBRATION
             else -> RoadVibrationLevel.SMOOTH
@@ -107,23 +109,25 @@ class DrivingMotionAnalyzer @Inject constructor() {
         val currentScore = (100f - (rms / 3.0f) * 100f).toInt().coerceIn(0, 100)
 
         // Update road-quality & driving-behaviour statistics (ignore stationary phone handling)
+        var bumpInWindow = false
         if (!phoneMoved && verticalSamples.size >= 5) {
             if ((abs(vertical) >= POTHOLE_SPIKE_MPS2 || jerkSpike >= 5.5f) && (nowMillis - lastBumpMs) >= 1_500L) {
                 lastBumpMs = nowMillis
                 potholeBumpCount++
+                bumpInWindow = true
             }
-            if ((nowMillis - lastGraphSampleMs) >= 350L) {
+            if ((nowMillis - lastGraphSampleMs) >= 350L || bumpInWindow) {
                 lastGraphSampleMs = nowMillis
                 if (graphSamples.size >= MAX_GRAPH_SAMPLES) graphSamples.removeFirst()
-                graphSamples.addLast(RoadVibrationSample(nowMillis, rms, currentScore, vibrationLevel))
+                graphSamples.addLast(RoadVibrationSample(nowMillis, rms, currentScore, vibrationLevel, isBumpSpike = bumpInWindow))
 
                 totalScoredSamples++
                 scoreSum += currentScore
-                when (vibrationLevel) {
-                    RoadVibrationLevel.SMOOTH -> smoothCount++
-                    RoadVibrationLevel.MODERATE_VIBRATION -> moderateCount++
-                    RoadVibrationLevel.ROUGH_ROAD_EXPERIMENTAL -> roughCount++
-                    RoadVibrationLevel.UNKNOWN -> {}
+                when {
+                    currentScore >= 80 -> smoothCount++
+                    currentScore >= 55 -> moderateCount++
+                    currentScore >= 30 -> roughCount++
+                    else -> veryRoughCount++
                 }
             }
         }
@@ -166,7 +170,8 @@ class DrivingMotionAnalyzer @Inject constructor() {
         val avgRoadScore = if (totalScoredSamples > 0) (scoreSum / totalScoredSamples).toInt().coerceIn(0, 100) else currentScore
         val smoothPct = if (totalScoredSamples > 0) (smoothCount * 100) / totalScoredSamples else 100
         val moderatePct = if (totalScoredSamples > 0) (moderateCount * 100) / totalScoredSamples else 0
-        val roughPct = if (totalScoredSamples > 0) (100 - smoothPct - moderatePct).coerceAtLeast(0) else 0
+        val roughPct = if (totalScoredSamples > 0) (roughCount * 100) / totalScoredSamples else 0
+        val veryRoughPct = if (totalScoredSamples > 0) (100 - smoothPct - moderatePct - roughPct).coerceAtLeast(0) else 0
         val penalty = (harshBrakingCount * 4 + hardAccelerationCount * 3 + sharpCornerCount * 3).coerceAtMost(85)
         val driverScore = (100 - penalty).coerceIn(15, 100)
 
@@ -176,6 +181,7 @@ class DrivingMotionAnalyzer @Inject constructor() {
             smoothPct = smoothPct,
             moderatePct = moderatePct,
             roughPct = roughPct,
+            veryRoughPct = veryRoughPct,
             potholeBumpCount = potholeBumpCount,
             brakingCount = brakingCount,
             harshBrakingCount = harshBrakingCount,
@@ -214,6 +220,7 @@ class DrivingMotionAnalyzer @Inject constructor() {
         smoothCount = 0
         moderateCount = 0
         roughCount = 0
+        veryRoughCount = 0
         potholeBumpCount = 0
         lastBumpMs = 0L
         brakingCount = 0
@@ -228,8 +235,11 @@ class DrivingMotionAnalyzer @Inject constructor() {
 
     companion object {
         const val WINDOW_SIZE = 20
-        const val MAX_GRAPH_SAMPLES = 60
+        const val MAX_GRAPH_SAMPLES = 250
         const val POTHOLE_SPIKE_MPS2 = 4.5f
+        const val MODERATE_VIBRATION_RMS_MPS2 = 0.7f
+        const val ROUGH_ROAD_RMS_MPS2 = 1.4f
+        const val VERY_ROUGH_RMS_MPS2 = 2.4f
         const val ACCEL_MPS2 = 1.6f
         const val HARD_ACCEL_MPS2 = 3.5f
         const val BRAKE_MPS2 = -1.8f
@@ -242,7 +252,5 @@ class DrivingMotionAnalyzer @Inject constructor() {
         const val PHONE_ROTATION_THRESHOLD_RAD_S = 1.4f
         const val SUDDEN_JERK_MPS2 = 6.5f
         const val SUDDEN_IMPACT_MPS2 = 11.0f
-        const val MODERATE_VIBRATION_RMS_MPS2 = 1.1f
-        const val ROUGH_ROAD_RMS_MPS2 = 2.4f
     }
 }

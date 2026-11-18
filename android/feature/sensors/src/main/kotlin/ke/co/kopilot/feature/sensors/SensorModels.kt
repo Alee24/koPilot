@@ -90,6 +90,7 @@ enum class RoadVibrationLevel {
     SMOOTH,
     MODERATE_VIBRATION,
     ROUGH_ROAD_EXPERIMENTAL,
+    VERY_ROUGH,
 }
 
 data class RoadVibrationSample(
@@ -97,6 +98,7 @@ data class RoadVibrationSample(
     val rmsMps2: Float,
     val smoothnessScore: Int,
     val level: RoadVibrationLevel,
+    val isBumpSpike: Boolean = false,
 )
 
 data class DrivingBehaviourStats(
@@ -105,6 +107,7 @@ data class DrivingBehaviourStats(
     val smoothPct: Int = 100,
     val moderatePct: Int = 0,
     val roughPct: Int = 0,
+    val veryRoughPct: Int = 0,
     val potholeBumpCount: Int = 0,
     val brakingCount: Int = 0,
     val harshBrakingCount: Int = 0,

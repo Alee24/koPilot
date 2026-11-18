@@ -53,8 +53,8 @@ class DrivingMotionAnalyzerTest {
                 gpsSpeedKmh = 35f,
             )
         }
-        assertEquals(RoadVibrationLevel.ROUGH_ROAD_EXPERIMENTAL, vibResult.roadVibrationLevel)
-        assertTrue(vibResult.verticalVibrationRmsMps2 >= DrivingMotionAnalyzer.ROUGH_ROAD_RMS_MPS2)
+        assertEquals(RoadVibrationLevel.VERY_ROUGH, vibResult.roadVibrationLevel)
+        assertTrue(vibResult.verticalVibrationRmsMps2 >= DrivingMotionAnalyzer.VERY_ROUGH_RMS_MPS2)
     }
 
     @Test
