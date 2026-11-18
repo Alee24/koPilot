@@ -697,14 +697,13 @@ class DashboardViewModel @Inject constructor(
         }
         val settings = uiState.value.settings
         if (!settings.alertRoadSignsEnabled) return
+        if (observation.isUncertain || observation.applicableToDriverLane == false) {
+            return
+        }
         if (!settings.announceAllSigns && observation.category.speedLimitKmh == null) {
             return
         }
-        val text = if (observation.isUncertain) {
-            "Road sign ahead is unsure. Possible $label. Adjusting camera."
-        } else {
-            visionPipeline.signCatalog.getSpokenAdvice(observation.category, observation.customLabel)
-        }
+        val text = visionPipeline.signCatalog.getSpokenAdvice(observation.category, observation.customLabel)
         if (settings.alertChimeEnabled && !settings.alertsMuted && speechSink is AndroidTtsSpeechSink) {
             speechSink.playChime()
         }

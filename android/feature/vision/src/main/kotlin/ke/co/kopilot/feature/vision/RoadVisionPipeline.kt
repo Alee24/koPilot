@@ -55,7 +55,10 @@ data class TrackedRoadObject(
 data class VisionPipelineState(
     val modelLoaded: Boolean = false,
     val modelVersion: String = "mlkit-offline-1.0",
+    val activeAccelerator: String = "CPU",
     val validationStatus: String = "On-Device Offline",
+    val supportedSignClasses: List<String> = emptyList(),
+    val detectedClassCounts: Map<String, Int> = emptyMap(),
     val lastObservation: TrafficSignObservation? = null,
     val lastSpeedLimitKmh: Int? = null,
     val lastDetectedPlate: String? = null,
@@ -80,6 +83,7 @@ class RoadVisionPipeline @Inject constructor(
     private val temporalTracker: SignTemporalTracker,
     val signCatalog: LocalRoadSignCatalog,
     private val liteRtClassifier: LiteRtSignClassifier,
+    private val liteRtYoloSignDetector: LiteRtYoloSignDetector,
     private val liteRtObjectDetector: LiteRtObjectDetector,
     private val multiObjectTracker: MultiObjectTracker,
     val platePipeline: PlateRecognitionPipeline,
@@ -113,16 +117,19 @@ class RoadVisionPipeline @Inject constructor(
                 .build()
             objectDetector = ObjectDetection.getClient(objOptions)
             textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+            liteRtYoloSignDetector.ensureInitialized()
             liteRtClassifier.ensureInitialized()
-            val modeLabel = if (liteRtClassifier.isAvailable) {
-                "On-Device Hybrid (OCR+CV+LiteRT)"
-            } else {
-                "On-Device Hybrid (OCR+CV)"
+            val modeLabel = when {
+                liteRtYoloSignDetector.isAvailable -> "Offline LiteRT YOLO11n (${liteRtYoloSignDetector.activeAccelerator})"
+                liteRtClassifier.isAvailable -> "On-Device Hybrid (OCR+CV+LiteRT)"
+                else -> "On-Device Hybrid (OCR+CV)"
             }
 
             _state.value = _state.value.copy(
                 modelLoaded = true,
-                modelVersion = "mlkit-cv-hybrid-2.0",
+                modelVersion = if (liteRtYoloSignDetector.isAvailable) liteRtYoloSignDetector.modelVersion else "mlkit-cv-hybrid-2.0",
+                activeAccelerator = liteRtYoloSignDetector.activeAccelerator,
+                supportedSignClasses = liteRtYoloSignDetector.supportedLabels,
                 validationStatus = modeLabel,
                 statusMessage = "$modeLabel ready",
             )
@@ -310,6 +317,22 @@ class RoadVisionPipeline @Inject constructor(
                 }
             }
 
+            // Primary Offline AI Road-Sign Detector (LiteRT YOLO11n)
+            val yoloSignDetections = if (liteRtYoloSignDetector.isAvailable) {
+                liteRtYoloSignDetector.detect(bitmap)
+            } else {
+                emptyList()
+            }
+            for (d in yoloSignDetections) {
+                signCandidates.add(
+                    RawSignDetection(
+                        category = d.category,
+                        confidence = d.confidence,
+                        normalizedCenterX = (d.normalizedLeft + d.normalizedRight) / 2f,
+                    ),
+                )
+            }
+
             // Option 2: Two-stage LiteRT TFLite classification on localized sign crops (if model is bundled)
             if (liteRtClassifier.isAvailable) {
                 for (roi in signRois) {
@@ -356,7 +379,19 @@ class RoadVisionPipeline @Inject constructor(
                 }
             }
 
-            val roiOverlayBoxes = signRois.mapIndexed { idx, r ->
+            val yoloOverlayBoxes = yoloSignDetections.mapIndexed { idx, d ->
+                TrackedRoadObject(
+                    trackingId = idx + 1,
+                    label = "${d.category.displayName} ${(d.confidence * 100).toInt()}%",
+                    confidence = d.confidence,
+                    normalizedLeft = d.normalizedLeft,
+                    normalizedTop = d.normalizedTop,
+                    normalizedRight = d.normalizedRight,
+                    normalizedBottom = d.normalizedBottom,
+                    timestampMillis = timestampMillis,
+                )
+            }
+            val roiOverlayBoxes = yoloOverlayBoxes + signRois.mapIndexed { idx, r ->
                 TrackedRoadObject(
                     trackingId = idx,
                     label = "Sign ROI",
@@ -403,12 +438,22 @@ class RoadVisionPipeline @Inject constructor(
             }
             val prevPlateObs = _state.value.lastPlateObservation
             val activePlateObs = confirmedPlateObs ?: prevPlateObs?.takeIf { (timestampMillis - it.timestampMillis) <= 30_000L }
+            val updatedCounts = _state.value.detectedClassCounts.toMutableMap()
+            for (d in yoloSignDetections) {
+                val key = d.label
+                updatedCounts[key] = (updatedCounts[key] ?: 0) + 1
+            }
+            if (confirmed != null && !confirmed.isUncertain) {
+                val key = confirmed.category.name
+                updatedCounts[key] = (updatedCounts[key] ?: 0) + 1
+            }
             _state.value = _state.value.copy(
                 trackedObjects = tracked,
                 signRoiBoxes = roiOverlayBoxes,
                 brakeLightBoxes = lighting.brakeLightBoxes,
                 laneOverlay = laneState,
                 lastInferenceLatencyMs = latencyMs,
+                detectedClassCounts = updatedCounts,
                 lastObservation = confirmed ?: _state.value.lastObservation,
                 lastSpeedLimitKmh = nextSpeedLimit,
                 lastDetectedPlate = activePlateObs?.maskedPlate,

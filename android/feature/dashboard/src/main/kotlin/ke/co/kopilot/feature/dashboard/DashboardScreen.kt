@@ -619,18 +619,34 @@ private fun ViewportCard(
                                 labelPaint,
                             )
                         }
-                        // Highlight focused Sign ROI regions
+                        // Highlight focused Sign ROI & LiteRT YOLO11n Road Sign detections
                         for (roi in state.visionState.signRoiBoxes) {
                             val left = roi.normalizedLeft * size.width
                             val top = roi.normalizedTop * size.height
                             val right = roi.normalizedRight * size.width
                             val bottom = roi.normalizedBottom * size.height
+                            val isYoloSign = roi.label != "Sign ROI"
+                            val roiColor = if (isYoloSign) MintTeal else Color.Yellow.copy(alpha = 0.7f)
                             drawRect(
-                                color = Color.Yellow.copy(alpha = 0.7f),
+                                color = roiColor,
                                 topLeft = Offset(left, top),
                                 size = Size((right - left).coerceAtLeast(4f), (bottom - top).coerceAtLeast(4f)),
-                                style = Stroke(width = 1.5.dp.toPx()),
+                                style = Stroke(width = if (isYoloSign) 2.5.dp.toPx() else 1.5.dp.toPx()),
                             )
+                            if (isYoloSign) {
+                                val tagTop = (top - 26f).coerceAtLeast(4f)
+                                drawRect(
+                                    color = MintTeal.copy(alpha = 0.9f),
+                                    topLeft = Offset(left, tagTop),
+                                    size = Size((roi.label.length * 15f + 12f).coerceAtMost(size.width - left), 26f),
+                                )
+                                drawContext.canvas.nativeCanvas.drawText(
+                                    roi.label,
+                                    left + 6f,
+                                    tagTop + 20f,
+                                    labelPaint,
+                                )
+                            }
                         }
                         // Highlight detected bright red brake lights ahead
                         for (spot in state.visionState.brakeLightBoxes) {
@@ -1920,14 +1936,14 @@ private fun VisionDiagnosticsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Vision Diagnostics (Parked)") },
+        title = { Text("Offline AI Diagnostics") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    text = "Actual measured on-device metrics (never simulated):",
+                    text = "Actual measured on-device LiteRT & CameraX metrics (never simulated):",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1937,13 +1953,38 @@ private fun VisionDiagnosticsDialog(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Camera Resolution: ${cam.actualResolution}", fontWeight = FontWeight.Medium)
-                        Text("Camera FPS: ${"%.1f".format(cam.cameraFps)} | Inference FPS: ${"%.1f".format(cam.inferenceFps)}")
-                        Text("Frames Analyzed: ${cam.analyzedFrames} | Dropped: ${cam.droppedFrames}")
+                        Text("Model: ${vis.modelVersion}", fontWeight = FontWeight.Medium)
+                        Text("Accelerator: ${vis.activeAccelerator}")
+                        Text("Mode: ${vis.validationStatus}", style = MaterialTheme.typography.bodySmall)
                         Text("Inference Latency: ${vis.lastInferenceLatencyMs} ms")
-                        Text("Model: ${vis.modelVersion} (${vis.validationStatus})")
+                        Text("Camera FPS: ${"%.1f".format(cam.cameraFps)} | Inference FPS: ${"%.1f".format(cam.inferenceFps)}")
+                        Text("Camera Resolution: ${cam.actualResolution}")
+                        Text("Frames Analyzed: ${cam.analyzedFrames} | Dropped: ${cam.droppedFrames}")
                         Text("Thermal: ${cam.thermalState.name} | Battery: ${if (cam.batteryPercent >= 0) "${cam.batteryPercent}%" else "Unknown"}")
                         Text("Scene Luminance: ${vis.averageLuminance.toInt()} | Zoom: ${"%.1f".format(vis.recommendedZoomRatio)}x")
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Detected Sign Classes (${vis.detectedClassCounts.size})", fontWeight = FontWeight.Medium)
+                        if (vis.detectedClassCounts.isEmpty()) {
+                            Text("No sign classes detected yet in this session.", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            vis.detectedClassCounts.entries.sortedByDescending { it.value }.forEach { (cls, count) ->
+                                Text("• $cls: $count detections", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        if (vis.supportedSignClasses.isNotEmpty()) {
+                            Text(
+                                text = "Trained Classes (${vis.supportedSignClasses.size}): ${vis.supportedSignClasses.joinToString(", ")}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
                 Surface(
@@ -2165,9 +2206,7 @@ private fun DashboardToolsDialog(
                     OutlinedButton(onClick = onOpenObd) { Text("OBD-II Gauges") }
                     OutlinedButton(onClick = onOpenTrips) { Text("My Trips (.txt)") }
                     OutlinedButton(onClick = onOpenSignsDb) { Text("Road Signs DB") }
-                    if (isParked) {
-                        OutlinedButton(onClick = onOpenVisionDiag) { Text("Vision Diag") }
-                    }
+                    OutlinedButton(onClick = onOpenVisionDiag) { Text("Offline AI Diag") }
                     OutlinedButton(onClick = onToggleMuteAlerts) {
                         Text(if (state.settings.alertsMuted) "Unmute Alerts" else "Mute Alerts")
                     }

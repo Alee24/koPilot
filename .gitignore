@@ -21,7 +21,11 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+.venv311/
 venv/
+ml/data/
+ml/work_yolo11n/
+runs/
 *.db
 *.sqlite
 *.sqlite3

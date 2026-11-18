@@ -1,28 +1,44 @@
 [
   {
-    "modelId": "kopilot_ke_signs",
-    "version": "1.0.0-baseline",
-    "assetPath": "models/kopilot_ke_signs_v1.tflite",
-    "inputSize": 64,
+    "modelId": "kopilot_yolo11n_signs",
+    "version": "yolo11n-gtsrb-litert-320",
+    "assetPath": "models/kopilot_yolo11n_signs.tflite",
+    "labelsPath": "models/kopilot_yolo11n_labels.txt",
+    "inputSize": 320,
+    "datasetLicense": "GTSRB (CC BY 4.0) composed multi-condition dataset",
     "classes": [
-      "BACKGROUND",
       "SPEED_LIMIT_30",
       "SPEED_LIMIT_50",
       "SPEED_LIMIT_60",
       "SPEED_LIMIT_80",
       "SPEED_LIMIT_100",
-      "SPEED_LIMIT_110",
       "STOP",
       "GIVE_WAY",
       "NO_ENTRY",
       "PEDESTRIAN_CROSSING",
-      "SCHOOL_ZONE",
       "ROADWORKS",
       "DANGEROUS_BEND",
       "SPEED_BUMP",
-      "NO_OVERTAKING"
+      "NO_OVERTAKING",
+      "ROUNDABOUT"
     ],
-    "validationStatus": "UNVALIDATED_BASELINE",
-    "knownLimitations": "Baseline classifier architecture not yet fine-tuned or field-validated on Kenyan road footage under daylight, rain, glare, and nighttime conditions. Observations are strictly advisory."
+    "unsupportedKenyaClassesNeedingData": [
+      "SPEED_LIMIT_110",
+      "SCHOOL_ZONE",
+      "RAILWAY_CROSSING",
+      "HOSPITAL_ZONE",
+      "BLACKSPOT",
+      "POLICE_CHECKPOINT"
+    ],
+    "heldOutEvaluation": {
+      "testImages": 350,
+      "conditions": { "daylight": 181, "rain": 96, "night": 73 },
+      "mAP50": 0.867,
+      "mAP50_95": 0.866,
+      "precision": 0.772,
+      "recall": 0.885
+    },
+    "validationStatus": "TRAINED_GTSRB_NEEDS_KENYA_FIELD_VALIDATION",
+    "knownLimitations": "Trained on CC BY 4.0 GTSRB signs composed onto daylight/rain/night road canvases; not yet evaluated on real Kenyan dashcam footage. Kenyan-specific classes (110 km/h, School Zone, Railway Crossing, Hospital Zone, Blackspot, Police Checkpoint) require local labeled Kenyan footage."
   }
 ]
