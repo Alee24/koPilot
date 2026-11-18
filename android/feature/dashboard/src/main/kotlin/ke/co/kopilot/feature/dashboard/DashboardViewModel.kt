@@ -38,6 +38,7 @@ import ke.co.kopilot.feature.traffic.TrafficEvaluation
 import ke.co.kopilot.feature.trips.TripActivityLogger
 import ke.co.kopilot.feature.trips.TripRepository
 import ke.co.kopilot.feature.vision.LaneShiftEvent
+import ke.co.kopilot.feature.vision.KenyanPlateValidator
 import ke.co.kopilot.feature.vision.RoadVisionPipeline
 import ke.co.kopilot.feature.vision.TrafficLightSignal
 import ke.co.kopilot.feature.vision.VisionPipelineState
@@ -128,6 +129,9 @@ class DashboardViewModel @Inject constructor(
     private var lastTutorClearRoadMs = 0L
     private var clearRoadSinceMs = 0L
     private var lastSensorSnapshotLoggedMs = 0L
+    private var lastWatchedPlateAlertMs = 0L
+    private var lastWatchedPlateAlerted: String? = null
+    private var lastEcuAlertMs = 0L
 
     private val coreFlows = combine(
         isDriving,
@@ -194,6 +198,49 @@ class DashboardViewModel @Inject constructor(
     init {
         visionPipeline.initializeIfNeeded()
         viewModelScope.launch {
+            obdManager.liveTelemetry.collect { tel ->
+                if (!obdManager.state.value.obdConnected) return@collect
+                val s = uiState.value.settings
+                val now = System.currentTimeMillis()
+                if ((now - lastEcuAlertMs) < 25_000L) return@collect
+
+                val coolant = tel.coolantTempC
+                val volt = tel.controlModuleVoltageV ?: tel.adapterVoltageV
+                val rpm = tel.engineRpm
+                val dtcs = obdManager.state.value.dtcCodes
+                val ecuWarning: Pair<String, String>? = when {
+                    coolant != null && coolant >= 102 ->
+                        "Warning: Engine coolant temperature high at $coolant degrees Celsius." to "ECU Coolant High ($coolant°C)"
+                    volt != null && volt in 5.0f..11.7f ->
+                        "Warning: Vehicle battery voltage low at ${"%.1f".format(volt)} volts." to "ECU Voltage Low (${"%.1f".format(volt)}V)"
+                    rpm != null && rpm >= 6000 ->
+                        "Warning: High engine RPM at $rpm." to "High Engine RPM ($rpm)"
+                    dtcs.isNotEmpty() ->
+                        "Vehicle diagnostic trouble code detected: ${dtcs.take(2).joinToString(", ")}." to "OBD-II DTC: ${dtcs.first()}"
+                    else -> null
+                }
+                if (ecuWarning != null) {
+                    lastEcuAlertMs = now
+                    if (isDriving.value) {
+                        tripActivityLogger.logActivity("ECU_ALERT", ecuWarning.second, now)
+                    }
+                    alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = AlertPriority.ROAD_OBSERVATION,
+                            spokenText = ecuWarning.first,
+                            displayText = ecuWarning.second,
+                            dedupKey = "ecu_${ecuWarning.second}",
+                            timestampMillis = now,
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
             sensorManagerRepo.state.collect { hub ->
                 if (!isDriving.value) return@collect
                 val now = System.currentTimeMillis()
@@ -235,6 +282,35 @@ class DashboardViewModel @Inject constructor(
                 if (isDriving.value && plate != null && plate != lastLoggedPlate) {
                     lastLoggedPlate = plate
                     tripActivityLogger.logActivity("PLATE_DETECTED", "Vehicle plate spotted: $plate", now)
+                }
+                val plateObs = vision.lastPlateObservation
+                if (plateObs != null && s.alertNumberPlatesEnabled) {
+                    val watchedMatch = KenyanPlateValidator.matchesWatchedPlate(
+                        plateObs.rawNormalizedPlate,
+                        s.watchedPlatesList(),
+                    )
+                    if (watchedMatch != null &&
+                        (watchedMatch != lastWatchedPlateAlerted || (now - lastWatchedPlateAlertMs) >= 15_000L)
+                    ) {
+                        lastWatchedPlateAlerted = watchedMatch
+                        lastWatchedPlateAlertMs = now
+                        if (isDriving.value) {
+                            tripActivityLogger.logActivity("WATCHED_PLATE_MATCH", "Watched plate spotted ahead: ${plateObs.rawNormalizedPlate}", now)
+                        }
+                        alertCoordinator.submit(
+                            alert = AlertMessage(
+                                id = UUID.randomUUID().toString(),
+                                priority = AlertPriority.ROAD_OBSERVATION,
+                                spokenText = "Watched number plate spotted ahead: ${plateObs.rawNormalizedPlate}",
+                                displayText = "Watched Plate Ahead: ${plateObs.rawNormalizedPlate}",
+                                dedupKey = "watched_plate_${plateObs.rawNormalizedPlate}",
+                                timestampMillis = now,
+                            ),
+                            speechRate = s.voiceSpeed,
+                            language = s.language,
+                            globalMute = s.alertsMuted,
+                        )
+                    }
                 }
                 if (vision.redBrakeLightsAhead && moving && s.alertTrafficLightsEnabled) {
                     if (isDriving.value && (now - lastLoggedBrakeLightMs) >= 8_000L) {

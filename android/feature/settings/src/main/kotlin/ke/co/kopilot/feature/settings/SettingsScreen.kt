@@ -1,5 +1,6 @@
 package ke.co.kopilot.feature.settings
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -10,14 +11,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -25,15 +27,18 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,13 +46,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ke.co.kopilot.core.database.preferences.DetectionQuality
 import ke.co.kopilot.core.database.preferences.MicMode
 import ke.co.kopilot.core.database.preferences.ResponseLength
-import ke.co.kopilot.core.designsystem.component.CockpitPanel
+import ke.co.kopilot.core.designsystem.theme.KoPilotClusterTokens
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -60,7 +69,6 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val vehicle by viewModel.vehicleProfile.collectAsStateWithLifecycle()
-    val pairedDevices by viewModel.pairedDevices.collectAsStateWithLifecycle()
     val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
     val savedBackendUrl by viewModel.backendUrl.collectAsStateWithLifecycle()
     val savedOpenAiKey by viewModel.openAiKey.collectAsStateWithLifecycle()
@@ -71,15 +79,31 @@ fun SettingsScreen(
     var googleKeyInput by remember(savedGoogleKey) { mutableStateOf(savedGoogleKey) }
     var showKeys by remember { mutableStateOf(false) }
 
+    var plateInput by remember { mutableStateOf("") }
     var manufacturer by remember(vehicle.manufacturer) { mutableStateOf(vehicle.manufacturer) }
     var model by remember(vehicle.model) { mutableStateOf(vehicle.model) }
     var emergencyName by remember(settings.emergencyContactName) { mutableStateOf(settings.emergencyContactName) }
     var emergencyPhone by remember(settings.emergencyContactPhone) { mutableStateOf(settings.emergencyContactPhone) }
 
     Scaffold(
+        containerColor = KoPilotClusterTokens.Background,
         topBar = {
             TopAppBar(
-                title = { Text("KoPilot Settings") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = KoPilotClusterTokens.Background,
+                    titleContentColor = KoPilotClusterTokens.PrimaryText,
+                    navigationIconContentColor = KoPilotClusterTokens.PrimaryText,
+                ),
+                title = {
+                    Column {
+                        Text("KoPilot Settings", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(
+                            text = "Offline AI, Alerts, Number Plate Watchlist & Vehicle",
+                            fontSize = 11.sp,
+                            color = KoPilotClusterTokens.SecondaryText,
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -94,94 +118,96 @@ fun SettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (statusBanner != null) {
-                CockpitPanel {
-                    Text(statusBanner!!, color = MaterialTheme.colorScheme.primary)
+                SettingsCard {
+                    Text(statusBanner!!, color = KoPilotClusterTokens.PrimaryAccent, fontWeight = FontWeight.SemiBold)
                 }
             }
 
-            // API Credentials & Server Configuration
-            CockpitPanel {
-                Text("API Credentials & Server", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Stored encrypted on-device. Enter your own OpenAI / Google keys or point to your KoPilot backend.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // 1. Alert Preferences (including Traffic Lights & Number Plate Watchlist toggles)
+            SettingsCard {
+                SectionTitle("Alert Preferences", "Choose which spoken & visual alerts KoPilot announces.")
+                SettingSwitch("Traffic Light & Brake Light Alerts", settings.alertTrafficLightsEnabled, viewModel::setAlertTrafficLightsEnabled)
+                SettingSwitch("Number Plate Watchlist Alerts", settings.alertNumberPlatesEnabled, viewModel::setAlertNumberPlatesEnabled)
+                SettingSwitch("Road Sign Alerts", settings.alertRoadSignsEnabled, viewModel::setAlertRoadSignsEnabled)
+                SettingSwitch("Lane Drifting & Turning Alerts", settings.alertLaneTurnEnabled, viewModel::setAlertLaneTurnEnabled)
+                SettingSwitch("Overspeed & Speed Limit Alerts", settings.alertSpeedLimitEnabled, viewModel::setAlertSpeedLimitEnabled)
+                SettingSwitch("Weather & Headlight Advisories", settings.alertWeatherEnabled, viewModel::setAlertWeatherEnabled)
+                SettingSwitch("Play Chime Before Alerts", settings.alertChimeEnabled, viewModel::setAlertChimeEnabled)
+            }
+
+            // 2. Kenyan Number Plate Watchlist (100% offline OCR matching)
+            SettingsCard {
+                SectionTitle(
+                    "Number Plate Watchlist",
+                    "Add Kenyan number plates (white or yellow rear). KoPilot alerts you offline whenever a listed plate is spotted ahead.",
                 )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = backendUrlInput,
-                    onValueChange = { backendUrlInput = it },
-                    label = { Text("Backend Server URL") },
-                    singleLine = true,
+                Spacer(Modifier.height(6.dp))
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = openAiKeyInput,
-                    onValueChange = { openAiKeyInput = it },
-                    label = { Text("OpenAI API Key (sk-...)") },
-                    singleLine = true,
-                    visualTransformation = if (showKeys) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { showKeys = !showKeys }) {
-                            Icon(
-                                if (showKeys) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = "Toggle visibility",
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = googleKeyInput,
-                    onValueChange = { googleKeyInput = it },
-                    label = { Text("Google Routes / Places API Key (AIza...)") },
-                    singleLine = true,
-                    visualTransformation = if (showKeys) VisualTransformation.None else PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(10.dp))
-                val openAiReady = openAiKeyInput.trim().startsWith("sk-")
-                val googleReady = googleKeyInput.trim().startsWith("AIza")
-                Text(
-                    text = "Status • OpenAI: ${if (openAiReady) "Configured" else "Not set"} | Google Maps: ${if (googleReady) "Configured" else "Not set"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.height(8.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = plateInput,
+                        onValueChange = { plateInput = it.uppercase() },
+                        label = { Text("e.g. KDM 632A") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
                     Button(
                         onClick = {
-                            viewModel.saveApiConfiguration(backendUrlInput, openAiKeyInput, googleKeyInput)
-                            viewModel.testEnteredApiKeys(openAiKeyInput, googleKeyInput)
+                            if (plateInput.isNotBlank()) {
+                                viewModel.addWatchedPlate(plateInput)
+                                plateInput = ""
+                            }
                         },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = KoPilotClusterTokens.PrimaryAccent,
+                            contentColor = KoPilotClusterTokens.Background,
+                        ),
                     ) {
-                        Text("Save & Connect")
-                    }
-                    OutlinedButton(onClick = { viewModel.testBackendConnection(backendUrlInput) }) {
-                        Text("Test Server")
+                        Text("Add")
                     }
                 }
-                Spacer(Modifier.height(6.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedButton(onClick = onOpenObd) {
-                        Text("Connect OBD-II Page")
-                    }
-                    OutlinedButton(onClick = viewModel::clearApiCredentials) {
-                        Text("Clear Keys")
+                val watched = settings.watchedPlatesList()
+                if (watched.isEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "No watched number plates added yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = KoPilotClusterTokens.SecondaryText,
+                    )
+                } else {
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        watched.forEach { plate ->
+                            InputChip(
+                                selected = true,
+                                onClick = { viewModel.removeWatchedPlate(plate) },
+                                label = { Text(plate, fontWeight = FontWeight.Bold) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove $plate",
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                },
+                            )
+                        }
                     }
                 }
             }
 
-            // General
-            CockpitPanel {
-                Text("General", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
+            // 3. General & Speed Threshold
+            SettingsCard {
+                SectionTitle("General & Speed")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(
                         selected = settings.language == "en",
@@ -195,72 +221,46 @@ fun SettingsScreen(
                     )
                 }
                 SettingSwitch("Dark Mode (Recommended for Driving)", settings.darkTheme, viewModel::setDarkTheme)
-                Text("Overspeed Alert Threshold: +${settings.speedAlertThresholdKmh} km/h")
+                Spacer(Modifier.height(6.dp))
+                Text("Overspeed Alert Threshold: +${settings.speedAlertThresholdKmh} km/h", color = KoPilotClusterTokens.PrimaryText)
                 Slider(
                     value = settings.speedAlertThresholdKmh.toFloat(),
                     onValueChange = { viewModel.setSpeedThreshold(it.toInt()) },
-                    valueRange = 0f..20f,
+                    valueRange = 0f..25f,
                 )
             }
 
-            // Sensors & Hardware (only started when Start Driving is pressed)
-            CockpitPanel {
+            // 4. Sensors & Hardware
+            SettingsCard {
+                SectionTitle("Sensors & Hardware", "Sensors activate automatically when you press Start Driving.")
                 val allEnabled = settings.sensorCameraEnabled &&
                     settings.sensorGpsEnabled &&
                     settings.sensorMotionEnabled &&
                     settings.sensorMicEnabled &&
                     settings.sensorObdEnabled
-                Text("Sensors & Hardware", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Sensors stay idle until you press Start Driving. Choose which sensors activate during a trip.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(8.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Button(
-                        onClick = { viewModel.setAllSensorsEnabled(!allEnabled) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(if (allEnabled) "Turn All Sensors OFF" else "Turn All Sensors ON")
-                    }
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = { viewModel.setAllSensorsEnabled(!allEnabled) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = KoPilotClusterTokens.PrimaryAccent,
+                        contentColor = KoPilotClusterTokens.Background,
+                    ),
+                ) {
+                    Text(if (allEnabled) "Turn All Sensors OFF" else "Turn All Sensors ON")
                 }
                 Spacer(Modifier.height(6.dp))
-                SettingSwitch("Camera (Road Signs & Traffic Lights)", settings.sensorCameraEnabled, viewModel::setSensorCameraEnabled)
+                SettingSwitch("Camera (Road Signs, Lights & Plates)", settings.sensorCameraEnabled, viewModel::setSensorCameraEnabled)
                 SettingSwitch("GPS Location & Speed", settings.sensorGpsEnabled, viewModel::setSensorGpsEnabled)
-                SettingSwitch("Motion / IMU (Accelerometer & Gyro)", settings.sensorMotionEnabled, viewModel::setSensorMotionEnabled)
+                SettingSwitch("Motion / IMU (Road Quality & Behaviour)", settings.sensorMotionEnabled, viewModel::setSensorMotionEnabled)
                 SettingSwitch("Microphone (Voice Co-Pilot)", settings.sensorMicEnabled, viewModel::setSensorMicEnabled)
                 SettingSwitch("OBD-II Vehicle Bluetooth", settings.sensorObdEnabled, viewModel::setSensorObdEnabled)
             }
 
-            // Alert Preferences
-            CockpitPanel {
-                Text("Alert Preferences", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Choose which spoken & visual alerts KoPilot announces while driving.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            // 5. Camera & Offline Road Sign Vision
+            SettingsCard {
+                SectionTitle("Camera & Offline AI Vision", "Kenya left-hand carriageway aware; filters billboards.")
                 Spacer(Modifier.height(6.dp))
-                SettingSwitch("Road Sign Alerts", settings.alertRoadSignsEnabled, viewModel::setAlertRoadSignsEnabled)
-                SettingSwitch("Lane Drifting & Turning Alerts", settings.alertLaneTurnEnabled, viewModel::setAlertLaneTurnEnabled)
-                SettingSwitch("Traffic Light & Brake Light Alerts", settings.alertTrafficLightsEnabled, viewModel::setAlertTrafficLightsEnabled)
-                SettingSwitch("Overspeed & Speed Camera Alerts", settings.alertSpeedLimitEnabled, viewModel::setAlertSpeedLimitEnabled)
-                SettingSwitch("Weather & Headlight Advisories", settings.alertWeatherEnabled, viewModel::setAlertWeatherEnabled)
-            }
-
-            // Camera & Vision
-            CockpitPanel {
-                Text("Camera & Road Sign Vision", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Mount phone securely on dashboard or windscreen with an unobstructed view of the road ahead.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(8.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     DetectionQuality.entries.forEach { q ->
                         FilterChip(
@@ -271,7 +271,7 @@ fun SettingsScreen(
                     }
                 }
                 Spacer(Modifier.height(6.dp))
-                Text("Camera Zoom for Road Signs (${"%.1f".format(settings.cameraZoomRatio)}x)")
+                Text("Camera Zoom (${"%.1f".format(settings.cameraZoomRatio)}x)", color = KoPilotClusterTokens.PrimaryText)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(1.0f, 1.3f, 1.6f, 2.0f).forEach { z ->
                         FilterChip(
@@ -281,16 +281,8 @@ fun SettingsScreen(
                         )
                     }
                 }
-                SettingSwitch(
-                    "Announce All Road Signs Out Loud",
-                    settings.announceAllSigns,
-                    viewModel::setAnnounceAllSigns,
-                )
-                SettingSwitch(
-                    "Experimental Hazard Advisories (Unvalidated)",
-                    settings.hazardAdvisoriesEnabled,
-                    viewModel::setHazardAdvisories,
-                )
+                SettingSwitch("Announce All Road Signs Out Loud", settings.announceAllSigns, viewModel::setAnnounceAllSigns)
+                SettingSwitch("Experimental Hazard Advisories", settings.hazardAdvisoriesEnabled, viewModel::setHazardAdvisories)
                 Spacer(Modifier.height(6.dp))
                 var showSignsDbDialog by remember { mutableStateOf(false) }
                 OutlinedButton(onClick = { showSignsDbDialog = true }) {
@@ -306,7 +298,7 @@ fun SettingsScreen(
                     }
                     AlertDialog(
                         onDismissRequest = { showSignsDbDialog = false },
-                        title = { Text("Kenyan Road Signs Database") },
+                        title = { Text("Kenyan Road Signs Database (${viewModel.roadSignDatabase.size})") },
                         text = {
                             Column(
                                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -314,12 +306,12 @@ fun SettingsScreen(
                             ) {
                                 Text(
                                     text = if (viewModel.isCustomSignModelLoaded) {
-                                        "Engine: Custom LiteRT TFLite + OCR + Shape CV"
+                                        "Engine: Offline LiteRT YOLO11n + OCR + Shape CV"
                                     } else {
-                                        "Engine: Hybrid Offline OCR + Shape/Symbol CV (train custom .tflite via ml/training/)"
+                                        "Engine: Hybrid Offline OCR + Shape/Symbol CV"
                                     },
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = KoPilotClusterTokens.PrimaryAccent,
                                 )
                                 OutlinedTextField(
                                     value = signQuery,
@@ -331,7 +323,7 @@ fun SettingsScreen(
                                 filteredSigns.forEach { entry ->
                                     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                                         Text("${entry.title} (${entry.code})", style = MaterialTheme.typography.titleSmall)
-                                        Text("Shape: ${entry.shape}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                        Text("Shape: ${entry.shape}", style = MaterialTheme.typography.bodySmall, color = KoPilotClusterTokens.PrimaryAccent)
                                         Text("Meaning & Action: ${entry.spokenAdvice}", style = MaterialTheme.typography.bodySmall)
                                     }
                                 }
@@ -344,63 +336,10 @@ fun SettingsScreen(
                 }
             }
 
-            // Navigation
-            CockpitPanel {
-                Text("Navigation", style = MaterialTheme.typography.titleMedium)
-                SettingSwitch("Avoid Tolls (e.g. Nairobi Expressway)", settings.avoidTolls, viewModel::setAvoidTolls)
-                SettingSwitch("Traffic Reroute Alerts", settings.trafficAlertsEnabled, viewModel::setTrafficAlerts)
-                SettingSwitch("Navigation Voice Prompts", settings.navVoiceGuidanceEnabled, viewModel::setNavVoice)
-            }
-
-            // AI Assistant & Sound
-            CockpitPanel {
-                Text("AI Voice & Sound", style = MaterialTheme.typography.titleMedium)
+            // 6. Vehicle & OBD-II
+            SettingsCard {
+                SectionTitle("Vehicle & OBD-II Diagnostics")
                 Spacer(Modifier.height(6.dp))
-                Text("Realtime AI Voice: ${settings.aiVoiceName}")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("marin", "alloy", "ash", "coral", "echo", "sage", "shimmer", "verse").forEach { v ->
-                        FilterChip(
-                            selected = settings.aiVoiceName == v,
-                            onClick = { viewModel.setAiVoiceName(v) },
-                            label = { Text(v) },
-                        )
-                    }
-                }
-                Text("Speech Rate: ${"%.1f".format(settings.voiceSpeed)}x")
-                Slider(
-                    value = settings.voiceSpeed,
-                    onValueChange = viewModel::setVoiceSpeed,
-                    valueRange = 0.6f..1.5f,
-                )
-                SettingSwitch("Play Alert Chime Before Warnings", settings.alertChimeEnabled, viewModel::setAlertChimeEnabled)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    MicMode.entries.forEach { mode ->
-                        FilterChip(
-                            selected = settings.micMode == mode,
-                            onClick = { viewModel.setMicMode(mode) },
-                            label = { Text(mode.name.replace('_', ' ')) },
-                        )
-                    }
-                }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ResponseLength.entries.forEach { len ->
-                        FilterChip(
-                            selected = settings.responseLength == len,
-                            onClick = { viewModel.setResponseLength(len) },
-                            label = { Text(len.name) },
-                        )
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-                OutlinedButton(onClick = viewModel::testVoiceSound) {
-                    Text("Test Voice & Chime Sound")
-                }
-            }
-
-            // Vehicle & OBD-II
-            CockpitPanel {
-                Text("Vehicle & OBD-II Diagnostics", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = manufacturer,
                     onValueChange = { manufacturer = it },
@@ -415,112 +354,60 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        viewModel.saveVehicleProfile(vehicle.copy(manufacturer = manufacturer, model = model))
-                    },
-                ) {
-                    Text("Save Vehicle Profile")
-                }
-                Spacer(Modifier.height(8.dp))
-                val obdConnState by viewModel.obdConnectionState.collectAsStateWithLifecycle()
-                val discoveredDevices by viewModel.discoveredObdDevices.collectAsStateWithLifecycle()
-                val obdTel by viewModel.liveObdTelemetry.collectAsStateWithLifecycle()
-                val obdCaps by viewModel.obdCapabilities.collectAsStateWithLifecycle()
-                val obdMsg by viewModel.obdStatusMessage.collectAsStateWithLifecycle()
-                var showCapabilityDialog by remember { mutableStateOf(false) }
-
-                Text(
-                    text = "OBD State: ${obdConnState.name} • $obdMsg",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.height(6.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedButton(onClick = { viewModel.startObdDiscovery(bluetoothPermissionGranted) }) {
-                        Text("Scan Classic + BLE")
+                    Button(
+                        onClick = { viewModel.saveVehicleProfile(vehicle.copy(manufacturer = manufacturer, model = model)) },
+                    ) {
+                        Text("Save Vehicle Profile")
                     }
-                    OutlinedButton(onClick = { viewModel.disconnectObd() }) {
-                        Text("Disconnect")
+                    OutlinedButton(onClick = onOpenObd) {
+                        Text("Open OBD-II & ECU Gauges")
                     }
-                }
-                if (discoveredDevices.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    discoveredDevices.forEach { dev ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = buildString {
-                                        append(dev.name)
-                                        if (dev.isHhobdHint) append(" [HHOBD Hint]")
-                                    },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                                Text(
-                                    text = "${dev.address} • ${dev.transportHint.name}${if (dev.rssiDbm != null) " • ${dev.rssiDbm} dBm" else ""}${if (dev.isPaired) " • Paired" else ""}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            OutlinedButton(onClick = { viewModel.connectObd(dev.address, bluetoothPermissionGranted) }) {
-                                Text("Connect")
-                            }
-                        }
-                    }
-                }
-                if (obdTel.lastUpdatedMillis != null) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = "RPM: ${obdTel.engineRpm ?: "--"} • Speed: ${obdTel.vehicleSpeedKmh ?: "--"} km/h • Coolant: ${obdTel.coolantTempC ?: "--"}°C • Load: ${obdTel.engineLoadPct?.toInt() ?: "--"}% • Volt: ${obdTel.controlModuleVoltageV?.let { "%.1fV".format(it) } ?: "--"}",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        text = obdTel.transmissionStatusNote,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                OutlinedButton(onClick = { showCapabilityDialog = true }) {
-                    Text("View ECU Capabilities & Engine/CVT Data")
-                }
-                if (showCapabilityDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showCapabilityDialog = false },
-                        title = { Text("ECU Capability Registry & CVT") },
-                        text = {
-                            Column(
-                                modifier = Modifier.verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Text("Transmission DTCs: ${obdTel.transmissionDtcCodes.ifEmpty { listOf("None") }.joinToString(", ")}")
-                                obdTel.observedRpmSpeedRatio?.let { ratio ->
-                                    Text("Observed RPM/Speed Ratio: ${"%.1f".format(ratio)} rpm per km/h")
-                                }
-                                Spacer(Modifier.height(4.dp))
-                                obdCaps.forEach { cap ->
-                                    Text(
-                                        text = "${cap.pidHex} ${cap.name}: ${cap.status.name}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                }
-                            }
-                        },
-                        confirmButton = {
-                            TextButton(onClick = { showCapabilityDialog = false }) { Text("Close") }
-                        },
-                    )
                 }
             }
 
-            // Emergency Contact
-            CockpitPanel {
-                Text("Emergency Contact", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
+            // 7. Navigation, Voice & Emergency Contact
+            SettingsCard {
+                SectionTitle("Navigation & Voice")
+                SettingSwitch("Avoid Tolls (e.g. Nairobi Expressway)", settings.avoidTolls, viewModel::setAvoidTolls)
+                SettingSwitch("Traffic Reroute Alerts", settings.trafficAlertsEnabled, viewModel::setTrafficAlerts)
+                SettingSwitch("Navigation Voice Prompts", settings.navVoiceGuidanceEnabled, viewModel::setNavVoice)
+                Spacer(Modifier.height(6.dp))
+                Text("AI Voice: ${settings.aiVoiceName}", color = KoPilotClusterTokens.PrimaryText)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("marin", "alloy", "ash", "coral", "echo", "sage", "shimmer", "verse").forEach { v ->
+                        FilterChip(
+                            selected = settings.aiVoiceName == v,
+                            onClick = { viewModel.setAiVoiceName(v) },
+                            label = { Text(v) },
+                        )
+                    }
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MicMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = settings.micMode == mode,
+                            onClick = { viewModel.setMicMode(mode) },
+                            label = { Text(mode.name.replace('_', ' ')) },
+                        )
+                    }
+                    ResponseLength.entries.forEach { len ->
+                        FilterChip(
+                            selected = settings.responseLength == len,
+                            onClick = { viewModel.setResponseLength(len) },
+                            label = { Text(len.name) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(onClick = viewModel::testVoiceSound) {
+                    Text("Test Voice & Chime Sound")
+                }
+            }
+
+            SettingsCard {
+                SectionTitle("Emergency Contact")
+                Spacer(Modifier.height(6.dp))
                 OutlinedTextField(
                     value = emergencyName,
                     onValueChange = { emergencyName = it },
@@ -540,12 +427,62 @@ fun SettingsScreen(
                 }
             }
 
-            // Privacy & Data
-            CockpitPanel {
-                Text("Privacy & Kenya Data Protection", style = MaterialTheme.typography.titleMedium)
+            // 8. Optional Cloud Integrations & Data
+            SettingsCard {
+                SectionTitle(
+                    "Optional Cloud APIs & Data",
+                    "KoPilot offline AI, road signs, plate watchlist, and OBD-II work without internet.",
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = backendUrlInput,
+                    onValueChange = { backendUrlInput = it },
+                    label = { Text("Backend Server URL (Optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = openAiKeyInput,
+                    onValueChange = { openAiKeyInput = it },
+                    label = { Text("OpenAI API Key (Optional)") },
+                    singleLine = true,
+                    visualTransformation = if (showKeys) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showKeys = !showKeys }) {
+                            Icon(if (showKeys) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = "Toggle key visibility")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = googleKeyInput,
+                    onValueChange = { googleKeyInput = it },
+                    label = { Text("Google Maps / Places Key (Optional)") },
+                    singleLine = true,
+                    visualTransformation = if (showKeys) VisualTransformation.None else PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(onClick = {
+                        viewModel.saveApiConfiguration(backendUrlInput, openAiKeyInput, googleKeyInput)
+                        viewModel.testEnteredApiKeys(openAiKeyInput, googleKeyInput)
+                    }) {
+                        Text("Save & Connect")
+                    }
+                    OutlinedButton(onClick = { viewModel.testBackendConnection(backendUrlInput) }) {
+                        Text("Test Server")
+                    }
+                    OutlinedButton(onClick = viewModel::clearApiCredentials) {
+                        Text("Clear Keys")
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
                 SettingSwitch("Save Local Trip History", settings.tripHistoryEnabled, viewModel::setTripHistory)
                 SettingSwitch("Diagnostic Telemetry Opt-In", settings.telemetryOptIn, viewModel::setTelemetryOptIn)
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = { viewModel.exportTripsJson(onExportJson) }) {
                         Text("Export Trip Data")
@@ -563,13 +500,51 @@ fun SettingsScreen(
 }
 
 @Composable
+private fun SettingsCard(content: @Composable () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = KoPilotClusterTokens.CardSurface,
+        border = BorderStroke(1.dp, KoPilotClusterTokens.Border),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(title: String, subtitle: String? = null) {
+    Text(
+        text = title,
+        color = KoPilotClusterTokens.PrimaryText,
+        fontWeight = FontWeight.Bold,
+        fontSize = 15.sp,
+    )
+    if (!subtitle.isNullOrBlank()) {
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = subtitle,
+            color = KoPilotClusterTokens.SecondaryText,
+            fontSize = 12.sp,
+        )
+    }
+    Spacer(Modifier.height(6.dp))
+}
+
+@Composable
 private fun SettingSwitch(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = KoPilotClusterTokens.PrimaryText,
+        )
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }

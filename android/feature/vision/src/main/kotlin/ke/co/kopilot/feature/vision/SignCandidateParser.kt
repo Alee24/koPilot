@@ -16,6 +16,12 @@ object SignCandidateParser {
         val rawUpper = rawText.uppercase().replace(Regex("\\s+"), " ").trim()
         if (rawUpper.isEmpty()) return null
 
+        // Filter out roadside billboards / commercial advertisements
+        val wordCount = rawUpper.split(" ").count { it.isNotBlank() }
+        if (wordCount > 5 || rawUpper.length > 36 || BILLBOARD_KEYWORDS.any { rawUpper.contains(it) }) {
+            return null
+        }
+
         // Never treat Kenyan vehicle registration plates (e.g. "KDM", "KDM 632A", "KCA456B", "GK A123") as road signs
         val compact = rawUpper.replace(" ", "")
         if (Regex("^K[A-Z]{2}(\\d{3}[A-Z]?)?$").matches(compact) ||
@@ -40,9 +46,12 @@ object SignCandidateParser {
 
         // Check numeric speed limits FIRST using lookarounds so "50KM", "50KPH", "50" all match
         val speedCategory = when {
+            Regex("(?<!\\d)20(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_20
             Regex("(?<!\\d)30(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_30
+            Regex("(?<!\\d)40(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_40
             Regex("(?<!\\d)50(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_50
             Regex("(?<!\\d)60(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_60
+            Regex("(?<!\\d)70(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_70
             Regex("(?<!\\d)80(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_80
             Regex("(?<!\\d)100(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_100
             Regex("(?<!\\d)110(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_110
@@ -92,7 +101,27 @@ object SignCandidateParser {
                 TrafficSignCategory.BLACKSPOT to 0.85f
             rawUpper.contains("POLICE") || rawUpper.contains("CHECKPOINT") ->
                 TrafficSignCategory.POLICE_CHECKPOINT to 0.82f
-            hasSignBorderColor && rawUpper.length in 3..26 ->
+            rawUpper.contains("KEEP LEFT") ->
+                TrafficSignCategory.KEEP_LEFT to 0.84f
+            rawUpper.contains("ONE WAY") ->
+                TrafficSignCategory.ONE_WAY to 0.84f
+            rawUpper.contains("NO U-TURN") || rawUpper.contains("NO U TURN") ->
+                TrafficSignCategory.NO_U_TURN to 0.84f
+            rawUpper.contains("NO PARKING") ->
+                TrafficSignCategory.NO_PARKING to 0.84f
+            rawUpper.contains("NARROW BRIDGE") ->
+                TrafficSignCategory.NARROW_BRIDGE to 0.82f
+            rawUpper.contains("STEEP") || rawUpper.contains("GRADIENT") ->
+                TrafficSignCategory.STEEP_HILL to 0.80f
+            rawUpper.contains("SLIPPERY") ->
+                TrafficSignCategory.SLIPPERY_ROAD to 0.80f
+            rawUpper.contains("CATTLE") || rawUpper.contains("WILDLIFE") || rawUpper.contains("ANIMAL") ->
+                TrafficSignCategory.ANIMAL_CROSSING to 0.80f
+            rawUpper.contains("TRAFFIC SIGNAL") || rawUpper.contains("TRAFFIC LIGHT") ->
+                TrafficSignCategory.TRAFFIC_SIGNALS_AHEAD to 0.82f
+            rawUpper.contains("END OF") && rawUpper.contains("LIMIT") ->
+                TrafficSignCategory.END_SPEED_LIMIT to 0.80f
+            hasSignBorderColor && rawUpper.length in 3..24 ->
                 TrafficSignCategory.GENERAL_WARNING to 0.55f
             else -> null
         }
@@ -171,4 +200,10 @@ object SignCandidateParser {
         }
         return sampled > 0 && (signColorHits.toFloat() / sampled.toFloat()) >= 0.03f
     }
+
+    private val BILLBOARD_KEYWORDS = listOf(
+        "MPESA", "M-PESA", "SAFARICOM", "AIRTEL", "EQUITY", "KCB", "CO-OP", "ABSA",
+        "HOTEL", "OFFER", "WWW.", ".CO.KE", ".COM", "LOAN", "CHURCH", "SUPERMARKET",
+        "APARTMENT", "FOR SALE", "TO LET", "CALL ", "TEL:", "BUY ",
+    )
 }

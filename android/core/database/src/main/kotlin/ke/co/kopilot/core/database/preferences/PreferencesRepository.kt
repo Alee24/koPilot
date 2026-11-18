@@ -55,6 +55,8 @@ data class KoPilotSettings(
     val alertTrafficLightsEnabled: Boolean = true,
     val alertSpeedLimitEnabled: Boolean = true,
     val alertWeatherEnabled: Boolean = true,
+    val alertNumberPlatesEnabled: Boolean = true,
+    val watchedPlatesCsv: String = "",
     // Sensors (activated only when Start Driving is pressed)
     val sensorCameraEnabled: Boolean = true,
     val sensorGpsEnabled: Boolean = true,
@@ -66,7 +68,10 @@ data class KoPilotSettings(
     val dataRetentionDays: Int = 90,
     val diagnosticLoggingEnabled: Boolean = false,
     val telemetryOptIn: Boolean = false,
-)
+) {
+    fun watchedPlatesList(): List<String> =
+        watchedPlatesCsv.split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }
+}
 
 @Singleton
 class PreferencesRepository @Inject constructor(
@@ -107,6 +112,8 @@ class PreferencesRepository @Inject constructor(
             alertTrafficLightsEnabled = prefs[KEY_ALERT_TRAFFIC_LIGHTS] ?: true,
             alertSpeedLimitEnabled = prefs[KEY_ALERT_SPEED_LIMIT] ?: true,
             alertWeatherEnabled = prefs[KEY_ALERT_WEATHER] ?: true,
+            alertNumberPlatesEnabled = prefs[KEY_ALERT_NUMBER_PLATES] ?: true,
+            watchedPlatesCsv = prefs[KEY_WATCHED_PLATES] ?: "",
             sensorCameraEnabled = prefs[KEY_SENSOR_CAMERA] ?: true,
             sensorGpsEnabled = prefs[KEY_SENSOR_GPS] ?: true,
             sensorMotionEnabled = prefs[KEY_SENSOR_MOTION] ?: true,
@@ -163,6 +170,19 @@ class PreferencesRepository @Inject constructor(
         it[KEY_SENSOR_OBD] = enabled
     }
     suspend fun setTripHistoryEnabled(enabled: Boolean) = edit { it[KEY_TRIP_HISTORY] = enabled }
+    suspend fun setAlertNumberPlatesEnabled(enabled: Boolean) = edit { it[KEY_ALERT_NUMBER_PLATES] = enabled }
+    suspend fun addWatchedPlate(rawPlate: String) = edit { prefs ->
+        val clean = rawPlate.uppercase().replace(Regex("[^A-Z0-9\\s]"), "").replace(Regex("\\s+"), " ").trim()
+        if (clean.length < 4) return@edit
+        val existing = (prefs[KEY_WATCHED_PLATES] ?: "").split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toMutableSet()
+        existing.add(clean)
+        prefs[KEY_WATCHED_PLATES] = existing.joinToString(",")
+    }
+    suspend fun removeWatchedPlate(rawPlate: String) = edit { prefs ->
+        val target = rawPlate.trim().uppercase()
+        val updated = (prefs[KEY_WATCHED_PLATES] ?: "").split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() && it != target }
+        prefs[KEY_WATCHED_PLATES] = updated.joinToString(",")
+    }
     suspend fun setDataRetentionDays(days: Int) = edit { it[KEY_RETENTION_DAYS] = days.coerceIn(7, 365) }
     suspend fun setDiagnosticLoggingEnabled(enabled: Boolean) = edit { it[KEY_DIAGNOSTIC_LOGGING] = enabled }
     suspend fun setTelemetryOptIn(optIn: Boolean) = edit { it[KEY_TELEMETRY_OPT_IN] = optIn }
@@ -203,6 +223,8 @@ class PreferencesRepository @Inject constructor(
         val KEY_ALERT_TRAFFIC_LIGHTS = booleanPreferencesKey("alert_traffic_lights")
         val KEY_ALERT_SPEED_LIMIT = booleanPreferencesKey("alert_speed_limit")
         val KEY_ALERT_WEATHER = booleanPreferencesKey("alert_weather")
+        val KEY_ALERT_NUMBER_PLATES = booleanPreferencesKey("alert_number_plates")
+        val KEY_WATCHED_PLATES = stringPreferencesKey("watched_plates")
         val KEY_SENSOR_CAMERA = booleanPreferencesKey("sensor_camera")
         val KEY_SENSOR_GPS = booleanPreferencesKey("sensor_gps")
         val KEY_SENSOR_MOTION = booleanPreferencesKey("sensor_motion")

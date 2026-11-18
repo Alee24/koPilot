@@ -135,6 +135,7 @@ fun DashboardScreen(
     onOpenDrivingBehaviour: () -> Unit = {},
     onOpenObd: () -> Unit = {},
     onOpenTrips: () -> Unit = {},
+    onOpenNavigation: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -392,7 +393,7 @@ fun DashboardScreen(
                                 onToggleDrive = {
                                     if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
                                 },
-                                onOpenNavigate = { showDestinationDialog = true },
+                                onOpenNavigate = onOpenNavigation,
                                 onCallEmergency = { onCallEmergency(state.settings.emergencyContactPhone) },
                             )
                         }
@@ -439,7 +440,7 @@ fun DashboardScreen(
                             onToggleDrive = {
                                 if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
                             },
-                            onOpenNavigate = { showDestinationDialog = true },
+                            onOpenNavigate = onOpenNavigation,
                             onCallEmergency = { onCallEmergency(state.settings.emergencyContactPhone) },
                         )
                         VoiceAssistantBar(

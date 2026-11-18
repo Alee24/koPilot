@@ -24,9 +24,12 @@ data class GpsFix(
 }
 
 enum class TrafficSignCategory(val displayName: String, val speedLimitKmh: Int? = null) {
+    SPEED_LIMIT_20("20 km/h Speed Limit", 20),
     SPEED_LIMIT_30("30 km/h Speed Limit", 30),
+    SPEED_LIMIT_40("40 km/h Speed Limit", 40),
     SPEED_LIMIT_50("50 km/h Speed Limit", 50),
     SPEED_LIMIT_60("60 km/h Speed Limit", 60),
+    SPEED_LIMIT_70("70 km/h Speed Limit", 70),
     SPEED_LIMIT_80("80 km/h Speed Limit", 80),
     SPEED_LIMIT_100("100 km/h Speed Limit", 100),
     SPEED_LIMIT_110("110 km/h Speed Limit", 110),
@@ -44,6 +47,16 @@ enum class TrafficSignCategory(val displayName: String, val speedLimitKmh: Int? 
     HOSPITAL_ZONE("Hospital Zone"),
     BLACKSPOT("Accident Blackspot"),
     POLICE_CHECKPOINT("Police Checkpoint Ahead"),
+    KEEP_LEFT("Keep Left"),
+    ONE_WAY("One Way Street"),
+    NO_U_TURN("No U-Turn"),
+    NO_PARKING("No Parking"),
+    NARROW_BRIDGE("Narrow Bridge Ahead"),
+    STEEP_HILL("Steep Hill Ahead"),
+    SLIPPERY_ROAD("Slippery Road Ahead"),
+    ANIMAL_CROSSING("Animal Crossing Ahead"),
+    TRAFFIC_SIGNALS_AHEAD("Traffic Signals Ahead"),
+    END_SPEED_LIMIT("End of Speed Restriction"),
     GENERAL_WARNING("Road Sign"),
 }
 

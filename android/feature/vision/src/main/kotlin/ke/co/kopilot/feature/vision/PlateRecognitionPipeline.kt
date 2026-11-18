@@ -89,6 +89,13 @@ object KenyanPlateValidator {
         val tail = if (suffix.length >= 2 && suffix.last().isLetter()) suffix.last().toString() else ""
         return "$prefix ***$tail"
     }
+
+    fun matchesWatchedPlate(normalizedPlate: String, watchedPlates: List<String>): String? {
+        val compactTarget = normalizedPlate.uppercase().replace(" ", "")
+        return watchedPlates.firstOrNull { watched ->
+            watched.uppercase().replace(" ", "") == compactTarget
+        }
+    }
 }
 
 /**
@@ -167,7 +174,9 @@ class PlateRecognitionPipeline @Inject constructor(
         timestampMillis: Long,
     ): PlateObservation? {
         val box = block.boundingBox ?: return null
-        val (normalized, formatName) = KenyanPlateValidator.validateFormat(block.text) ?: return null
+        val (normalized, formatName) = KenyanPlateValidator.validateFormat(block.text)
+            ?: block.lines.firstNotNullOfOrNull { KenyanPlateValidator.validateFormat(it.text) }
+            ?: return null
 
         val quality = assessCropQuality(bitmap, box)
         if (!quality.isAcceptable) return null

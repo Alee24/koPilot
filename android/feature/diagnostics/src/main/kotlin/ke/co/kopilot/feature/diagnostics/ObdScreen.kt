@@ -7,7 +7,13 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -213,61 +219,38 @@ fun ObdScreen(
                 }
             }
 
-            // ECU Circular Gauge Dashboard (RPM, Speed, Coolant, Load, Throttle, Voltage)
+            // ECU Live Pointer Gauge Cluster (auto-loads all supported PIDs from ECU Capability Registry)
             ObdPanel {
-                Text("ECU Live Gauge Cluster", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                val supportedPids = capabilities.filter { it.status == PidSupportStatus.SUPPORTED }.map { it.pidHex }.toSet()
+                val gaugeSpecs = buildGaugeSpecsForSupportedPids(supportedPids, telemetry)
+                Text(
+                    text = if (supportedPids.isNotEmpty()) {
+                        "ECU Live Pointer Gauges (${supportedPids.size} Supported PIDs Active)"
+                    } else {
+                        "ECU Live Pointer Gauges (Standby)"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
                 Spacer(Modifier.height(10.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    EcuDialGauge(
-                        title = "ENGINE RPM",
-                        valueText = telemetry.engineRpm?.toString() ?: "--",
-                        unit = "rpm",
-                        fraction = ((telemetry.engineRpm ?: 0) / 8000f).coerceIn(0f, 1f),
-                        accentColor = if ((telemetry.engineRpm ?: 0) >= 6000) Color(0xFFFF5252) else Color(0xFF18E2B8),
-                    )
-                    EcuDialGauge(
-                        title = "ECU SPEED",
-                        valueText = telemetry.vehicleSpeedKmh?.toString() ?: "--",
-                        unit = "km/h",
-                        fraction = ((telemetry.vehicleSpeedKmh ?: 0) / 220f).coerceIn(0f, 1f),
-                        accentColor = Color(0xFF2B7FFF),
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    val coolant = telemetry.coolantTempC
-                    EcuDialGauge(
-                        title = "COOLANT TEMP",
-                        valueText = coolant?.let { "$it°" } ?: "--",
-                        unit = "°C",
-                        fraction = if (coolant != null) ((coolant - 20f) / 110f).coerceIn(0f, 1f) else 0f,
-                        accentColor = if ((coolant ?: 0) >= 105) Color(0xFFFF5252) else Color(0xFFFFB300),
-                    )
-                    EcuDialGauge(
-                        title = "ENGINE LOAD",
-                        valueText = telemetry.engineLoadPct?.let { "${it.toInt()}%" } ?: "--",
-                        unit = "0104",
-                        fraction = ((telemetry.engineLoadPct ?: 0f) / 100f).coerceIn(0f, 1f),
-                        accentColor = Color(0xFF18E2B8),
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    EcuDialGauge(
-                        title = "THROTTLE",
-                        valueText = telemetry.throttlePositionPct?.let { "${it.toInt()}%" } ?: "--",
-                        unit = "0111",
-                        fraction = ((telemetry.throttlePositionPct ?: 0f) / 100f).coerceIn(0f, 1f),
-                        accentColor = Color(0xFF2B7FFF),
-                    )
-                    val volt = telemetry.controlModuleVoltageV ?: telemetry.adapterVoltageV
-                    EcuDialGauge(
-                        title = "VOLTAGE",
-                        valueText = volt?.let { "%.1f".format(it) } ?: "--",
-                        unit = "V",
-                        fraction = if (volt != null) ((volt - 10f) / 6f).coerceIn(0f, 1f) else 0f,
-                        accentColor = if (volt != null && volt < 11.8f) Color(0xFFFF5252) else Color(0xFF18E2B8),
-                    )
+                gaugeSpecs.chunked(2).forEach { pair ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                    ) {
+                        pair.forEach { spec ->
+                            EcuDialGauge(
+                                title = spec.title,
+                                valueText = spec.valueText,
+                                unit = spec.unit,
+                                fraction = spec.fraction,
+                                accentColor = spec.accentColor,
+                            )
+                        }
+                        if (pair.size == 1) {
+                            Spacer(modifier = Modifier.size(124.dp))
+                        }
+                    }
                 }
             }
 
@@ -461,8 +444,13 @@ private fun EcuDialGauge(
     fraction: Float,
     accentColor: Color,
 ) {
+    val animatedFraction by animateFloatAsState(
+        targetValue = fraction.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 320),
+        label = "ecuNeedle",
+    )
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(modifier = Modifier.size(124.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(128.dp), contentAlignment = Alignment.Center) {
             Canvas(modifier = Modifier.fillMaxSize().padding(8.dp)) {
                 val startAngle = 150f
                 val sweepTotal = 240f
@@ -471,23 +459,144 @@ private fun EcuDialGauge(
                     startAngle = startAngle,
                     sweepAngle = sweepTotal,
                     useCenter = false,
-                    style = Stroke(width = 12.dp.toPx(), cap = StrokeCap.Round),
+                    style = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Round),
                 )
                 drawArc(
                     color = accentColor,
                     startAngle = startAngle,
-                    sweepAngle = sweepTotal * fraction.coerceIn(0f, 1f),
+                    sweepAngle = sweepTotal * animatedFraction,
                     useCenter = false,
-                    style = Stroke(width = 12.dp.toPx(), cap = StrokeCap.Round),
+                    style = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Round),
+                )
+                // Tick marks around the 240° sweep
+                val cx = size.width / 2f
+                val cy = size.height / 2f
+                val outerR = (size.minDimension / 2f) - 10.dp.toPx()
+                val innerR = outerR - 6.dp.toPx()
+                for (i in 0..8) {
+                    val deg = startAngle + (sweepTotal * i / 8f)
+                    val rad = (deg * PI / 180.0).toFloat()
+                    drawLine(
+                        color = Color(0xFF566B80),
+                        start = Offset(cx + innerR * cos(rad), cy + innerR * sin(rad)),
+                        end = Offset(cx + outerR * cos(rad), cy + outerR * sin(rad)),
+                        strokeWidth = 1.5.dp.toPx(),
+                    )
+                }
+                // Animated moving pointer needle
+                val needleDeg = startAngle + (sweepTotal * animatedFraction)
+                val needleRad = (needleDeg * PI / 180.0).toFloat()
+                val needleLen = (size.minDimension / 2f) - 12.dp.toPx()
+                drawLine(
+                    color = Color(0xFFFF5252),
+                    start = Offset(cx, cy),
+                    end = Offset(cx + needleLen * cos(needleRad), cy + needleLen * sin(needleRad)),
+                    strokeWidth = 3.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+                drawCircle(
+                    color = Color.White,
+                    radius = 5.dp.toPx(),
+                    center = Offset(cx, cy),
                 )
             }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(valueText, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
-                Text(unit, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(top = 34.dp),
+            ) {
+                Text(valueText, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                Text(unit, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        Text(title, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            text = title,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
+}
+
+private data class EcuGaugeSpec(
+    val title: String,
+    val valueText: String,
+    val unit: String,
+    val fraction: Float,
+    val accentColor: Color,
+)
+
+private fun buildGaugeSpecsForSupportedPids(
+    supportedPids: Set<String>,
+    telemetry: ObdLiveTelemetry,
+): List<EcuGaugeSpec> {
+    val active = supportedPids.ifEmpty { setOf("010C", "010D", "0105", "0104", "0111", "0142") }
+    val list = mutableListOf<EcuGaugeSpec>()
+    if ("010C" in active) {
+        val rpm = telemetry.engineRpm
+        list += EcuGaugeSpec("ENGINE RPM", rpm?.toString() ?: "--", "rpm", ((rpm ?: 0) / 8000f).coerceIn(0f, 1f), if ((rpm ?: 0) >= 6000) Color(0xFFFF5252) else Color(0xFF18E2B8))
+    }
+    if ("010D" in active) {
+        val spd = telemetry.vehicleSpeedKmh
+        list += EcuGaugeSpec("ECU SPEED", spd?.toString() ?: "--", "km/h", ((spd ?: 0) / 220f).coerceIn(0f, 1f), Color(0xFF2B7FFF))
+    }
+    if ("0105" in active) {
+        val cool = telemetry.coolantTempC
+        list += EcuGaugeSpec("COOLANT TEMP", cool?.let { "$it°" } ?: "--", "°C", if (cool != null) ((cool - 20f) / 110f).coerceIn(0f, 1f) else 0f, if ((cool ?: 0) >= 102) Color(0xFFFF5252) else Color(0xFFFFB300))
+    }
+    if ("0104" in active) {
+        val load = telemetry.engineLoadPct
+        list += EcuGaugeSpec("ENGINE LOAD", load?.let { "${it.toInt()}%" } ?: "--", "%", ((load ?: 0f) / 100f).coerceIn(0f, 1f), Color(0xFF18E2B8))
+    }
+    if ("0111" in active) {
+        val thr = telemetry.throttlePositionPct
+        list += EcuGaugeSpec("THROTTLE", thr?.let { "${it.toInt()}%" } ?: "--", "%", ((thr ?: 0f) / 100f).coerceIn(0f, 1f), Color(0xFF2B7FFF))
+    }
+    if ("0142" in active) {
+        val v = telemetry.controlModuleVoltageV ?: telemetry.adapterVoltageV
+        list += EcuGaugeSpec("VOLTAGE", v?.let { "%.1f".format(it) } ?: "--", "V", if (v != null) ((v - 10f) / 6f).coerceIn(0f, 1f) else 0f, if (v != null && v < 11.8f) Color(0xFFFF5252) else Color(0xFF18E2B8))
+    }
+    if ("010F" in active) {
+        val iat = telemetry.intakeAirTempC
+        list += EcuGaugeSpec("INTAKE AIR", iat?.let { "$it°" } ?: "--", "°C", if (iat != null) ((iat + 10f) / 90f).coerceIn(0f, 1f) else 0f, Color(0xFFFFB300))
+    }
+    if ("0106" in active) {
+        val stft = telemetry.shortTermFuelTrimPct
+        list += EcuGaugeSpec("STFT (B1)", stft?.let { "${"%.1f".format(it)}%" } ?: "--", "%", if (stft != null) ((stft + 25f) / 50f).coerceIn(0f, 1f) else 0.5f, Color(0xFF18E2B8))
+    }
+    if ("0107" in active) {
+        val ltft = telemetry.longTermFuelTrimPct
+        list += EcuGaugeSpec("LTFT (B1)", ltft?.let { "${"%.1f".format(it)}%" } ?: "--", "%", if (ltft != null) ((ltft + 25f) / 50f).coerceIn(0f, 1f) else 0.5f, Color(0xFF2B7FFF))
+    }
+    if ("010E" in active) {
+        val adv = telemetry.timingAdvanceDeg
+        list += EcuGaugeSpec("TIMING ADV", adv?.let { "${"%.1f".format(it)}°" } ?: "--", "deg", if (adv != null) ((adv + 20f) / 80f).coerceIn(0f, 1f) else 0f, Color(0xFF18E2B8))
+    }
+    if ("0110" in active) {
+        val maf = telemetry.mafGramsPerSec
+        list += EcuGaugeSpec("MAF AIRFLOW", maf?.let { "%.1f".format(it) } ?: "--", "g/s", ((maf ?: 0f) / 150f).coerceIn(0f, 1f), Color(0xFF2B7FFF))
+    }
+    if ("011F" in active) {
+        val rt = telemetry.runtimeSinceStartSec
+        list += EcuGaugeSpec("RUNTIME", rt?.let { "${it / 60}m" } ?: "--", "${rt?.rem(60) ?: 0}s", ((rt ?: 0) / 3600f).coerceIn(0f, 1f), Color(0xFF18E2B8))
+    }
+    if ("0103" in active) {
+        val fs = telemetry.fuelSystemStatus
+        val closed = fs?.contains("Closed", ignoreCase = true) == true
+        list += EcuGaugeSpec("FUEL SYS", if (fs != null) (if (closed) "CLOSED" else "OPEN") else "--", "0103", if (closed) 0.85f else 0.35f, if (closed) Color(0xFF18E2B8) else Color(0xFFFFB300))
+    }
+    if ("010B" in active) {
+        val map = telemetry.mapKpa
+        list += EcuGaugeSpec("MAP PRESS", map?.toString() ?: "--", "kPa", ((map ?: 0) / 255f).coerceIn(0f, 1f), Color(0xFF2B7FFF))
+    }
+    if ("0114" in active) {
+        val o2 = telemetry.o2SensorVoltageV
+        list += EcuGaugeSpec("O2 B1S1", o2?.let { "%.2f".format(it) } ?: "--", "V", ((o2 ?: 0f) / 1.2f).coerceIn(0f, 1f), Color(0xFF18E2B8))
+    }
+    if ("012F" in active) {
+        val fl = telemetry.fuelLevelPct
+        list += EcuGaugeSpec("FUEL LEVEL", fl?.let { "${it.toInt()}%" } ?: "--", "%", ((fl ?: 0f) / 100f).coerceIn(0f, 1f), if ((fl ?: 100f) < 15f) Color(0xFFFF5252) else Color(0xFF18E2B8))
+    }
+    return list
 }
 
 @Composable

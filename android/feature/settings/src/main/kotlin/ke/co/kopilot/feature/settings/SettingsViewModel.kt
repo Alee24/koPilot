@@ -103,6 +103,9 @@ class SettingsViewModel @Inject constructor(
     fun setAlertTrafficLightsEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertTrafficLightsEnabled(enabled) }
     fun setAlertSpeedLimitEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertSpeedLimitEnabled(enabled) }
     fun setAlertWeatherEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertWeatherEnabled(enabled) }
+    fun setAlertNumberPlatesEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertNumberPlatesEnabled(enabled) }
+    fun addWatchedPlate(plate: String) = viewModelScope.launch { prefsRepo.addWatchedPlate(plate) }
+    fun removeWatchedPlate(plate: String) = viewModelScope.launch { prefsRepo.removeWatchedPlate(plate) }
     fun setSensorCameraEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorCameraEnabled(enabled) }
     fun setSensorGpsEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorGpsEnabled(enabled) }
     fun setSensorMotionEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorMotionEnabled(enabled) }

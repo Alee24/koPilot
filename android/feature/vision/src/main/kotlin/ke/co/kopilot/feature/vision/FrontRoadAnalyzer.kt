@@ -83,13 +83,13 @@ object FrontRoadAnalyzer {
         var lumCount = 0
         var brakeRedHits = 0
         var brakeSampled = 0
-        var upperRedHits = 0
-        var upperAmberHits = 0
-        var upperGreenHits = 0
-        var upperSampled = 0
         val redGridCols = 40
         val redGridRows = 30
         val redGrid = Array(redGridRows) { BooleanArray(redGridCols) }
+        val tlRedGrid = Array(redGridRows) { BooleanArray(redGridCols) }
+        val tlAmberGrid = Array(redGridRows) { BooleanArray(redGridCols) }
+        val tlGreenGrid = Array(redGridRows) { BooleanArray(redGridCols) }
+        val darkGrid = Array(redGridRows) { BooleanArray(redGridCols) }
 
         var row = 0
         var y = 0
@@ -109,7 +109,11 @@ object FrontRoadAnalyzer {
 
                 val isBrightRed = r >= 170 && g <= 115 && b <= 115 && (r - g) >= 80 && (r - b) >= 80
                 val isBrightAmber = r >= 200 && g in 125..210 && b <= 75 && (r - b) >= 120
-                val isBrightGreen = g >= 185 && r <= 105 && b >= 90 && (g - r) >= 75
+                val isBrightGreen = g >= 185 && r <= 100 && (g - r) >= 85 && g >= b
+
+                if (row < redGridRows && col < redGridCols && lum < 95f) {
+                    darkGrid[row][col] = true
+                }
 
                 // Middle road corridor: potential vehicle brake lights ahead
                 if (normY in 0.30f..0.85f && normX in 0.12f..0.88f) {
@@ -121,12 +125,11 @@ object FrontRoadAnalyzer {
                     }
                     brakeSampled++
                 }
-                // Upper road corridor: potential traffic signals / streetlights
-                if (normY in 0.05f..0.44f && normX in 0.15f..0.85f) {
-                    if (isBrightRed) upperRedHits++
-                    if (isBrightAmber) upperAmberHits++
-                    if (isBrightGreen) upperGreenHits++
-                    upperSampled++
+                // Upper road corridor: potential traffic signals (clustered bulbs with dark housing)
+                if (normY in 0.04f..0.48f && normX in 0.10f..0.90f && row < redGridRows && col < redGridCols) {
+                    if (isBrightRed) tlRedGrid[row][col] = true
+                    if (isBrightAmber) tlAmberGrid[row][col] = true
+                    if (isBrightGreen) tlGreenGrid[row][col] = true
                 }
                 col++
                 x += stepX
@@ -136,17 +139,17 @@ object FrontRoadAnalyzer {
         }
 
         val brakeBoxes = clusterRedSpots(redGrid, redGridRows, redGridCols)
+        val hasRedTl = hasTrafficLightBulbCluster(tlRedGrid, darkGrid, redGridRows, redGridCols)
+        val hasAmberTl = hasTrafficLightBulbCluster(tlAmberGrid, darkGrid, redGridRows, redGridCols)
+        val hasGreenTl = hasTrafficLightBulbCluster(tlGreenGrid, darkGrid, redGridRows, redGridCols)
 
         val avgLum = if (lumCount > 0) lumSum / lumCount else 128f
         val brakeRatio = if (brakeSampled > 0) brakeRedHits.toFloat() / brakeSampled else 0f
-        val upperRedRatio = if (upperSampled > 0) upperRedHits.toFloat() / upperSampled else 0f
-        val upperAmberRatio = if (upperSampled > 0) upperAmberHits.toFloat() / upperSampled else 0f
-        val upperGreenRatio = if (upperSampled > 0) upperGreenHits.toFloat() / upperSampled else 0f
 
         val tlSignal = when {
-            upperRedRatio >= 0.010f && upperRedRatio >= upperAmberRatio && upperRedRatio > upperGreenRatio -> TrafficLightSignal.RED
-            upperAmberRatio >= 0.012f && upperAmberRatio > upperRedRatio && upperAmberRatio > upperGreenRatio -> TrafficLightSignal.AMBER
-            upperGreenRatio >= 0.012f && upperGreenRatio > upperRedRatio && upperGreenRatio > upperAmberRatio -> TrafficLightSignal.GREEN
+            hasRedTl && !hasGreenTl -> TrafficLightSignal.RED
+            hasAmberTl && !hasRedTl -> TrafficLightSignal.AMBER
+            hasGreenTl && !hasRedTl -> TrafficLightSignal.GREEN
             else -> TrafficLightSignal.NONE
         }
 
@@ -208,6 +211,57 @@ object FrontRoadAnalyzer {
             }
         }
         return spots.take(6)
+    }
+
+    private fun hasTrafficLightBulbCluster(
+        colorGrid: Array<BooleanArray>,
+        darkGrid: Array<BooleanArray>,
+        rows: Int,
+        cols: Int,
+    ): Boolean {
+        val visited = Array(rows) { BooleanArray(cols) }
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                if (!colorGrid[r][c] || visited[r][c]) continue
+                var minR = r
+                var maxR = r
+                var minC = c
+                var maxC = c
+                var count = 0
+                val queue = ArrayDeque<Pair<Int, Int>>()
+                queue.addLast(r to c)
+                visited[r][c] = true
+                while (queue.isNotEmpty()) {
+                    val (cr, cc) = queue.removeFirst()
+                    count++
+                    minR = minOf(minR, cr)
+                    maxR = maxOf(maxR, cr)
+                    minC = minOf(minC, cc)
+                    maxC = maxOf(maxC, cc)
+                    for (dr in -1..1) {
+                        for (dc in -1..1) {
+                            val nr = cr + dr
+                            val nc = cc + dc
+                            if (nr in 0 until rows && nc in 0 until cols && colorGrid[nr][nc] && !visited[nr][nc]) {
+                                visited[nr][nc] = true
+                                queue.addLast(nr to nc)
+                            }
+                        }
+                    }
+                }
+                // Compact traffic-light bulb cluster (2..14 cells) surrounded by dark traffic-light housing
+                if (count in 2..14 && (maxR - minR) <= 4 && (maxC - minC) <= 4) {
+                    var darkNeighbors = 0
+                    for (nr in (minR - 2).coerceAtLeast(0)..(maxR + 2).coerceAtMost(rows - 1)) {
+                        for (nc in (minC - 2).coerceAtLeast(0)..(maxC + 2).coerceAtMost(cols - 1)) {
+                            if (darkGrid[nr][nc]) darkNeighbors++
+                        }
+                    }
+                    if (darkNeighbors >= 2) return true
+                }
+            }
+        }
+        return false
     }
 
     const val DARKNESS_LUMINANCE_THRESHOLD = 48f
