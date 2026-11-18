@@ -54,7 +54,9 @@ object DatabaseModule {
             context,
             KoPilotDatabase::class.java,
             "kopilot.db",
-        ).addMigrations(MIGRATION_1_2).build()
+        ).addMigrations(MIGRATION_1_2)
+            .fallbackToDestructiveMigration(dropAllTables = true)
+            .build()
 
     @Provides
     fun provideTripDao(db: KoPilotDatabase): TripDao = db.tripDao()

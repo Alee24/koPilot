@@ -47,14 +47,14 @@ class VehicleTelemetryRepository @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.io)
     private val prefs = context.getSharedPreferences("kopilot_vehicle_capability_cache", Context.MODE_PRIVATE)
 
-    private val _snapshot = MutableStateFlow(buildSnapshot(System.currentTimeMillis(), DEFAULT_VEHICLE_NAME))
-    val snapshot: StateFlow<VehicleSnapshot> = _snapshot.asStateFlow()
-
     @Volatile
     private var cachedVehicleIdentity: String = DEFAULT_VEHICLE_NAME
 
     @Volatile
     private var cachedSupportedPids: Set<String> = loadCachedPids()
+
+    private val _snapshot = MutableStateFlow(buildSnapshot(System.currentTimeMillis(), DEFAULT_VEHICLE_NAME))
+    val snapshot: StateFlow<VehicleSnapshot> = _snapshot.asStateFlow()
 
     private var lastHistoryWriteMs = 0L
 
