@@ -1465,52 +1465,59 @@ private fun FullBleedArHudLanding(
             onToggleFullscreen = onToggleFullscreenCamera,
         )
 
-        // 2. Dark Protective Gradient Vignette + AR Lane Vector Projection
+        // 2. Clearer Protective Vignette + Road-Adaptive AR Lane Vector Projection
+        val curveOffsetDp = (motion.yawRateRadPerSec * 45f + motion.lateralAccelMps2 * 8f).coerceIn(-65f, 65f)
+        val horizonShiftDp = (motion.pitchDegrees * 1.2f).coerceIn(-28f, 28f)
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawRect(
                 brush = Brush.verticalGradient(
-                    0.0f to Color(0xE6071019),
-                    0.45f to Color(0x66071019),
-                    1.0f to Color(0xF2071019),
+                    0.0f to Color(0x8C071019),
+                    0.22f to Color(0x00071019),
+                    0.56f to Color(0x1A071019),
+                    1.0f to Color(0xEB071019),
                 ),
             )
-            val horizonY = size.height * 0.42f
-            val bottomY = size.height * 0.80f
+            val horizonY = (size.height * 0.40f + horizonShiftDp.dp.toPx()).coerceIn(size.height * 0.25f, size.height * 0.55f)
+            val bottomY = size.height * 0.84f
             val cx = size.width * 0.5f
+            val targetX = cx + curveOffsetDp.dp.toPx()
 
             // Horizon reticle line
             drawLine(
-                color = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.35f),
+                color = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.32f),
                 start = Offset(20.dp.toPx(), horizonY),
                 end = Offset(size.width - 20.dp.toPx(), horizonY),
                 strokeWidth = 1.5.dp.toPx(),
                 pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 10f)),
             )
 
-            // Dual AR lane projection lines
+            // Dual AR lane projection curves adapting to road turn / lateral motion
             val dashEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(18f, 14f))
-            drawLine(
-                color = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.75f),
-                start = Offset(cx - 8.dp.toPx(), horizonY),
-                end = Offset(cx - size.width * 0.24f, bottomY),
-                strokeWidth = 2.5.dp.toPx(),
-                pathEffect = dashEffect,
+            val leftPath = androidx.compose.ui.graphics.Path().apply {
+                moveTo(cx - size.width * 0.26f, bottomY)
+                quadraticTo(cx - size.width * 0.12f, (bottomY + horizonY) * 0.52f, targetX - 10.dp.toPx(), horizonY)
+            }
+            val rightPath = androidx.compose.ui.graphics.Path().apply {
+                moveTo(cx + size.width * 0.26f, bottomY)
+                quadraticTo(cx + size.width * 0.12f, (bottomY + horizonY) * 0.52f, targetX + 10.dp.toPx(), horizonY)
+            }
+            drawPath(
+                path = leftPath,
+                color = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.8f),
+                style = Stroke(width = 2.5.dp.toPx(), pathEffect = dashEffect, cap = StrokeCap.Round),
             )
-            drawLine(
-                color = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.75f),
-                start = Offset(cx + 8.dp.toPx(), horizonY),
-                end = Offset(cx + size.width * 0.24f, bottomY),
-                strokeWidth = 2.5.dp.toPx(),
-                pathEffect = dashEffect,
+            drawPath(
+                path = rightPath,
+                color = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.8f),
+                style = Stroke(width = 2.5.dp.toPx(), pathEffect = dashEffect, cap = StrokeCap.Round),
             )
         }
 
-        // 3. Floating HUD Foreground Layers
+        // 3. Floating HUD Foreground Layers (Camera unobstructed in upper/mid area; Speedometer lowered above Safety Index)
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
         ) {
             // Top Floating Holographic Telemetry Pills
             Row(
@@ -1578,6 +1585,8 @@ private fun FullBleedArHudLanding(
                     }
                 }
             }
+
+            Spacer(Modifier.height(8.dp))
 
             // Speed Limit Sign + Road Surface Glass Row
             Row(
@@ -1660,15 +1669,18 @@ private fun FullBleedArHudLanding(
                 }
             }
 
-            // Center Floating Holographic Reticle Speedometer
+            // Open unobstructed camera viewport above the lowered speedometer
+            Spacer(modifier = Modifier.weight(1f))
+
+            // Lowered Floating Holographic Reticle Speedometer (positioned directly above Safety Index)
             Surface(
-                color = Color(0x70071019),
-                shape = RoundedCornerShape(24.dp),
-                border = BorderStroke(1.dp, KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.25f)),
+                color = Color(0x78071019),
+                shape = RoundedCornerShape(22.dp),
+                border = BorderStroke(1.dp, KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.28f)),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(
-                    modifier = Modifier.padding(vertical = 14.dp, horizontal = 12.dp),
+                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Row(
@@ -1743,6 +1755,8 @@ private fun FullBleedArHudLanding(
                     }
                 }
             }
+
+            Spacer(Modifier.height(8.dp))
 
             // Bottom Floating Telemetry Island
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

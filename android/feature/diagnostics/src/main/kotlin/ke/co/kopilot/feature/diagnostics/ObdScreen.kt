@@ -611,8 +611,11 @@ private fun buildGaugeSpecsForSupportedPids(
 private fun ObdPanel(content: @Composable () -> Unit) {
     Surface(
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp,
+        color = ke.co.kopilot.core.designsystem.theme.KoPilotClusterTokens.GlassCardSurface,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            ke.co.kopilot.core.designsystem.theme.KoPilotClusterTokens.SubtleGlassBorder,
+        ),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {

@@ -367,9 +367,9 @@ fun DrivingIntelligenceScreen(
 private fun IntelCard(content: @Composable () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = KoPilotClusterTokens.CardSurface,
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, KoPilotClusterTokens.Border),
+        color = KoPilotClusterTokens.GlassCardSurface,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             content()
@@ -398,9 +398,9 @@ private fun IntelligenceScoreCard(
 
     Surface(
         modifier = modifier,
-        color = KoPilotClusterTokens.CardSurface,
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, KoPilotClusterTokens.Border),
+        color = KoPilotClusterTokens.GlassCardSurface,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
     ) {
         Column(
             modifier = Modifier.padding(12.dp),

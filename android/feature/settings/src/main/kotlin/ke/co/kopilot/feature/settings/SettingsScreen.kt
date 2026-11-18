@@ -520,8 +520,8 @@ fun SettingsScreen(
 private fun SettingsCard(content: @Composable () -> Unit) {
     Surface(
         shape = RoundedCornerShape(14.dp),
-        color = KoPilotClusterTokens.CardSurface,
-        border = BorderStroke(1.dp, KoPilotClusterTokens.Border),
+        color = KoPilotClusterTokens.GlassCardSurface,
+        border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {

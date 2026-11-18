@@ -1396,13 +1396,13 @@ private fun StudioTopBar(
 
 @Composable
 private fun StudioCard(
-    borderColor: Color = KoPilotClusterTokens.Border,
+    borderColor: Color = KoPilotClusterTokens.SubtleGlassBorder,
     content: @Composable () -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = KoPilotClusterTokens.CardSurface,
-        shape = RoundedCornerShape(16.dp),
+        color = KoPilotClusterTokens.GlassCardSurface,
+        shape = RoundedCornerShape(14.dp),
         border = BorderStroke(1.dp, borderColor),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -1637,7 +1637,7 @@ private fun WaveformBars(
             val x = index * slotWidth + (slotWidth - barWidth) / 2f
             drawRoundRect(
                 color = if (active) {
-                    KoPilotClusterTokens.PrimaryAccent
+                    if (index % 3 == 1) KoPilotClusterTokens.SecondaryAccent else KoPilotClusterTokens.PrimaryAccent
                 } else {
                     KoPilotClusterTokens.Border
                 },
