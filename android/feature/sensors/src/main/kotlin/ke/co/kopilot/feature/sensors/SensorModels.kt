@@ -92,6 +92,29 @@ enum class RoadVibrationLevel {
     ROUGH_ROAD_EXPERIMENTAL,
 }
 
+data class RoadVibrationSample(
+    val timestampMillis: Long,
+    val rmsMps2: Float,
+    val smoothnessScore: Int,
+    val level: RoadVibrationLevel,
+)
+
+data class DrivingBehaviourStats(
+    val roadSmoothnessScore: Int = 100,
+    val averageRoadScore: Int = 100,
+    val smoothPct: Int = 100,
+    val moderatePct: Int = 0,
+    val roughPct: Int = 0,
+    val potholeBumpCount: Int = 0,
+    val brakingCount: Int = 0,
+    val harshBrakingCount: Int = 0,
+    val accelerationCount: Int = 0,
+    val hardAccelerationCount: Int = 0,
+    val sharpCornerCount: Int = 0,
+    val driverBehaviourScore: Int = 100,
+    val recentSamples: List<RoadVibrationSample> = emptyList(),
+)
+
 data class DrivingMotionAnalysis(
     val longitudinalState: LongitudinalMotionState = LongitudinalMotionState.STEADY,
     val lateralState: LateralMotionState = LateralMotionState.STRAIGHT,
@@ -105,5 +128,6 @@ data class DrivingMotionAnalysis(
     val pitchDegrees: Float = 0f,
     val rollDegrees: Float = 0f,
     val azimuthDegrees: Float = 0f,
+    val behaviourStats: DrivingBehaviourStats = DrivingBehaviourStats(),
     val updatedAtMillis: Long = 0L,
 )

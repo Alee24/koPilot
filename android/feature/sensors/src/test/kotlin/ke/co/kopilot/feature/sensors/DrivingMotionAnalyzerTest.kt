@@ -89,4 +89,45 @@ class DrivingMotionAnalyzerTest {
         )
         assertEquals(LateralMotionState.LANE_SHIFT_RIGHT, shiftRight.lateralState)
     }
+
+    @Test
+    fun `tracks road smoothness score, bumps, braking, acceleration, and graph samples`() {
+        val analyzer = DrivingMotionAnalyzer()
+        var ts = 1_000L
+        repeat(8) {
+            analyzer.analyze(
+                linearAccelX = 0f,
+                linearAccelY = 0.2f,
+                linearAccelZ = 2.0f, // accelerating
+                gyroX = 0f,
+                gyroY = 0f,
+                gyroZ = 0f,
+                azimuthDeg = 0f,
+                pitchDeg = 0f,
+                rollDeg = 0f,
+                gpsSpeedKmh = 30f,
+                nowMillis = ts,
+            )
+            ts += 400L
+        }
+        val afterBrake = analyzer.analyze(
+            linearAccelX = 0f,
+            linearAccelY = 5.0f, // pothole bump spike
+            linearAccelZ = -4.6f, // harsh braking
+            gyroX = 0f,
+            gyroY = 0f,
+            gyroZ = 0f,
+            azimuthDeg = 0f,
+            pitchDeg = 0f,
+            rollDeg = 0f,
+            gpsSpeedKmh = 20f,
+            nowMillis = ts + 3_000L,
+        )
+        val stats = afterBrake.behaviourStats
+        assertTrue(stats.recentSamples.isNotEmpty())
+        assertTrue(stats.accelerationCount >= 1)
+        assertTrue(stats.harshBrakingCount >= 1)
+        assertTrue(stats.potholeBumpCount >= 1)
+        assertTrue(stats.driverBehaviourScore < 100)
+    }
 }

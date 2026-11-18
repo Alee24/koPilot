@@ -636,6 +636,18 @@ class DashboardViewModel @Inject constructor(
         val destLabel = navigationRepo.state.value.destinationName
         val alertsCount = alertCoordinator.state.value.alertsTriggeredCount
 
+        val motionStats = sensorManagerRepo.state.value.motionAnalysis.behaviourStats
+        tripActivityLogger.logActivity(
+            type = "ROAD_QUALITY",
+            details = "Avg Score=${motionStats.averageRoadScore}/100 | Smooth=${motionStats.smoothPct}% | Moderate=${motionStats.moderatePct}% | Rough=${motionStats.roughPct}% | Bumps=${motionStats.potholeBumpCount}",
+            timestampMillis = ended,
+        )
+        tripActivityLogger.logActivity(
+            type = "DRIVING_BEHAVIOUR",
+            details = "Driver Score=${motionStats.driverBehaviourScore}/100 | Braking=${motionStats.brakingCount} (Harsh=${motionStats.harshBrakingCount}) | Accel=${motionStats.accelerationCount} (Hard=${motionStats.hardAccelerationCount}) | Sharp Turns=${motionStats.sharpCornerCount}",
+            timestampMillis = ended,
+        )
+
         tripActivityLogger.endTripLog(
             endedAtMillis = ended,
             distanceKm = distanceKm,

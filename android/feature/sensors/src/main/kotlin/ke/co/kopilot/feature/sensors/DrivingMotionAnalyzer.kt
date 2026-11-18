@@ -14,7 +14,24 @@ import kotlin.math.sqrt
 class DrivingMotionAnalyzer @Inject constructor() {
 
     private val verticalSamples = ArrayDeque<Float>(WINDOW_SIZE)
+    private val graphSamples = ArrayDeque<RoadVibrationSample>(MAX_GRAPH_SAMPLES)
     private var lastLinearNorm = 0f
+    private var lastGraphSampleMs = 0L
+    private var totalScoredSamples = 0
+    private var scoreSum = 0L
+    private var smoothCount = 0
+    private var moderateCount = 0
+    private var roughCount = 0
+    private var potholeBumpCount = 0
+    private var lastBumpMs = 0L
+    private var brakingCount = 0
+    private var harshBrakingCount = 0
+    private var lastBrakeEventMs = 0L
+    private var accelerationCount = 0
+    private var hardAccelerationCount = 0
+    private var lastAccelEventMs = 0L
+    private var sharpCornerCount = 0
+    private var lastCornerEventMs = 0L
 
     fun analyze(
         linearAccelX: Float,
@@ -87,6 +104,88 @@ class DrivingMotionAnalyzer @Inject constructor() {
             else -> RoadVibrationLevel.SMOOTH
         }
 
+        val currentScore = (100f - (rms / 3.0f) * 100f).toInt().coerceIn(0, 100)
+
+        // Update road-quality & driving-behaviour statistics (ignore stationary phone handling)
+        if (!phoneMoved && verticalSamples.size >= 5) {
+            if ((abs(vertical) >= POTHOLE_SPIKE_MPS2 || jerkSpike >= 5.5f) && (nowMillis - lastBumpMs) >= 1_500L) {
+                lastBumpMs = nowMillis
+                potholeBumpCount++
+            }
+            if ((nowMillis - lastGraphSampleMs) >= 350L) {
+                lastGraphSampleMs = nowMillis
+                if (graphSamples.size >= MAX_GRAPH_SAMPLES) graphSamples.removeFirst()
+                graphSamples.addLast(RoadVibrationSample(nowMillis, rms, currentScore, vibrationLevel))
+
+                totalScoredSamples++
+                scoreSum += currentScore
+                when (vibrationLevel) {
+                    RoadVibrationLevel.SMOOTH -> smoothCount++
+                    RoadVibrationLevel.MODERATE_VIBRATION -> moderateCount++
+                    RoadVibrationLevel.ROUGH_ROAD_EXPERIMENTAL -> roughCount++
+                    RoadVibrationLevel.UNKNOWN -> {}
+                }
+            }
+        }
+
+        if ((nowMillis - lastBrakeEventMs) >= 2_500L) {
+            when (longState) {
+                LongitudinalMotionState.HARSH_BRAKING -> {
+                    lastBrakeEventMs = nowMillis
+                    harshBrakingCount++
+                    brakingCount++
+                }
+                LongitudinalMotionState.BRAKING -> {
+                    lastBrakeEventMs = nowMillis
+                    brakingCount++
+                }
+                else -> {}
+            }
+        }
+
+        if ((nowMillis - lastAccelEventMs) >= 2_500L) {
+            when (longState) {
+                LongitudinalMotionState.HARD_ACCELERATION -> {
+                    lastAccelEventMs = nowMillis
+                    hardAccelerationCount++
+                    accelerationCount++
+                }
+                LongitudinalMotionState.ACCELERATING -> {
+                    lastAccelEventMs = nowMillis
+                    accelerationCount++
+                }
+                else -> {}
+            }
+        }
+
+        if (latState == LateralMotionState.SHARP_CORNERING && (nowMillis - lastCornerEventMs) >= 2_500L) {
+            lastCornerEventMs = nowMillis
+            sharpCornerCount++
+        }
+
+        val avgRoadScore = if (totalScoredSamples > 0) (scoreSum / totalScoredSamples).toInt().coerceIn(0, 100) else currentScore
+        val smoothPct = if (totalScoredSamples > 0) (smoothCount * 100) / totalScoredSamples else 100
+        val moderatePct = if (totalScoredSamples > 0) (moderateCount * 100) / totalScoredSamples else 0
+        val roughPct = if (totalScoredSamples > 0) (100 - smoothPct - moderatePct).coerceAtLeast(0) else 0
+        val penalty = (harshBrakingCount * 4 + hardAccelerationCount * 3 + sharpCornerCount * 3).coerceAtMost(85)
+        val driverScore = (100 - penalty).coerceIn(15, 100)
+
+        val stats = DrivingBehaviourStats(
+            roadSmoothnessScore = currentScore,
+            averageRoadScore = avgRoadScore,
+            smoothPct = smoothPct,
+            moderatePct = moderatePct,
+            roughPct = roughPct,
+            potholeBumpCount = potholeBumpCount,
+            brakingCount = brakingCount,
+            harshBrakingCount = harshBrakingCount,
+            accelerationCount = accelerationCount,
+            hardAccelerationCount = hardAccelerationCount,
+            sharpCornerCount = sharpCornerCount,
+            driverBehaviourScore = driverScore,
+            recentSamples = graphSamples.toList(),
+        )
+
         return DrivingMotionAnalysis(
             longitudinalState = longState,
             lateralState = latState,
@@ -100,17 +199,37 @@ class DrivingMotionAnalyzer @Inject constructor() {
             pitchDegrees = pitchDeg,
             rollDegrees = rollDeg,
             azimuthDegrees = azimuthDeg,
+            behaviourStats = stats,
             updatedAtMillis = nowMillis,
         )
     }
 
     fun reset() {
         verticalSamples.clear()
+        graphSamples.clear()
         lastLinearNorm = 0f
+        lastGraphSampleMs = 0L
+        totalScoredSamples = 0
+        scoreSum = 0L
+        smoothCount = 0
+        moderateCount = 0
+        roughCount = 0
+        potholeBumpCount = 0
+        lastBumpMs = 0L
+        brakingCount = 0
+        harshBrakingCount = 0
+        lastBrakeEventMs = 0L
+        accelerationCount = 0
+        hardAccelerationCount = 0
+        lastAccelEventMs = 0L
+        sharpCornerCount = 0
+        lastCornerEventMs = 0L
     }
 
     companion object {
         const val WINDOW_SIZE = 20
+        const val MAX_GRAPH_SAMPLES = 60
+        const val POTHOLE_SPIKE_MPS2 = 4.5f
         const val ACCEL_MPS2 = 1.6f
         const val HARD_ACCEL_MPS2 = 3.5f
         const val BRAKE_MPS2 = -1.8f

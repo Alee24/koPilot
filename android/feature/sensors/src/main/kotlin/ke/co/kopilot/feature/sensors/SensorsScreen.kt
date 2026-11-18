@@ -1,5 +1,6 @@
 package ke.co.kopilot.feature.sensors
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -11,7 +12,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Surface
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
@@ -122,6 +131,58 @@ fun SensorsScreen(
                 }
             }
 
+            // Live Road Smoothness Graph & Road Quality Score
+            CockpitPanel {
+                val stats = hub.motionAnalysis.behaviourStats
+                val scoreColor = when {
+                    stats.roadSmoothnessScore >= 75 -> Color(0xFF18E2B8)
+                    stats.roadSmoothnessScore >= 45 -> KoPilotColors.WarningAmber
+                    else -> KoPilotColors.DangerRed
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Road Smoothness Graph", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "Score: ${stats.roadSmoothnessScore}/100",
+                        color = scoreColor,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                RoadSmoothnessGraph(
+                    samples = stats.recentSamples,
+                    modifier = Modifier.fillMaxWidth().height(120.dp),
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatMiniTile("Avg Score", "${stats.averageRoadScore}/100")
+                    StatMiniTile("Smooth", "${stats.smoothPct}%")
+                    StatMiniTile("Moderate", "${stats.moderatePct}%")
+                    StatMiniTile("Rough", "${stats.roughPct}%")
+                    StatMiniTile("Bumps", "${stats.potholeBumpCount}")
+                }
+            }
+
+            // Driving Behaviour Statistics
+            CockpitPanel {
+                val stats = hub.motionAnalysis.behaviourStats
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Driving Behaviour Monitor", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "Driver: ${stats.driverBehaviourScore}/100",
+                        color = if (stats.driverBehaviourScore >= 80) Color(0xFF18E2B8) else KoPilotColors.WarningAmber,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatMiniTile("Braking", "${stats.brakingCount}")
+                    StatMiniTile("Harsh Brake", "${stats.harshBrakingCount}")
+                    StatMiniTile("Accel", "${stats.accelerationCount}")
+                    StatMiniTile("Hard Accel", "${stats.hardAccelerationCount}")
+                    StatMiniTile("Sharp Turn", "${stats.sharpCornerCount}")
+                }
+            }
+
             // GNSS Satellites & Freshness
             CockpitPanel {
                 val fix = loc.currentFix
@@ -181,5 +242,82 @@ fun SensorsScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RoadSmoothnessGraph(
+    samples: List<RoadVibrationSample>,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFF0A1016),
+        modifier = modifier,
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+            val w = size.width
+            val h = size.height
+            drawLine(
+                color = Color(0xFF18E2B8).copy(alpha = 0.25f),
+                start = Offset(0f, h * 0.25f),
+                end = Offset(w, h * 0.25f),
+                strokeWidth = 1.dp.toPx(),
+            )
+            drawLine(
+                color = Color(0xFFFF5252).copy(alpha = 0.25f),
+                start = Offset(0f, h * 0.70f),
+                end = Offset(w, h * 0.70f),
+                strokeWidth = 1.dp.toPx(),
+            )
+
+            if (samples.size < 2) return@Canvas
+            val maxSamples = samples.size
+            val stepX = w / (maxSamples - 1).coerceAtLeast(1)
+
+            val fillPath = Path()
+            samples.forEachIndexed { idx, s ->
+                val x = idx * stepX
+                val y = h * (1f - (s.smoothnessScore / 100f).coerceIn(0f, 1f))
+                if (idx == 0) {
+                    fillPath.moveTo(x, h)
+                    fillPath.lineTo(x, y)
+                } else {
+                    fillPath.lineTo(x, y)
+                }
+            }
+            fillPath.lineTo((maxSamples - 1) * stepX, h)
+            fillPath.close()
+            drawPath(fillPath, color = Color(0xFF18E2B8).copy(alpha = 0.14f))
+
+            for (i in 1 until samples.size) {
+                val prev = samples[i - 1]
+                val curr = samples[i]
+                val x1 = (i - 1) * stepX
+                val y1 = h * (1f - (prev.smoothnessScore / 100f).coerceIn(0f, 1f))
+                val x2 = i * stepX
+                val y2 = h * (1f - (curr.smoothnessScore / 100f).coerceIn(0f, 1f))
+                val segColor = when {
+                    curr.smoothnessScore >= 75 -> Color(0xFF18E2B8)
+                    curr.smoothnessScore >= 45 -> Color(0xFFFFB300)
+                    else -> Color(0xFFFF5252)
+                }
+                drawLine(
+                    color = segColor,
+                    start = Offset(x1, y1),
+                    end = Offset(x2, y2),
+                    strokeWidth = 2.5.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatMiniTile(label: String, value: String) {
+    Column {
+        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontWeight = FontWeight.Bold, fontSize = 13.sp)
     }
 }
