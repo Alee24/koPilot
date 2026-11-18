@@ -29,11 +29,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -208,55 +213,6 @@ fun ObdScreen(
                 }
             }
 
-            // Device Picker
-            ObdPanel {
-                Text("OBD-II Bluetooth Devices (${devices.size})", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(6.dp))
-                if (devices.isEmpty()) {
-                    Text(
-                        "Pair your HHOBD / ELM327 adapter in Android Bluetooth settings or tap Scan Classic + BLE.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    devices.forEach { dev ->
-                        val onConnectDevice = {
-                            if (btGranted) viewModel.connect(dev.address, true) else permissionLauncher.launch(requiredBtPerms)
-                        }
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                                .clickable(onClick = onConnectDevice),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = if (dev.isHhobdHint) "${dev.name} [HHOBD Hint]" else dev.name,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                    Text(
-                                        text = "${dev.address} • ${dev.transportHint.name}${if (dev.rssiDbm != null) " • ${dev.rssiDbm} dBm" else ""}${if (dev.isPaired) " • Paired" else ""}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                Spacer(Modifier.width(8.dp))
-                                Button(onClick = onConnectDevice) {
-                                    Text("Connect")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             // ECU Circular Gauge Dashboard (RPM, Speed, Coolant, Load, Throttle, Voltage)
             ObdPanel {
                 Text("ECU Live Gauge Cluster", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -358,6 +314,97 @@ fun ObdScreen(
                         "Coolant Trend: ${telemetry.coolantHistoryC.takeLast(10).joinToString("° → ")}°C",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                }
+            }
+
+            // Bluetooth OBD-II Devices Dropdown (below Extended ECU Sensors & Fuel/Air)
+            ObdPanel {
+                var dropdownExpanded by remember { mutableStateOf(false) }
+                var selectedAddress by remember { mutableStateOf<String?>(null) }
+                val selectedDevice = devices.firstOrNull { it.address == selectedAddress }
+                    ?: devices.firstOrNull { it.isHhobdHint }
+                    ?: devices.firstOrNull()
+
+                Text("OBD-II Bluetooth Devices (${devices.size})", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(6.dp))
+                if (devices.isEmpty()) {
+                    Text(
+                        "No Bluetooth devices found yet. Pair your HHOBD / ELM327 adapter in Android Bluetooth settings or tap Scan Classic + BLE above.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    ExposedDropdownMenuBox(
+                        expanded = dropdownExpanded,
+                        onExpandedChange = { dropdownExpanded = !dropdownExpanded },
+                    ) {
+                        val displayLabel = selectedDevice?.let { dev ->
+                            val tag = if (dev.isHhobdHint) " [HHOBD]" else ""
+                            "${dev.name}$tag (${dev.address})"
+                        } ?: "Select Bluetooth OBD-II device"
+                        OutlinedTextField(
+                            value = displayLabel,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Select Bluetooth Adapter") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = dropdownExpanded) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                        )
+                        ExposedDropdownMenu(
+                            expanded = dropdownExpanded,
+                            onDismissRequest = { dropdownExpanded = false },
+                        ) {
+                            devices.forEach { dev ->
+                                val tag = if (dev.isHhobdHint) " [HHOBD]" else ""
+                                val pairedTag = if (dev.isPaired) " • Paired" else ""
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text("${dev.name}$tag", fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                "${dev.address} • ${dev.transportHint.name}$pairedTag",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        selectedAddress = dev.address
+                                        dropdownExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Button(
+                            enabled = selectedDevice != null,
+                            onClick = {
+                                val target = selectedDevice ?: return@Button
+                                if (btGranted) {
+                                    viewModel.connect(target.address, true)
+                                } else {
+                                    permissionLauncher.launch(requiredBtPerms)
+                                }
+                            },
+                        ) {
+                            Text("Connect Selected")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                if (btGranted) viewModel.loadPairedDevices(true) else permissionLauncher.launch(requiredBtPerms)
+                            },
+                        ) {
+                            Text("Refresh Paired")
+                        }
+                    }
                 }
             }
 

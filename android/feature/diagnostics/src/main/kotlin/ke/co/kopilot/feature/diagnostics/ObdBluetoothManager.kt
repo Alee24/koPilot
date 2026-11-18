@@ -56,22 +56,28 @@ class ObdBluetoothManager @Inject constructor(
     }
 
     fun connectAndMonitor(address: String, bluetoothPermissionGranted: Boolean) {
-        disconnect()
+        pollingJob?.cancel()
+        pollingJob = null
+        connectionManager.disconnect()
+        connectionManager.resetManualDisconnect()
+        connectionManager.appendLog("Starting OBD-II connection to $address...")
         pollingJob = scope.launch {
             var reconnectAttempts = 0
             while (isActive && !connectionManager.isManualDisconnectRequested()) {
                 val connRes = connectionManager.connect(address, bluetoothPermissionGranted)
                 if (connRes.isFailure) {
+                    val failureMsg = connRes.exceptionOrNull()?.localizedMessage ?: connectionManager.statusMessage.value
                     _state.value = _state.value.copy(
                         obdConnected = false,
-                        statusMessage = connectionManager.statusMessage.value,
+                        statusMessage = failureMsg,
                     )
-                    if (connectionManager.connectionState.value == ObdConnectionState.UNSUPPORTED || reconnectAttempts >= 3) {
+                    if (connectionManager.connectionState.value == ObdConnectionState.UNSUPPORTED || reconnectAttempts >= 2) {
+                        connectionManager.setState(ObdConnectionState.ERROR, failureMsg)
                         break
                     }
                     reconnectAttempts++
-                    connectionManager.setState(ObdConnectionState.RECONNECTING, "Reconnecting (attempt $reconnectAttempts/3)...")
-                    delay(2_000L * reconnectAttempts)
+                    connectionManager.setState(ObdConnectionState.RECONNECTING, "Retrying ($reconnectAttempts/2): $failureMsg")
+                    delay(1_500L * reconnectAttempts)
                     continue
                 }
 
@@ -79,9 +85,11 @@ class ObdBluetoothManager @Inject constructor(
                 val transport = connRes.getOrDefault(ObdTransportType.UNKNOWN)
                 connectionManager.setState(ObdConnectionState.ADAPTER_INITIALIZING, "Initializing adapter...")
 
+                // Wake up ELM327/HHOBD chip before ATZ
+                connectionManager.sendCommand("", timeoutMs = 600L, retries = 0)
                 val atz = connectionManager.sendCommand("ATZ", timeoutMs = 3_500L)
                 connectionManager.appendLog("> ATZ -> ${atz.replace("\r", " ").take(40)}")
-                delay(800L)
+                delay(600L)
                 val ate0 = connectionManager.sendCommand("ATE0")
                 connectionManager.appendLog("> ATE0 -> ${ate0.replace("\r", " ").take(24)}")
                 connectionManager.sendCommand("ATL0")
@@ -93,9 +101,11 @@ class ObdBluetoothManager @Inject constructor(
 
                 val adapterVerified = atz.contains("ELM", ignoreCase = true) ||
                     atz.contains("OBD", ignoreCase = true) ||
+                    atz.contains("OK", ignoreCase = true) ||
                     ati.contains("ELM", ignoreCase = true) ||
                     ati.contains("OBD", ignoreCase = true) ||
-                    ate0.contains("OK", ignoreCase = true)
+                    ate0.contains("OK", ignoreCase = true) ||
+                    atrv.contains("V", ignoreCase = true)
 
                 if (!adapterVerified) {
                     connectionManager.appendLog("Adapter init failed: ATZ='$atz' ATE0='$ate0'")

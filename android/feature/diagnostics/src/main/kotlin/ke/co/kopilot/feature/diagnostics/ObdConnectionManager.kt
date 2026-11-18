@@ -507,6 +507,10 @@ class ObdConnectionManager @Inject constructor(
 
     fun isManualDisconnectRequested(): Boolean = manualDisconnectRequested
 
+    fun resetManualDisconnect() {
+        manualDisconnectRequested = false
+    }
+
     fun getLastConnectedAddress(): String? = lastConnectedAddress
 
     fun disconnect() {

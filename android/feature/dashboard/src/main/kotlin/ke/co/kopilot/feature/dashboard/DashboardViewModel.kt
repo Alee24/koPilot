@@ -127,6 +127,7 @@ class DashboardViewModel @Inject constructor(
     private var lastTutorBusyRoadMs = 0L
     private var lastTutorClearRoadMs = 0L
     private var clearRoadSinceMs = 0L
+    private var lastSensorSnapshotLoggedMs = 0L
 
     private val coreFlows = combine(
         isDriving,
@@ -192,6 +193,39 @@ class DashboardViewModel @Inject constructor(
 
     init {
         visionPipeline.initializeIfNeeded()
+        viewModelScope.launch {
+            sensorManagerRepo.state.collect { hub ->
+                if (!isDriving.value) return@collect
+                val now = System.currentTimeMillis()
+                if ((now - lastSensorSnapshotLoggedMs) < 10_000L) return@collect
+                lastSensorSnapshotLoggedMs = now
+
+                val motion = hub.motionAnalysis
+                val stats = motion.behaviourStats
+                val fix = locationTracker.state.value.currentFix
+                val gpsStr = if (fix != null) {
+                    "Speed=${fix.speedKmh?.let { "%.1f".format(it) } ?: "--"}km/h Acc=${fix.horizontalAccuracyMeters?.let { "%.0fm".format(it) } ?: "--"}"
+                } else {
+                    "GPS=Unavailable"
+                }
+                val sensorsStr = hub.physicalSensors.filter { it.isAvailable }.take(10).joinToString("; ") { s ->
+                    "${s.typeName}=${s.formattedReading}"
+                }.ifBlank { "No physical sensors" }
+                val obd = obdManager.liveTelemetry.value
+                val obdStr = if (obdManager.state.value.obdConnected) {
+                    " | OBD: RPM=${obd.engineRpm ?: "--"} ECU_Spd=${obd.vehicleSpeedKmh ?: "--"} Coolant=${obd.coolantTempC ?: "--"}C Volt=${obd.controlModuleVoltageV?.let { "%.1fV".format(it) } ?: "--"}"
+                } else {
+                    ""
+                }
+                tripActivityLogger.logActivity(
+                    type = "SENSOR_SNAPSHOT",
+                    details = "$gpsStr | RoadScore=${stats.roadSmoothnessScore}/100 (${motion.roadVibrationLevel.name}) RMS=${"%.2f".format(motion.verticalVibrationRmsMps2)}m/s2 Bumps=${stats.potholeBumpCount} | " +
+                        "DriverScore=${stats.driverBehaviourScore}/100 Long=${"%.2f".format(motion.longitudinalAccelMps2)} Lat=${"%.2f".format(motion.lateralAccelMps2)} Yaw=${"%.2f".format(motion.yawRateRadPerSec)} " +
+                        "Pitch=${"%.1f".format(motion.pitchDegrees)} Roll=${"%.1f".format(motion.rollDegrees)} Az=${"%.0f".format(motion.azimuthDegrees)}$obdStr | Sensors($sensorsStr)",
+                    timestampMillis = now,
+                )
+            }
+        }
         viewModelScope.launch {
             visionPipeline.state.collect { vision ->
                 val s = uiState.value.settings
@@ -636,15 +670,31 @@ class DashboardViewModel @Inject constructor(
         val destLabel = navigationRepo.state.value.destinationName
         val alertsCount = alertCoordinator.state.value.alertsTriggeredCount
 
-        val motionStats = sensorManagerRepo.state.value.motionAnalysis.behaviourStats
+        val hubState = sensorManagerRepo.state.value
+        val motion = hubState.motionAnalysis
+        val motionStats = motion.behaviourStats
         tripActivityLogger.logActivity(
             type = "ROAD_QUALITY",
-            details = "Avg Score=${motionStats.averageRoadScore}/100 | Smooth=${motionStats.smoothPct}% | Moderate=${motionStats.moderatePct}% | Rough=${motionStats.roughPct}% | Bumps=${motionStats.potholeBumpCount}",
+            details = "Avg Score=${motionStats.averageRoadScore}/100 | Smooth=${motionStats.smoothPct}% | Moderate=${motionStats.moderatePct}% | Rough=${motionStats.roughPct}% | VeryRough=${motionStats.veryRoughPct}% | RMS=${"%.2f".format(motion.verticalVibrationRmsMps2)}m/s2 | Bumps=${motionStats.potholeBumpCount}",
             timestampMillis = ended,
         )
         tripActivityLogger.logActivity(
             type = "DRIVING_BEHAVIOUR",
             details = "Driver Score=${motionStats.driverBehaviourScore}/100 | Braking=${motionStats.brakingCount} (Harsh=${motionStats.harshBrakingCount}) | Accel=${motionStats.accelerationCount} (Hard=${motionStats.hardAccelerationCount}) | Sharp Turns=${motionStats.sharpCornerCount}",
+            timestampMillis = ended,
+        )
+        val allSensorsLine = hubState.physicalSensors.filter { it.isAvailable }.joinToString("; ") { s ->
+            "${s.typeName}=${s.formattedReading}"
+        }.ifBlank { "None" }
+        val obdLive = obdManager.liveTelemetry.value
+        val obdSummary = if (obdManager.state.value.obdConnected) {
+            " | OBD(RPM=${obdLive.engineRpm ?: "--"}, Coolant=${obdLive.coolantTempC ?: "--"}C, Volt=${obdLive.controlModuleVoltageV?.let { "%.1fV".format(it) } ?: "--"})"
+        } else {
+            ""
+        }
+        tripActivityLogger.logActivity(
+            type = "ALL_SENSORS_SUMMARY",
+            details = "Orientation(Pitch=${"%.1f".format(motion.pitchDegrees)}, Roll=${"%.1f".format(motion.rollDegrees)}, Az=${"%.0f".format(motion.azimuthDegrees)})$obdSummary | PhysicalSensors($allSensorsLine)",
             timestampMillis = ended,
         )
 

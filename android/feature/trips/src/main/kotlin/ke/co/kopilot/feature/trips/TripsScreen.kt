@@ -260,6 +260,48 @@ fun TripsScreen(
                             }
 
                             if (logFile != null) {
+                                val telemetrySummary = remember(logFile.absolutePath, logFile.length()) {
+                                    runCatching {
+                                        val lines = logFile.readLines()
+                                        val road = lines.lastOrNull { it.contains("[ROAD_QUALITY]") }?.substringAfter("[ROAD_QUALITY]")?.trim()
+                                        val behaviour = lines.lastOrNull { it.contains("[DRIVING_BEHAVIOUR]") }?.substringAfter("[DRIVING_BEHAVIOUR]")?.trim()
+                                        val sensors = lines.lastOrNull { it.contains("[ALL_SENSORS_SUMMARY]") }?.substringAfter("[ALL_SENSORS_SUMMARY]")?.trim()
+                                            ?: lines.lastOrNull { it.contains("[SENSOR_SNAPSHOT]") }?.substringAfter("[SENSOR_SNAPSHOT]")?.trim()
+                                        val snapshotCount = lines.count { it.contains("[SENSOR_SNAPSHOT]") }
+                                        TripLogTelemetry(road, behaviour, sensors, snapshotCount)
+                                    }.getOrNull()
+                                }
+                                if (telemetrySummary != null && (telemetrySummary.roadQuality != null || telemetrySummary.drivingBehaviour != null || telemetrySummary.sensorsSummary != null)) {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = MaterialTheme.colorScheme.surface,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        ) {
+                                            Text(
+                                                text = "Road, Behaviour & Sensor Telemetry (${telemetrySummary.snapshotCount} snapshots)",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
+                                            telemetrySummary.roadQuality?.let {
+                                                Text("Road Quality: $it", style = MaterialTheme.typography.bodySmall)
+                                            }
+                                            telemetrySummary.drivingBehaviour?.let {
+                                                Text("Driving Behaviour: $it", style = MaterialTheme.typography.bodySmall)
+                                            }
+                                            telemetrySummary.sensorsSummary?.let {
+                                                Text(
+                                                    text = "Sensors: $it",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                                 FlowRow(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -288,3 +330,10 @@ private fun TripStatChip(label: String, value: String) {
         Text(value, fontWeight = FontWeight.Bold, fontSize = 14.sp)
     }
 }
+
+private data class TripLogTelemetry(
+    val roadQuality: String?,
+    val drivingBehaviour: String?,
+    val sensorsSummary: String?,
+    val snapshotCount: Int,
+)
