@@ -136,6 +136,7 @@ fun DashboardScreen(
     onOpenRoadQuality: () -> Unit = {},
     onOpenDrivingBehaviour: () -> Unit = {},
     onOpenDrivingIntelligence: () -> Unit = {},
+    onOpenVehicleIntelligence: () -> Unit = {},
     onOpenObd: () -> Unit = {},
     onOpenTrips: () -> Unit = {},
     onOpenNavigation: () -> Unit = {},
@@ -278,6 +279,10 @@ fun DashboardScreen(
             onOpenDrivingIntelligence = {
                 showToolsDialog = false
                 onOpenDrivingIntelligence()
+            },
+            onOpenVehicleIntelligence = {
+                showToolsDialog = false
+                onOpenVehicleIntelligence()
             },
             onOpenRoadQuality = {
                 showToolsDialog = false
@@ -2397,6 +2402,7 @@ private fun DashboardToolsDialog(
     onDismiss: () -> Unit,
     onOpenDrivingBehaviour: () -> Unit,
     onOpenDrivingIntelligence: () -> Unit,
+    onOpenVehicleIntelligence: () -> Unit,
     onOpenRoadQuality: () -> Unit,
     onOpenSensors: () -> Unit,
     onOpenObd: () -> Unit,
@@ -2439,6 +2445,7 @@ private fun DashboardToolsDialog(
                     OutlinedButton(onClick = onOpenRoadQuality) { Text("Road Quality") }
                     OutlinedButton(onClick = onOpenDrivingBehaviour) { Text("Driving Behaviour") }
                     OutlinedButton(onClick = onOpenDrivingIntelligence) { Text("Live Intelligence") }
+                    OutlinedButton(onClick = onOpenVehicleIntelligence) { Text("Ask Car AI") }
                     OutlinedButton(onClick = onOpenSensors) { Text("Sensors Hub") }
                     OutlinedButton(onClick = onOpenObd) { Text("OBD-II Gauges") }
                     OutlinedButton(onClick = onOpenSoundStudio) { Text("Engine Sound Studio") }

@@ -58,3 +58,22 @@ data class RoadObservationEntity(
     val longitude: Double?,
     val observedAtMillis: Long,
 )
+
+@Entity(tableName = "sensor_history")
+data class SensorHistoryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+    val timestampMillis: Long,
+    val tripId: String?,
+    val obdConnected: Boolean,
+    val rpm: Int?,
+    val coolantTempC: Int?,
+    val voltageV: Float?,
+    val engineLoadPct: Float?,
+    val throttlePct: Float?,
+    val intakeTempC: Int?,
+    val mafGramsPerSec: Float?,
+    val fuelRateLph: Float?,
+    val speedKmh: Float?,
+    val safetyScore: Int,
+    val fuelScore: Int,
+)

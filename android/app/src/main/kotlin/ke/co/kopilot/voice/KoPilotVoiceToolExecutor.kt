@@ -11,9 +11,12 @@ import ke.co.kopilot.feature.trips.TripRepository
 import ke.co.kopilot.feature.vision.RoadVisionPipeline
 import ke.co.kopilot.feature.voice.VoiceToolExecutor
 import ke.co.kopilot.feature.weather.WeatherRepository
+import ke.co.kopilot.intelligence.VehicleIntelligenceEngine
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,6 +31,7 @@ class KoPilotVoiceToolExecutor @Inject constructor(
     private val obdManager: ObdBluetoothManager,
     private val tripRepo: TripRepository,
     private val prefsRepo: PreferencesRepository,
+    private val vehicleIntelligence: VehicleIntelligenceEngine,
 ) : VoiceToolExecutor {
 
     override suspend fun executeTool(name: String, arguments: JsonObject): String = when (name) {
@@ -120,6 +124,69 @@ class KoPilotVoiceToolExecutor @Inject constructor(
             val distKm = locationTracker.state.value.distanceTraveledMeters / 1000.0
             val savedCount = tripRepo.trips.firstOrNull()?.size ?: 0
             """{"status":"ok","current_trip_distance_km":${"%.2f".format(distKm)},"saved_trips_count":$savedCount}"""
+        }
+        "ask_vehicle_intelligence" -> {
+            val question = arguments["question"]?.jsonPrimitive?.content ?: "How is my car performing right now?"
+            val (answer, _) = vehicleIntelligence.answerVehicleQuestion(question)
+            buildJsonObject {
+                put("status", "ok")
+                put("answer", answer)
+            }.toString()
+        }
+        "get_vehicle_snapshot" -> {
+            val snap = vehicleIntelligence.getVehicleSnapshot()
+            buildJsonObject {
+                put("status", "ok")
+                put("vehicle", snap.vehicleIdentity)
+                put("obd_connected", snap.obdConnected)
+                put("available_pids", snap.availableCount())
+                put("unsupported_pids", snap.unsupportedCount())
+                put("dtc_scan_status", snap.diagnostics.scanStatus.name)
+            }.toString()
+        }
+        "get_full_vehicle_health_report" -> {
+            val report = vehicleIntelligence.generateFullVehicleHealthReport(performFreshDtcScan = true)
+            buildJsonObject {
+                put("status", "ok")
+                put("spoken_summary", report.spokenSummary)
+                put("detailed_report", report.detailedText)
+            }.toString()
+        }
+        "get_supported_sensors" -> {
+            val sup = vehicleIntelligence.getSupportedSensors()
+            buildJsonObject {
+                put("status", "ok")
+                put("available", sup["available"].orEmpty().joinToString(", "))
+                put("unsupported", sup["unsupported"].orEmpty().joinToString(", "))
+            }.toString()
+        }
+        "get_diagnostic_codes" -> {
+            val dtcs = vehicleIntelligence.getDiagnosticCodes()
+            buildJsonObject {
+                put("status", "ok")
+                put("count", dtcs.size)
+                put("codes", dtcs.joinToString("; ") { "${it.code} (${it.severityLabel}): ${it.description}" })
+            }.toString()
+        }
+        "get_fuel_efficiency_summary" -> {
+            buildJsonObject {
+                put("status", "ok")
+                put("summary", vehicleIntelligence.getFuelEfficiencySummary())
+            }.toString()
+        }
+        "get_driving_safety_summary" -> {
+            buildJsonObject {
+                put("status", "ok")
+                put("summary", vehicleIntelligence.getDrivingSafetySummary())
+            }.toString()
+        }
+        "get_vehicle_health_alerts" -> {
+            val alerts = vehicleIntelligence.getVehicleHealthAlerts()
+            buildJsonObject {
+                put("status", "ok")
+                put("count", alerts.size)
+                put("alerts", alerts.joinToString("; "))
+            }.toString()
         }
         else -> """{"status":"unavailable","reason":"Unknown tool $name"}"""
     }

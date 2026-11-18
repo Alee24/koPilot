@@ -74,6 +74,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 fun ObdScreen(
     onBack: () -> Unit,
     onOpenSoundStudio: () -> Unit = {},
+    onOpenVehicleIntelligence: () -> Unit = {},
     viewModel: ObdViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -219,6 +220,9 @@ fun ObdScreen(
                     }
                     OutlinedButton(onClick = onOpenSoundStudio) {
                         Text("Engine Sound Studio")
+                    }
+                    OutlinedButton(onClick = onOpenVehicleIntelligence) {
+                        Text("Ask Car AI")
                     }
                 }
             }

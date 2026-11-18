@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import ke.co.kopilot.core.database.entity.CachedWeatherEntity
 import ke.co.kopilot.core.database.entity.RoadObservationEntity
+import ke.co.kopilot.core.database.entity.SensorHistoryEntity
 import ke.co.kopilot.core.database.entity.TripEntity
 import ke.co.kopilot.core.database.entity.VehicleProfileEntity
 import kotlinx.coroutines.flow.Flow
@@ -56,4 +57,22 @@ interface RoadObservationDao {
 
     @Query("DELETE FROM road_observations")
     suspend fun clearAll()
+}
+
+@Dao
+interface SensorHistoryDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSample(sample: SensorHistoryEntity)
+
+    @Query("SELECT * FROM sensor_history WHERE timestampMillis >= :sinceMillis ORDER BY timestampMillis ASC LIMIT :limit")
+    suspend fun getSamplesSince(sinceMillis: Long, limit: Int = 500): List<SensorHistoryEntity>
+
+    @Query("SELECT * FROM sensor_history WHERE timestampMillis BETWEEN :startMillis AND :endMillis ORDER BY timestampMillis ASC LIMIT :limit")
+    suspend fun getSamplesBetween(startMillis: Long, endMillis: Long, limit: Int = 500): List<SensorHistoryEntity>
+
+    @Query("SELECT * FROM sensor_history ORDER BY timestampMillis DESC LIMIT :limit")
+    fun observeRecentSamples(limit: Int = 120): Flow<List<SensorHistoryEntity>>
+
+    @Query("DELETE FROM sensor_history WHERE timestampMillis < :cutoffMillis")
+    suspend fun deleteOlderThan(cutoffMillis: Long)
 }

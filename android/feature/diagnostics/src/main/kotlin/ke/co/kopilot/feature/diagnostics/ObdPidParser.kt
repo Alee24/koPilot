@@ -73,6 +73,21 @@ object ObdPidParser {
         return bytes.firstOrNull()?.let { (it - 128) * 100f / 128f }
     }
 
+    fun parseShortTermFuelTrimB2Pct(response: String): Float? {
+        val bytes = extractPayloadBytes(response, "41", "08") ?: return null
+        return bytes.firstOrNull()?.let { (it - 128) * 100f / 128f }
+    }
+
+    fun parseLongTermFuelTrimB2Pct(response: String): Float? {
+        val bytes = extractPayloadBytes(response, "41", "09") ?: return null
+        return bytes.firstOrNull()?.let { (it - 128) * 100f / 128f }
+    }
+
+    fun parseFuelPressureGaugeKpa(response: String): Int? {
+        val bytes = extractPayloadBytes(response, "41", "0A") ?: return null
+        return bytes.firstOrNull()?.let { it * 3 }
+    }
+
     fun parseMapKpa(response: String): Int? {
         val bytes = extractPayloadBytes(response, "41", "0B") ?: return null
         return bytes.firstOrNull()
@@ -132,10 +147,26 @@ object ObdPidParser {
         return bytes.firstOrNull()?.let { (it * 100f) / 255f }
     }
 
+    fun parseBarometricPressureKpa(response: String): Int? {
+        val bytes = extractPayloadBytes(response, "41", "33") ?: return null
+        return bytes.firstOrNull()
+    }
+
     fun parseControlModuleVoltage(response: String): Float? {
         val bytes = extractPayloadBytes(response, "41", "42") ?: return null
         if (bytes.size < 2) return null
         return ((bytes[0] * 256) + bytes[1]) / 1000f
+    }
+
+    fun parseAbsoluteLoadPct(response: String): Float? {
+        val bytes = extractPayloadBytes(response, "41", "43") ?: return null
+        if (bytes.size < 2) return null
+        return (((bytes[0] * 256) + bytes[1]) * 100f) / 255f
+    }
+
+    fun parseRelativeThrottlePct(response: String): Float? {
+        val bytes = extractPayloadBytes(response, "41", "45") ?: return null
+        return bytes.firstOrNull()?.let { (it * 100f) / 255f }
     }
 
     fun parseAmbientTempC(response: String): Int? {
@@ -143,11 +174,23 @@ object ObdPidParser {
         return bytes.firstOrNull()?.let { it - 40 }
     }
 
-    fun parseDtcCodes(response: String): List<String> {
+    fun parseEngineOilTempC(response: String): Int? {
+        val bytes = extractPayloadBytes(response, "41", "5C") ?: return null
+        return bytes.firstOrNull()?.let { it - 40 }
+    }
+
+    fun parseEngineFuelRateLph(response: String): Float? {
+        val bytes = extractPayloadBytes(response, "41", "5E") ?: return null
+        if (bytes.size < 2) return null
+        return ((bytes[0] * 256) + bytes[1]) / 20f
+    }
+
+    fun parseDtcCodes(response: String, expectedResponseMode: String = "43"): List<String> {
+        if (isAdapterError(response)) return emptyList()
         val clean = response.replace("\\s+".toRegex(), "").uppercase()
-        val idx = clean.indexOf("43")
+        val idx = clean.indexOf(expectedResponseMode.uppercase())
         if (idx < 0) return emptyList()
-        val hex = clean.substring(idx + 2)
+        val hex = clean.substring(idx + expectedResponseMode.length)
         val codes = mutableListOf<String>()
         var i = 0
         while (i + 3 < hex.length) {

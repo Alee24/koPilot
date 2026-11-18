@@ -424,6 +424,11 @@ class ObdConnectionManager @Inject constructor(
      * with timeout and 1 automatic retry.
      */
     suspend fun sendCommand(command: String, timeoutMs: Long = 1_800L, retries: Int = 1): String {
+        val decision = ObdReadOnlyFirewall.evaluate(command)
+        if (!decision.allowed) {
+            appendLog("FIREWALL BLOCKED '${decision.normalizedCommand}': ${decision.reason}")
+            return "BLOCKED_READ_ONLY"
+        }
         return commandMutex.withLock {
             var attempt = 0
             var lastResp = ""

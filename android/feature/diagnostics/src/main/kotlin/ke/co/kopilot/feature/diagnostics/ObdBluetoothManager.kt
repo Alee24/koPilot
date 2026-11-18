@@ -155,6 +155,9 @@ class ObdBluetoothManager @Inject constructor(
                 if ("0140" in supportedPids) {
                     supportedPids.addAll(ObdPidParser.parseSupportedPidsBitmap(connectionManager.sendCommand("0140"), 0x40))
                 }
+                if ("0160" in supportedPids) {
+                    supportedPids.addAll(ObdPidParser.parseSupportedPidsBitmap(connectionManager.sendCommand("0160"), 0x60))
+                }
 
                 _capabilities.value = defaultCapabilityRegistry(supportedPids)
                 val adapterVoltage = ObdPidParser.parseAdapterVoltage(atrv)
@@ -172,6 +175,7 @@ class ObdBluetoothManager @Inject constructor(
                     protocolName = protoLabel,
                     transportType = transport,
                     adapterVoltageV = adapterVoltage,
+                    supportedPidHexes = supportedPids.toSet(),
                 )
 
                 var cycle = 0
@@ -189,6 +193,9 @@ class ObdBluetoothManager @Inject constructor(
                     var fuelSys = currentTel.fuelSystemStatus
                     var stft = currentTel.shortTermFuelTrimPct
                     var ltft = currentTel.longTermFuelTrimPct
+                    var stftB2 = currentTel.shortTermFuelTrimB2Pct
+                    var ltftB2 = currentTel.longTermFuelTrimB2Pct
+                    var fuelPressGauge = currentTel.fuelPressureGaugeKpa
                     var mapKpa = currentTel.mapKpa
                     var timing = currentTel.timingAdvanceDeg
                     var maf = currentTel.mafGramsPerSec
@@ -196,9 +203,18 @@ class ObdBluetoothManager @Inject constructor(
                     var runtime = currentTel.runtimeSinceStartSec
                     var fuelPress = currentTel.fuelPressureKpa
                     var fuelLevel = currentTel.fuelLevelPct
+                    var baroKpa = currentTel.barometricPressureKpa
                     var ctrlVolt = currentTel.controlModuleVoltageV
+                    var absLoad = currentTel.absoluteLoadPct
+                    var relThrottle = currentTel.relativeThrottlePct
                     var ambient = currentTel.ambientAirTempC
+                    var oilTemp = currentTel.engineOilTempC
+                    var fuelRate = currentTel.engineFuelRateLph
                     var dtcs = _state.value.dtcCodes
+                    var pendingDtcs = currentTel.pendingDtcCodes
+                    var permanentDtcs = currentTel.permanentDtcCodes
+                    var dtcScanCompleted = currentTel.dtcScanCompleted
+                    var lastDtcScanMillis = currentTel.lastDtcScanMillis
 
                     if (cycle % 4 == 0) {
                         if ("0105" in supportedPids) coolant = ObdPidParser.parseCoolantTempC(connectionManager.sendCommand("0105")) ?: coolant
@@ -206,6 +222,9 @@ class ObdBluetoothManager @Inject constructor(
                         if ("0103" in supportedPids) fuelSys = ObdPidParser.parseFuelSystemStatus(connectionManager.sendCommand("0103")) ?: fuelSys
                         if ("0106" in supportedPids) stft = ObdPidParser.parseShortTermFuelTrimPct(connectionManager.sendCommand("0106")) ?: stft
                         if ("0107" in supportedPids) ltft = ObdPidParser.parseLongTermFuelTrimPct(connectionManager.sendCommand("0107")) ?: ltft
+                        if ("0108" in supportedPids) stftB2 = ObdPidParser.parseShortTermFuelTrimB2Pct(connectionManager.sendCommand("0108")) ?: stftB2
+                        if ("0109" in supportedPids) ltftB2 = ObdPidParser.parseLongTermFuelTrimB2Pct(connectionManager.sendCommand("0109")) ?: ltftB2
+                        if ("010A" in supportedPids) fuelPressGauge = ObdPidParser.parseFuelPressureGaugeKpa(connectionManager.sendCommand("010A")) ?: fuelPressGauge
                         if ("010B" in supportedPids) mapKpa = ObdPidParser.parseMapKpa(connectionManager.sendCommand("010B")) ?: mapKpa
                         if ("010E" in supportedPids) timing = ObdPidParser.parseTimingAdvanceDeg(connectionManager.sendCommand("010E")) ?: timing
                         if ("0110" in supportedPids) maf = ObdPidParser.parseMafGramsPerSec(connectionManager.sendCommand("0110")) ?: maf
@@ -213,9 +232,27 @@ class ObdBluetoothManager @Inject constructor(
                         if ("011F" in supportedPids) runtime = ObdPidParser.parseRuntimeSec(connectionManager.sendCommand("011F")) ?: runtime
                         if ("0123" in supportedPids) fuelPress = ObdPidParser.parseFuelPressureKpa(connectionManager.sendCommand("0123")) ?: fuelPress
                         if ("012F" in supportedPids) fuelLevel = ObdPidParser.parseFuelLevelPct(connectionManager.sendCommand("012F")) ?: fuelLevel
+                        if ("0133" in supportedPids) baroKpa = ObdPidParser.parseBarometricPressureKpa(connectionManager.sendCommand("0133")) ?: baroKpa
                         if ("0142" in supportedPids) ctrlVolt = ObdPidParser.parseControlModuleVoltage(connectionManager.sendCommand("0142")) ?: ctrlVolt
+                        if ("0143" in supportedPids) absLoad = ObdPidParser.parseAbsoluteLoadPct(connectionManager.sendCommand("0143")) ?: absLoad
+                        if ("0145" in supportedPids) relThrottle = ObdPidParser.parseRelativeThrottlePct(connectionManager.sendCommand("0145")) ?: relThrottle
                         if ("0146" in supportedPids) ambient = ObdPidParser.parseAmbientTempC(connectionManager.sendCommand("0146")) ?: ambient
-                        dtcs = ObdPidParser.parseDtcCodes(connectionManager.sendCommand("03"))
+                        if ("015C" in supportedPids) oilTemp = ObdPidParser.parseEngineOilTempC(connectionManager.sendCommand("015C")) ?: oilTemp
+                        if ("015E" in supportedPids) fuelRate = ObdPidParser.parseEngineFuelRateLph(connectionManager.sendCommand("015E")) ?: fuelRate
+                        val mode03Resp = connectionManager.sendCommand("03")
+                        if (!ObdPidParser.isAdapterError(mode03Resp) && mode03Resp.uppercase().replace(" ", "").contains("43")) {
+                            dtcs = ObdPidParser.parseDtcCodes(mode03Resp, "43")
+                            dtcScanCompleted = true
+                            lastDtcScanMillis = now
+                        }
+                        val mode07Resp = connectionManager.sendCommand("07")
+                        if (!ObdPidParser.isAdapterError(mode07Resp) && mode07Resp.uppercase().replace(" ", "").contains("47")) {
+                            pendingDtcs = ObdPidParser.parseDtcCodes(mode07Resp, "47")
+                        }
+                        val mode0AResp = connectionManager.sendCommand("0A")
+                        if (!ObdPidParser.isAdapterError(mode0AResp) && mode0AResp.uppercase().replace(" ", "").contains("4A")) {
+                            permanentDtcs = ObdPidParser.parseDtcCodes(mode0AResp, "4A")
+                        }
                     }
 
                     val nextCoolantHistory = if (coolant != null && cycle % 4 == 0) {
@@ -241,6 +278,9 @@ class ObdBluetoothManager @Inject constructor(
                         fuelSystemStatus = fuelSys,
                         shortTermFuelTrimPct = stft,
                         longTermFuelTrimPct = ltft,
+                        shortTermFuelTrimB2Pct = stftB2,
+                        longTermFuelTrimB2Pct = ltftB2,
+                        fuelPressureGaugeKpa = fuelPressGauge,
                         mapKpa = mapKpa,
                         timingAdvanceDeg = timing,
                         mafGramsPerSec = maf,
@@ -248,8 +288,18 @@ class ObdBluetoothManager @Inject constructor(
                         runtimeSinceStartSec = runtime,
                         fuelPressureKpa = fuelPress,
                         fuelLevelPct = fuelLevel,
+                        barometricPressureKpa = baroKpa,
                         controlModuleVoltageV = ctrlVolt ?: currentTel.adapterVoltageV,
+                        absoluteLoadPct = absLoad,
+                        relativeThrottlePct = relThrottle,
                         ambientAirTempC = ambient,
+                        engineOilTempC = oilTemp,
+                        engineFuelRateLph = fuelRate,
+                        pendingDtcCodes = pendingDtcs,
+                        permanentDtcCodes = permanentDtcs,
+                        dtcScanCompleted = dtcScanCompleted,
+                        lastDtcScanMillis = lastDtcScanMillis,
+                        supportedPidHexes = supportedPids.toSet(),
                         transmissionDtcCodes = transDtcs,
                         observedRpmSpeedRatio = ratio,
                         lastUpdatedMillis = now,
@@ -268,6 +318,28 @@ class ObdBluetoothManager @Inject constructor(
                 }
             }
         }
+    }
+
+    suspend fun requestSafeDtcScan(): Boolean {
+        if (connectionManager.connectionState.value != ObdConnectionState.CONNECTED) return false
+        val now = System.currentTimeMillis()
+        val mode03 = connectionManager.sendCommand("03")
+        val mode07 = connectionManager.sendCommand("07")
+        val mode0A = connectionManager.sendCommand("0A")
+        val valid03 = !ObdPidParser.isAdapterError(mode03) && mode03.uppercase().replace(" ", "").contains("43")
+        if (!valid03) return false
+        val stored = ObdPidParser.parseDtcCodes(mode03, "43")
+        val pending = ObdPidParser.parseDtcCodes(mode07, "47")
+        val permanent = ObdPidParser.parseDtcCodes(mode0A, "4A")
+        _liveTelemetry.value = _liveTelemetry.value.copy(
+            pendingDtcCodes = pending,
+            permanentDtcCodes = permanent,
+            dtcScanCompleted = true,
+            lastDtcScanMillis = now,
+            transmissionDtcCodes = ObdPidParser.filterTransmissionDtcs(stored),
+        )
+        _state.value = _state.value.copy(dtcCodes = stored)
+        return true
     }
 
     fun disconnect() {
@@ -295,6 +367,9 @@ class ObdBluetoothManager @Inject constructor(
                 ObdPidCapability("0103", "Fuel System Status", "", statusFor("0103")),
                 ObdPidCapability("0106", "Short-Term Fuel Trim (B1)", "%", statusFor("0106")),
                 ObdPidCapability("0107", "Long-Term Fuel Trim (B1)", "%", statusFor("0107")),
+                ObdPidCapability("0108", "Short-Term Fuel Trim (B2)", "%", statusFor("0108")),
+                ObdPidCapability("0109", "Long-Term Fuel Trim (B2)", "%", statusFor("0109")),
+                ObdPidCapability("010A", "Fuel Pressure (Gauge)", "kPa", statusFor("010A")),
                 ObdPidCapability("010B", "Manifold Absolute Pressure", "kPa", statusFor("010B")),
                 ObdPidCapability("010E", "Timing Advance", "°", statusFor("010E")),
                 ObdPidCapability("0110", "Mass Airflow (MAF)", "g/s", statusFor("0110")),
@@ -302,8 +377,13 @@ class ObdBluetoothManager @Inject constructor(
                 ObdPidCapability("011F", "Engine Runtime", "s", statusFor("011F")),
                 ObdPidCapability("0123", "Fuel Rail Pressure", "kPa", statusFor("0123")),
                 ObdPidCapability("012F", "Fuel Tank Level", "%", statusFor("012F")),
+                ObdPidCapability("0133", "Barometric Pressure", "kPa", statusFor("0133")),
                 ObdPidCapability("0142", "Control Module Voltage", "V", statusFor("0142")),
+                ObdPidCapability("0143", "Absolute Engine Load", "%", statusFor("0143")),
+                ObdPidCapability("0145", "Relative Throttle Position", "%", statusFor("0145")),
                 ObdPidCapability("0146", "Ambient Air Temp", "°C", statusFor("0146")),
+                ObdPidCapability("015C", "Engine Oil Temp", "°C", statusFor("015C")),
+                ObdPidCapability("015E", "Engine Fuel Rate", "L/h", statusFor("015E")),
                 ObdPidCapability("21/22-CVT", "CVT Fluid Temperature", "°C", PidSupportStatus.REQUIRES_MANUFACTURER_INTEGRATION),
                 ObdPidCapability("21/22-LP", "Transmission Line Pressure", "kPa", PidSupportStatus.REQUIRES_MANUFACTURER_INTEGRATION),
                 ObdPidCapability("21/22-TC", "Torque Converter Lockup", "", PidSupportStatus.REQUIRES_MANUFACTURER_INTEGRATION),

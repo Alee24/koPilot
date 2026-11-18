@@ -205,13 +205,29 @@ class LocalVoiceCommandEngine @Inject constructor(
                     "Last observed sign: ${res["sign"]?.jsonPrimitive?.content}."
                 }
             }
-            q.contains("engine") || q.contains("diagnostic") || q.contains("obd") || q.contains("vehicle") -> {
-                val res = parseObj(toolExecutor.executeTool("get_vehicle_diagnostics", emptyObj()))
-                if (res["status"]?.jsonPrimitive?.content != "ok") {
-                    res["reason"]?.jsonPrimitive?.content ?: "OBD-II diagnostics are unavailable."
-                } else {
-                    "Engine RPM ${res["rpm"]?.jsonPrimitive?.content}, coolant ${res["coolant_c"]?.jsonPrimitive?.content} degrees."
-                }
+            q.contains("my car") ||
+                q.contains("everything about") ||
+                q.contains("health report") ||
+                q.contains("engine") ||
+                q.contains("coolant") ||
+                q.contains("overheat") ||
+                q.contains("rpm") ||
+                q.contains("fault") ||
+                q.contains("dtc") ||
+                q.contains("error code") ||
+                q.contains("voltage") ||
+                q.contains("battery") ||
+                q.contains("how much fuel") ||
+                q.contains("fuel efficiency") ||
+                q.contains("sensors are available") ||
+                q.contains("check before driving") ||
+                q.contains("hotter yesterday") ||
+                q.contains("diagnostic") ||
+                q.contains("obd") ||
+                q.contains("last trip") -> {
+                val args = buildJsonObject { put("question", utterance) }
+                val res = parseObj(toolExecutor.executeTool("ask_vehicle_intelligence", args))
+                res["answer"]?.jsonPrimitive?.content ?: "Vehicle intelligence is currently unavailable."
             }
             q.contains("trip") || q.contains("safari") -> {
                 val res = parseObj(toolExecutor.executeTool("get_trip_summary", emptyObj()))

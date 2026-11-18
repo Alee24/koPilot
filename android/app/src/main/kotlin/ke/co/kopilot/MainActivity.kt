@@ -88,6 +88,7 @@ import ke.co.kopilot.feature.soundstudio.SoundProfileDetailsScreen
 import ke.co.kopilot.feature.soundstudio.SoundStudioScreen
 import ke.co.kopilot.feature.soundstudio.SoundStudioViewModel
 import ke.co.kopilot.feature.trips.TripsScreen
+import ke.co.kopilot.intelligence.VehicleIntelligenceScreen
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -303,6 +304,7 @@ class MainActivity : ComponentActivity() {
                                         onOpenRoadQuality = { navController.navigate("road_quality") },
                                         onOpenDrivingBehaviour = { navController.navigate("driving_behaviour") },
                                         onOpenDrivingIntelligence = { navController.navigate("driving_intelligence") },
+                                        onOpenVehicleIntelligence = { navController.navigate("vehicle_intelligence") },
                                         onOpenObd = { navigateTopLevel("obd") },
                                         onOpenTrips = { navigateTopLevel("trips") },
                                         onOpenNavigation = { navController.navigate("navigation") },
@@ -329,6 +331,7 @@ class MainActivity : ComponentActivity() {
                                     ObdScreen(
                                         onBack = { navController.popBackStack() },
                                         onOpenSoundStudio = { navController.navigate("sound_studio") },
+                                        onOpenVehicleIntelligence = { navController.navigate("vehicle_intelligence") },
                                     )
                                 }
                                 composable("sensors") {
@@ -355,6 +358,19 @@ class MainActivity : ComponentActivity() {
                                 composable("driving_intelligence") {
                                     DrivingIntelligenceScreen(
                                         onBack = { navController.popBackStack() },
+                                    )
+                                }
+                                composable("vehicle_intelligence") {
+                                    VehicleIntelligenceScreen(
+                                        onBack = { navController.popBackStack() },
+                                        onExportReport = { reportText ->
+                                            val share = Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_SUBJECT, "KoPilot Vehicle Health Report")
+                                                putExtra(Intent.EXTRA_TEXT, reportText)
+                                            }
+                                            startActivity(Intent.createChooser(share, "Export Vehicle Health Report"))
+                                        },
                                     )
                                 }
                                 composable("settings") {
