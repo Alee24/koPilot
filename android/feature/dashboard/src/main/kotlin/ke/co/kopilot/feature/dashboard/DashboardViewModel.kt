@@ -31,6 +31,9 @@ import ke.co.kopilot.feature.location.SpeedZone
 import ke.co.kopilot.feature.location.SpeedZoneMonitor
 import ke.co.kopilot.feature.sensors.DrivingMotionAnalysis
 import ke.co.kopilot.feature.sensors.LateralMotionState
+import ke.co.kopilot.feature.sensors.RealTimeDrivingIntelligence
+import ke.co.kopilot.feature.sensors.RealTimeDrivingIntelligenceState
+import ke.co.kopilot.feature.sensors.RealTimeIntelligenceInput
 import ke.co.kopilot.feature.sensors.SensorManagerRepository
 import ke.co.kopilot.feature.sensors.SensorSamplingProfile
 import ke.co.kopilot.feature.navigation.NavigationRepository
@@ -82,6 +85,7 @@ data class DashboardUiState(
     val activeTripLogPath: String? = null,
     val speedZone: SpeedZone = SpeedZone.NORMAL,
     val motionAnalysis: DrivingMotionAnalysis = DrivingMotionAnalysis(),
+    val intelligenceState: RealTimeDrivingIntelligenceState = RealTimeDrivingIntelligenceState(),
 )
 
 @HiltViewModel
@@ -102,6 +106,7 @@ class DashboardViewModel @Inject constructor(
     private val tripRepo: TripRepository,
     val tripActivityLogger: TripActivityLogger,
     private val sensorManagerRepo: SensorManagerRepository,
+    private val realTimeIntelligence: RealTimeDrivingIntelligence,
     connectivityObserver: ConnectivityObserver,
 ) : ViewModel() {
 
@@ -134,6 +139,8 @@ class DashboardViewModel @Inject constructor(
     private var lastWatchedPlateAlertMs = 0L
     private var lastWatchedPlateAlerted: String? = null
     private var lastEcuAlertMs = 0L
+    private var lastIntelVoiceAlertMs = 0L
+    private var lastIntelVoiceType: String? = null
     private val explainedSignsInTrip = mutableSetOf<TrafficSignCategory>()
 
     private val coreFlows = combine(
@@ -159,10 +166,11 @@ class DashboardViewModel @Inject constructor(
     val uiState: StateFlow<DashboardUiState> = combine(
         coreFlows,
         sensorFlows,
-        alertCoordinator.state,
+        combine(alertCoordinator.state, realTimeIntelligence.state) { a, i -> a to i },
         obdManager.state,
         tripRepo.trips,
-    ) { core, sensor, alerts, obd, trips ->
+    ) { core, sensor, alertsAndIntel, obd, trips ->
+        val (alerts, intel) = alertsAndIntel
         val speedEval = speedAlertEngine.evaluate(
             fix = sensor.location.currentFix,
             latestSign = sensor.vision.lastObservation,
@@ -191,6 +199,7 @@ class DashboardViewModel @Inject constructor(
             activeTripLogPath = tripActivityLogger.activeLogPath.value,
             speedZone = currentSpeedZone.value,
             motionAnalysis = sensorManagerRepo.state.value.motionAnalysis,
+            intelligenceState = intel,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -200,6 +209,60 @@ class DashboardViewModel @Inject constructor(
 
     init {
         visionPipeline.initializeIfNeeded()
+        // Independent Real-Time Driving Intelligence loop (4 Hz, off main thread, non-blocking)
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                val hub = sensorManagerRepo.state.value
+                val fix = locationTracker.state.value.currentFix
+                val obdConnected = obdManager.state.value.obdConnected
+                val tel = obdManager.liveTelemetry.value
+                val signLimit = visionPipeline.state.value.lastObservation?.category?.speedLimitKmh
+                val evt = realTimeIntelligence.update(
+                    RealTimeIntelligenceInput(
+                        nowMillis = now,
+                        isJourneyActive = isDriving.value,
+                        motionAnalysis = hub.motionAnalysis,
+                        gpsSpeedKmh = fix?.speedKmh,
+                        speedLimitKmh = signLimit,
+                        obdConnected = obdConnected,
+                        obdRpm = tel.engineRpm,
+                        obdThrottlePct = tel.throttlePositionPct,
+                        obdEngineLoadPct = tel.engineLoadPct,
+                        obdMafGramsPerSec = tel.mafGramsPerSec,
+                    ),
+                )
+                if (evt != null && isDriving.value) {
+                    tripActivityLogger.logActivity(
+                        type = "DRIVING_EVENT",
+                        details = "${evt.title}: ${evt.detail} (Safety ${evt.safetyImpact}, Fuel ${evt.fuelImpact})",
+                        timestampMillis = evt.timestampMillis,
+                    )
+                    val s = uiState.value.settings
+                    val shouldSpeak = evt.type.isSafetyCritical &&
+                        !s.alertsMuted &&
+                        (evt.type.name != lastIntelVoiceType || (now - lastIntelVoiceAlertMs) >= 30_000L)
+                    if (shouldSpeak && (s.voiceMode != VoiceMode.QUIET || evt.severity == ke.co.kopilot.feature.sensors.EventSeverity.HIGH)) {
+                        lastIntelVoiceAlertMs = now
+                        lastIntelVoiceType = evt.type.name
+                        alertCoordinator.submit(
+                            alert = AlertMessage(
+                                id = UUID.randomUUID().toString(),
+                                priority = AlertPriority.ROAD_OBSERVATION,
+                                spokenText = "${evt.title}. ${evt.detail}.",
+                                displayText = "${evt.title}: ${evt.detail}",
+                                dedupKey = "intel_${evt.type.name}",
+                                timestampMillis = now,
+                            ),
+                            speechRate = s.voiceSpeed,
+                            language = s.language,
+                            globalMute = s.alertsMuted,
+                        )
+                    }
+                }
+                kotlinx.coroutines.delay(250L)
+            }
+        }
         viewModelScope.launch {
             obdManager.liveTelemetry.collect { tel ->
                 if (!obdManager.state.value.obdConnected) return@collect
@@ -300,11 +363,12 @@ class DashboardViewModel @Inject constructor(
                         if (isDriving.value) {
                             tripActivityLogger.logActivity("WATCHED_PLATE_MATCH", "Watched plate spotted ahead: ${plateObs.rawNormalizedPlate}", now)
                         }
+                        val spokenPlate = KenyanPlateValidator.formatForSpeech(plateObs.rawNormalizedPlate)
                         alertCoordinator.submit(
                             alert = AlertMessage(
                                 id = UUID.randomUUID().toString(),
                                 priority = AlertPriority.ROAD_OBSERVATION,
-                                spokenText = "Watched number plate spotted ahead: ${plateObs.rawNormalizedPlate}",
+                                spokenText = "Watched number plate spotted ahead: $spokenPlate",
                                 displayText = "Watched Plate Ahead: ${plateObs.rawNormalizedPlate}",
                                 dedupKey = "watched_plate_${plateObs.rawNormalizedPlate}",
                                 timestampMillis = now,
@@ -713,7 +777,10 @@ class DashboardViewModel @Inject constructor(
         lastTutorBusyRoadMs = 0L
         lastTutorClearRoadMs = 0L
         clearRoadSinceMs = 0L
+        lastIntelVoiceAlertMs = 0L
+        lastIntelVoiceType = null
         explainedSignsInTrip.clear()
+        realTimeIntelligence.resetForNewJourney(started)
 
         val fix = locationTracker.state.value.currentFix
         val dest = navigationRepo.state.value.destinationName
@@ -827,6 +894,7 @@ class DashboardViewModel @Inject constructor(
         }
         val settings = uiState.value.settings
         if (!settings.alertRoadSignsEnabled) return
+        if (observation.category == TrafficSignCategory.ROADWORKS) return
         if (observation.isUncertain || observation.applicableToDriverLane == false) {
             return
         }

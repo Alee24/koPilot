@@ -96,6 +96,28 @@ object KenyanPlateValidator {
             watched.uppercase().replace(" ", "") == compactTarget
         }
     }
+
+    /**
+     * Formats a plate for TTS so every letter is pronounced individually with full stops
+     * (e.g. "KDA 123A" -> "K. D. A. 1 2 3 A.") instead of reading letter groups as one word.
+     */
+    fun formatForSpeech(plate: String): String {
+        val cleaned = plate.uppercase().replace(Regex("[^A-Z0-9]"), "")
+        if (cleaned.isEmpty()) return ""
+        return buildString {
+            cleaned.forEachIndexed { index, ch ->
+                if (ch.isLetter()) {
+                    append(ch)
+                    append('.')
+                } else {
+                    append(ch)
+                }
+                if (index < cleaned.lastIndex) {
+                    append(' ')
+                }
+            }
+        }
+    }
 }
 
 /**

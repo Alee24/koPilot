@@ -78,6 +78,7 @@ import ke.co.kopilot.feature.dashboard.DashboardScreen
 import ke.co.kopilot.feature.dashboard.DashboardViewModel
 import ke.co.kopilot.feature.dashboard.NavigationScreen
 import ke.co.kopilot.feature.diagnostics.ObdScreen
+import ke.co.kopilot.feature.sensors.DrivingIntelligenceScreen
 import ke.co.kopilot.feature.sensors.SensorsScreen
 import ke.co.kopilot.feature.settings.SettingsScreen
 import ke.co.kopilot.feature.soundstudio.AudioSettingsScreen
@@ -301,6 +302,7 @@ class MainActivity : ComponentActivity() {
                                         onOpenSensors = { navigateTopLevel("sensors") },
                                         onOpenRoadQuality = { navController.navigate("road_quality") },
                                         onOpenDrivingBehaviour = { navController.navigate("driving_behaviour") },
+                                        onOpenDrivingIntelligence = { navController.navigate("driving_intelligence") },
                                         onOpenObd = { navigateTopLevel("obd") },
                                         onOpenTrips = { navigateTopLevel("trips") },
                                         onOpenNavigation = { navController.navigate("navigation") },
@@ -348,6 +350,11 @@ class MainActivity : ComponentActivity() {
                                         onBack = { navController.popBackStack() },
                                         onOpenTrips = { navigateTopLevel("trips") },
                                         initialTab = 2,
+                                    )
+                                }
+                                composable("driving_intelligence") {
+                                    DrivingIntelligenceScreen(
+                                        onBack = { navController.popBackStack() },
                                     )
                                 }
                                 composable("settings") {

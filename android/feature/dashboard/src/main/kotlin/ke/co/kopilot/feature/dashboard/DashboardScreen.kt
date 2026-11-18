@@ -135,6 +135,7 @@ fun DashboardScreen(
     onOpenSensors: () -> Unit = {},
     onOpenRoadQuality: () -> Unit = {},
     onOpenDrivingBehaviour: () -> Unit = {},
+    onOpenDrivingIntelligence: () -> Unit = {},
     onOpenObd: () -> Unit = {},
     onOpenTrips: () -> Unit = {},
     onOpenNavigation: () -> Unit = {},
@@ -274,6 +275,10 @@ fun DashboardScreen(
                 showToolsDialog = false
                 onOpenDrivingBehaviour()
             },
+            onOpenDrivingIntelligence = {
+                showToolsDialog = false
+                onOpenDrivingIntelligence()
+            },
             onOpenRoadQuality = {
                 showToolsDialog = false
                 onOpenRoadQuality()
@@ -397,6 +402,11 @@ fun DashboardScreen(
                                 state = state,
                                 onClick = onOpenRoadQuality,
                             )
+                            LiveIntelligenceCard(
+                                state = state,
+                                isMoving = !isParked,
+                                onClick = onOpenDrivingIntelligence,
+                            )
                             PrimaryActionButtonsRow(
                                 state = state,
                                 onToggleDrive = {
@@ -444,6 +454,11 @@ fun DashboardScreen(
                         RoadQualityLiveCard(
                             state = state,
                             onClick = onOpenRoadQuality,
+                        )
+                        LiveIntelligenceCard(
+                            state = state,
+                            isMoving = !isParked,
+                            onClick = onOpenDrivingIntelligence,
                         )
                         PrimaryActionButtonsRow(
                             state = state,
@@ -1521,6 +1536,155 @@ private fun PrimaryActionButtonsRow(
 }
 
 @Composable
+private fun LiveIntelligenceCard(
+    state: DashboardUiState,
+    isMoving: Boolean,
+    onClick: () -> Unit,
+) {
+    val intel = state.intelligenceState
+    val safetyAnim by androidx.compose.animation.core.animateIntAsState(
+        targetValue = intel.safetyScore,
+        animationSpec = androidx.compose.animation.core.tween(350),
+        label = "dashSafety",
+    )
+    val fuelAnim by androidx.compose.animation.core.animateIntAsState(
+        targetValue = intel.fuelEfficiencyScore,
+        animationSpec = androidx.compose.animation.core.tween(350),
+        label = "dashFuel",
+    )
+    val safetyColor = when {
+        safetyAnim >= 80 -> KoPilotClusterTokens.SmoothRoad
+        safetyAnim >= 55 -> KoPilotClusterTokens.ModerateRoad
+        else -> KoPilotClusterTokens.VeryRough
+    }
+    val fuelColor = when {
+        fuelAnim >= 80 -> KoPilotClusterTokens.PrimaryAccent
+        fuelAnim >= 55 -> KoPilotClusterTokens.ModerateRoad
+        else -> KoPilotClusterTokens.RoughRoad
+    }
+    val gpsReady = state.locationState.currentFix != null
+    val obdReady = state.diagnosticsState.obdConnected
+
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = CockpitCardBg,
+        border = BorderStroke(1.dp, CockpitCardBorder),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "LIVE INTELLIGENCE",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = KoPilotClusterTokens.SecondaryText,
+                    fontWeight = FontWeight.Bold,
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = buildString {
+                            append(if (gpsReady) "GPS" else "No GPS")
+                            append(" • IMU")
+                            if (obdReady) append(" • OBD")
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = KoPilotClusterTokens.SecondaryText,
+                    )
+                    Surface(
+                        color = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.16f),
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        Text(
+                            text = intel.drivingState.label.uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = KoPilotClusterTokens.PrimaryAccent,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Safety Score",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = KoPilotClusterTokens.SecondaryText,
+                    )
+                    Text(
+                        text = "$safetyAnim / 100",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = safetyColor,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Fuel Efficiency",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = KoPilotClusterTokens.SecondaryText,
+                    )
+                    Text(
+                        text = "$fuelAnim / 100",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = fuelColor,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+
+            val latestEvt = intel.latestEvent
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = latestEvt?.let { "${it.title}: ${it.detail}" }
+                        ?: if (state.isDrivingSessionActive) "Smooth driving — no harsh events" else "Ready for active journey",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (latestEvt != null) KoPilotClusterTokens.ModerateRoad else KoPilotClusterTokens.SecondaryText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Details",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = KoPilotClusterTokens.SecondaryAccent,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+
+            if (!isMoving && intel.coachingAdvice.isNotEmpty()) {
+                Text(
+                    text = intel.coachingAdvice.first().message,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = KoPilotClusterTokens.SecondaryText,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun RoadQualityLiveCard(
     state: DashboardUiState,
     onClick: () -> Unit,
@@ -2232,6 +2396,7 @@ private fun DashboardToolsDialog(
     isParked: Boolean,
     onDismiss: () -> Unit,
     onOpenDrivingBehaviour: () -> Unit,
+    onOpenDrivingIntelligence: () -> Unit,
     onOpenRoadQuality: () -> Unit,
     onOpenSensors: () -> Unit,
     onOpenObd: () -> Unit,
@@ -2273,6 +2438,7 @@ private fun DashboardToolsDialog(
                 ) {
                     OutlinedButton(onClick = onOpenRoadQuality) { Text("Road Quality") }
                     OutlinedButton(onClick = onOpenDrivingBehaviour) { Text("Driving Behaviour") }
+                    OutlinedButton(onClick = onOpenDrivingIntelligence) { Text("Live Intelligence") }
                     OutlinedButton(onClick = onOpenSensors) { Text("Sensors Hub") }
                     OutlinedButton(onClick = onOpenObd) { Text("OBD-II Gauges") }
                     OutlinedButton(onClick = onOpenSoundStudio) { Text("Engine Sound Studio") }
