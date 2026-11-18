@@ -14,8 +14,8 @@ android {
         applicationId = "ke.co.kopilot"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "2.5.0"
+        versionCode = 8
+        versionName = "2.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["MAPS_API_KEY"] = System.getenv("KOPILOT_MAPS_API_KEY") ?: ""
@@ -75,6 +75,7 @@ dependencies {
     implementation(project(":feature:settings"))
     implementation(project(":feature:diagnostics"))
     implementation(project(":feature:sensors"))
+    implementation(project(":feature:soundstudio"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

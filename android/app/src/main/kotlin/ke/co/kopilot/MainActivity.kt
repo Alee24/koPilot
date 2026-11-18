@@ -66,9 +66,11 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import dagger.hilt.android.AndroidEntryPoint
 import ke.co.kopilot.core.database.preferences.PreferencesRepository
 import ke.co.kopilot.core.designsystem.theme.KoPilotTheme
@@ -78,6 +80,12 @@ import ke.co.kopilot.feature.dashboard.NavigationScreen
 import ke.co.kopilot.feature.diagnostics.ObdScreen
 import ke.co.kopilot.feature.sensors.SensorsScreen
 import ke.co.kopilot.feature.settings.SettingsScreen
+import ke.co.kopilot.feature.soundstudio.AudioSettingsScreen
+import ke.co.kopilot.feature.soundstudio.ImportSoundPackScreen
+import ke.co.kopilot.feature.soundstudio.SoundLibraryScreen
+import ke.co.kopilot.feature.soundstudio.SoundProfileDetailsScreen
+import ke.co.kopilot.feature.soundstudio.SoundStudioScreen
+import ke.co.kopilot.feature.soundstudio.SoundStudioViewModel
 import ke.co.kopilot.feature.trips.TripsScreen
 import javax.inject.Inject
 
@@ -296,6 +304,7 @@ class MainActivity : ComponentActivity() {
                                         onOpenObd = { navigateTopLevel("obd") },
                                         onOpenTrips = { navigateTopLevel("trips") },
                                         onOpenNavigation = { navController.navigate("navigation") },
+                                        onOpenSoundStudio = { navController.navigate("sound_studio") },
                                         onCallEmergency = { phone ->
                                             startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
                                         },
@@ -315,7 +324,10 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
                                 composable("obd") {
-                                    ObdScreen(onBack = { navController.popBackStack() })
+                                    ObdScreen(
+                                        onBack = { navController.popBackStack() },
+                                        onOpenSoundStudio = { navController.navigate("sound_studio") },
+                                    )
                                 }
                                 composable("sensors") {
                                     SensorsScreen(
@@ -356,6 +368,80 @@ class MainActivity : ComponentActivity() {
                                             }
                                             startActivity(Intent.createChooser(share, "Export KoPilot Trips"))
                                         },
+                                    )
+                                }
+                                composable("sound_studio") {
+                                    val soundVm: SoundStudioViewModel = hiltViewModel()
+                                    SoundStudioScreen(
+                                        viewModel = soundVm,
+                                        onBack = { navController.popBackStack() },
+                                        onOpenLibrary = { navController.navigate("sound_library") },
+                                        onOpenProfileDetails = { id -> navController.navigate("sound_profile/$id") },
+                                        onOpenImport = { navController.navigate("sound_import") },
+                                        onOpenSettings = { navController.navigate("sound_settings") },
+                                    )
+                                }
+                                composable("sound_library") {
+                                    val parentEntry = remember(it) {
+                                        runCatching { navController.getBackStackEntry("sound_studio") }.getOrNull()
+                                    }
+                                    val soundVm: SoundStudioViewModel = if (parentEntry != null) {
+                                        hiltViewModel(parentEntry)
+                                    } else {
+                                        hiltViewModel()
+                                    }
+                                    SoundLibraryScreen(
+                                        viewModel = soundVm,
+                                        onBack = { navController.popBackStack() },
+                                        onOpenProfileDetails = { id -> navController.navigate("sound_profile/$id") },
+                                        onOpenImport = { navController.navigate("sound_import") },
+                                    )
+                                }
+                                composable(
+                                    route = "sound_profile/{profileId}",
+                                    arguments = listOf(navArgument("profileId") { type = NavType.StringType }),
+                                ) { backStackEntry ->
+                                    val parentEntry = remember(backStackEntry) {
+                                        runCatching { navController.getBackStackEntry("sound_studio") }.getOrNull()
+                                    }
+                                    val soundVm: SoundStudioViewModel = if (parentEntry != null) {
+                                        hiltViewModel(parentEntry)
+                                    } else {
+                                        hiltViewModel()
+                                    }
+                                    val profileId = backStackEntry.arguments?.getString("profileId").orEmpty()
+                                    SoundProfileDetailsScreen(
+                                        profileId = profileId,
+                                        viewModel = soundVm,
+                                        onBack = { navController.popBackStack() },
+                                    )
+                                }
+                                composable("sound_import") {
+                                    val parentEntry = remember(it) {
+                                        runCatching { navController.getBackStackEntry("sound_studio") }.getOrNull()
+                                    }
+                                    val soundVm: SoundStudioViewModel = if (parentEntry != null) {
+                                        hiltViewModel(parentEntry)
+                                    } else {
+                                        hiltViewModel()
+                                    }
+                                    ImportSoundPackScreen(
+                                        viewModel = soundVm,
+                                        onBack = { navController.popBackStack() },
+                                    )
+                                }
+                                composable("sound_settings") {
+                                    val parentEntry = remember(it) {
+                                        runCatching { navController.getBackStackEntry("sound_studio") }.getOrNull()
+                                    }
+                                    val soundVm: SoundStudioViewModel = if (parentEntry != null) {
+                                        hiltViewModel(parentEntry)
+                                    } else {
+                                        hiltViewModel()
+                                    }
+                                    AudioSettingsScreen(
+                                        viewModel = soundVm,
+                                        onBack = { navController.popBackStack() },
                                     )
                                 }
                             }

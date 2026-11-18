@@ -73,6 +73,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 fun ObdScreen(
     onBack: () -> Unit,
+    onOpenSoundStudio: () -> Unit = {},
     viewModel: ObdViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -215,6 +216,9 @@ fun ObdScreen(
                         runCatching { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
                     }) {
                         Text("BT Settings")
+                    }
+                    OutlinedButton(onClick = onOpenSoundStudio) {
+                        Text("Engine Sound Studio")
                     }
                 }
             }

@@ -138,6 +138,7 @@ fun DashboardScreen(
     onOpenObd: () -> Unit = {},
     onOpenTrips: () -> Unit = {},
     onOpenNavigation: () -> Unit = {},
+    onOpenSoundStudio: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -284,6 +285,10 @@ fun DashboardScreen(
             onOpenObd = {
                 showToolsDialog = false
                 onOpenObd()
+            },
+            onOpenSoundStudio = {
+                showToolsDialog = false
+                onOpenSoundStudio()
             },
             onOpenTrips = {
                 showToolsDialog = false
@@ -2230,6 +2235,7 @@ private fun DashboardToolsDialog(
     onOpenRoadQuality: () -> Unit,
     onOpenSensors: () -> Unit,
     onOpenObd: () -> Unit,
+    onOpenSoundStudio: () -> Unit,
     onOpenTrips: () -> Unit,
     onOpenSignsDb: () -> Unit,
     onOpenVisionDiag: () -> Unit,
@@ -2269,6 +2275,7 @@ private fun DashboardToolsDialog(
                     OutlinedButton(onClick = onOpenDrivingBehaviour) { Text("Driving Behaviour") }
                     OutlinedButton(onClick = onOpenSensors) { Text("Sensors Hub") }
                     OutlinedButton(onClick = onOpenObd) { Text("OBD-II Gauges") }
+                    OutlinedButton(onClick = onOpenSoundStudio) { Text("Engine Sound Studio") }
                     OutlinedButton(onClick = onOpenTrips) { Text("My Trips (.txt)") }
                     OutlinedButton(onClick = onOpenSignsDb) { Text("Road Signs DB") }
                     OutlinedButton(onClick = onOpenVisionDiag) { Text("Offline AI Diag") }
