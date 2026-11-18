@@ -67,6 +67,7 @@ data class VisionPipelineState(
     val recommendedZoomRatio: Float = 1.2f,
     val trackedObjects: List<TrackedRoadObject> = emptyList(),
     val signRoiBoxes: List<TrackedRoadObject> = emptyList(),
+    val brakeLightBoxes: List<BrakeLightSpot> = emptyList(),
     val laneOverlay: LaneOverlayState = LaneOverlayState(),
     val lastInferenceLatencyMs: Long = 0L,
     val recentErrors: List<String> = emptyList(),
@@ -215,9 +216,26 @@ class RoadVisionPipeline @Inject constructor(
                     )
                 }
             }
-            val tracked = multiObjectTracker.update(rawObjects, timestampMillis)
-
             val lighting = FrontRoadAnalyzer.analyzeLightingAndLights(bitmap)
+            val combinedObjects = if (rawObjects.isEmpty() && lighting.brakeLightBoxes.isNotEmpty()) {
+                val minL = lighting.brakeLightBoxes.minOf { it.normLeft }
+                val minT = lighting.brakeLightBoxes.minOf { it.normTop }
+                val maxR = lighting.brakeLightBoxes.maxOf { it.normRight }
+                val maxB = lighting.brakeLightBoxes.maxOf { it.normBottom }
+                listOf(
+                    RawObjectDetection(
+                        label = "Car (Braking)",
+                        confidence = 0.85f,
+                        normalizedLeft = (minL - 0.06f).coerceIn(0f, 1f),
+                        normalizedTop = (minT - 0.16f).coerceIn(0f, 1f),
+                        normalizedRight = (maxR + 0.06f).coerceIn(0f, 1f),
+                        normalizedBottom = (maxB + 0.08f).coerceIn(0f, 1f),
+                    ),
+                )
+            } else {
+                rawObjects
+            }
+            val tracked = multiObjectTracker.update(combinedObjects, timestampMillis)
             brakeLightStreak = if (lighting.redBrakeLightsAhead) brakeLightStreak + 1 else 0
             darkStreak = if (lighting.isDark) darkStreak + 1 else 0
             if (lighting.trafficLightSignal != TrafficLightSignal.NONE && lighting.trafficLightSignal == lastTrafficSignal) {
@@ -388,6 +406,7 @@ class RoadVisionPipeline @Inject constructor(
             _state.value = _state.value.copy(
                 trackedObjects = tracked,
                 signRoiBoxes = roiOverlayBoxes,
+                brakeLightBoxes = lighting.brakeLightBoxes,
                 laneOverlay = laneState,
                 lastInferenceLatencyMs = latencyMs,
                 lastObservation = confirmed ?: _state.value.lastObservation,

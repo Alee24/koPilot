@@ -16,6 +16,15 @@ object SignCandidateParser {
         val rawUpper = rawText.uppercase().replace(Regex("\\s+"), " ").trim()
         if (rawUpper.isEmpty()) return null
 
+        // Never treat Kenyan vehicle registration plates (e.g. "KDM", "KDM 632A", "KCA456B", "GK A123") as road signs
+        val compact = rawUpper.replace(" ", "")
+        if (Regex("^K[A-Z]{2}(\\d{3}[A-Z]?)?$").matches(compact) ||
+            Regex("^(GK|CD|UN)[A-Z]?\\d{2,4}[A-Z]?$").matches(compact) ||
+            FrontRoadAnalyzer.extractKenyanPlate(rawUpper) != null
+        ) {
+            return null
+        }
+
         // Normalize common OCR letter/digit confusions on circular speed signs (e.g. "3O" -> "30")
         val speedNormalized = rawUpper
             .replace(Regex("\\b([1-9])O\\b"), "$10")

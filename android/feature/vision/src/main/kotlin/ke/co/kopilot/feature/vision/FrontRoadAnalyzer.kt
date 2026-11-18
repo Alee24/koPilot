@@ -10,11 +10,19 @@ enum class TrafficLightSignal {
     GREEN,
 }
 
+data class BrakeLightSpot(
+    val normLeft: Float,
+    val normTop: Float,
+    val normRight: Float,
+    val normBottom: Float,
+)
+
 data class FrameLightingAndSignals(
     val averageLuminance: Float,
     val isDark: Boolean,
     val redBrakeLightsAhead: Boolean,
     val trafficLightSignal: TrafficLightSignal,
+    val brakeLightBoxes: List<BrakeLightSpot> = emptyList(),
 )
 
 object FrontRoadAnalyzer {
@@ -79,10 +87,15 @@ object FrontRoadAnalyzer {
         var upperAmberHits = 0
         var upperGreenHits = 0
         var upperSampled = 0
+        val redGridCols = 40
+        val redGridRows = 30
+        val redGrid = Array(redGridRows) { BooleanArray(redGridCols) }
 
+        var row = 0
         var y = 0
         while (y < h) {
             val normY = y.toFloat() / h
+            var col = 0
             var x = 0
             while (x < w) {
                 val normX = x.toFloat() / w
@@ -94,13 +107,18 @@ object FrontRoadAnalyzer {
                 lumSum += lum
                 lumCount++
 
-                val isBrightRed = r >= 195 && g <= 80 && b <= 80 && (r - g) >= 115
+                val isBrightRed = r >= 170 && g <= 115 && b <= 115 && (r - g) >= 80 && (r - b) >= 80
                 val isBrightAmber = r >= 200 && g in 125..210 && b <= 75 && (r - b) >= 120
                 val isBrightGreen = g >= 185 && r <= 105 && b >= 90 && (g - r) >= 75
 
                 // Middle road corridor: potential vehicle brake lights ahead
-                if (normY in 0.38f..0.78f && normX in 0.22f..0.78f) {
-                    if (isBrightRed) brakeRedHits++
+                if (normY in 0.30f..0.85f && normX in 0.12f..0.88f) {
+                    if (isBrightRed) {
+                        brakeRedHits++
+                        if (row < redGridRows && col < redGridCols) {
+                            redGrid[row][col] = true
+                        }
+                    }
                     brakeSampled++
                 }
                 // Upper road corridor: potential traffic signals / streetlights
@@ -110,10 +128,14 @@ object FrontRoadAnalyzer {
                     if (isBrightGreen) upperGreenHits++
                     upperSampled++
                 }
+                col++
                 x += stepX
             }
+            row++
             y += stepY
         }
+
+        val brakeBoxes = clusterRedSpots(redGrid, redGridRows, redGridCols)
 
         val avgLum = if (lumCount > 0) lumSum / lumCount else 128f
         val brakeRatio = if (brakeSampled > 0) brakeRedHits.toFloat() / brakeSampled else 0f
@@ -131,9 +153,61 @@ object FrontRoadAnalyzer {
         return FrameLightingAndSignals(
             averageLuminance = avgLum,
             isDark = avgLum < DARKNESS_LUMINANCE_THRESHOLD,
-            redBrakeLightsAhead = brakeRatio >= 0.018f,
+            redBrakeLightsAhead = brakeRatio >= 0.008f || brakeBoxes.isNotEmpty(),
             trafficLightSignal = tlSignal,
+            brakeLightBoxes = brakeBoxes,
         )
+    }
+
+    private fun clusterRedSpots(
+        grid: Array<BooleanArray>,
+        rows: Int,
+        cols: Int,
+    ): List<BrakeLightSpot> {
+        val visited = Array(rows) { BooleanArray(cols) }
+        val spots = mutableListOf<BrakeLightSpot>()
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                if (!grid[r][c] || visited[r][c]) continue
+                var minR = r
+                var maxR = r
+                var minC = c
+                var maxC = c
+                var count = 0
+                val queue = ArrayDeque<Pair<Int, Int>>()
+                queue.addLast(r to c)
+                visited[r][c] = true
+                while (queue.isNotEmpty()) {
+                    val (cr, cc) = queue.removeFirst()
+                    count++
+                    minR = minOf(minR, cr)
+                    maxR = maxOf(maxR, cr)
+                    minC = minOf(minC, cc)
+                    maxC = maxOf(maxC, cc)
+                    for (dr in -1..1) {
+                        for (dc in -1..1) {
+                            val nr = cr + dr
+                            val nc = cc + dc
+                            if (nr in 0 until rows && nc in 0 until cols && grid[nr][nc] && !visited[nr][nc]) {
+                                visited[nr][nc] = true
+                                queue.addLast(nr to nc)
+                            }
+                        }
+                    }
+                }
+                if (count >= 2) {
+                    spots.add(
+                        BrakeLightSpot(
+                            normLeft = (minC.toFloat() / cols).coerceIn(0f, 1f),
+                            normTop = (minR.toFloat() / rows).coerceIn(0f, 1f),
+                            normRight = ((maxC + 1).toFloat() / cols).coerceIn(0f, 1f),
+                            normBottom = ((maxR + 1).toFloat() / rows).coerceIn(0f, 1f),
+                        ),
+                    )
+                }
+            }
+        }
+        return spots.take(6)
     }
 
     const val DARKNESS_LUMINANCE_THRESHOLD = 48f

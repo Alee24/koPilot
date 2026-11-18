@@ -35,5 +35,9 @@ class SignCandidateParserTest {
         // SCHOOL ZONE
         val school = SignCandidateParser.parseSignFromText("SCHOOL ZONE", hasSignBorderColor = false, normalizedCenterX = 0.6f)
         assertEquals(TrafficSignCategory.SCHOOL_ZONE, school?.category)
+
+        // Kenyan license plates must NEVER be misclassified as road signs
+        assertNull(SignCandidateParser.parseSignFromText("KDM", hasSignBorderColor = true, normalizedCenterX = 0.5f, hasWhiteInterior = false))
+        assertNull(SignCandidateParser.parseSignFromText("KDM 632A", hasSignBorderColor = true, normalizedCenterX = 0.5f, hasWhiteInterior = false))
     }
 }

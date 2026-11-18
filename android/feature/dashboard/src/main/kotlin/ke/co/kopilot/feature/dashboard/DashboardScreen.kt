@@ -490,6 +490,7 @@ private fun ViewportCard(
                             val right = obj.normalizedRight * size.width
                             val bottom = obj.normalizedBottom * size.height
                             val boxColor = when (obj.label) {
+                                "Car (Braking)" -> Color(0xFFFF1744)
                                 "Pedestrian", "Bicycle" -> KoPilotColors.WarningAmber
                                 "Motorbike", "Tractor", "Lorry / Bus" -> Color(0xFFFF7043)
                                 "Car", "Vehicle" -> MintTeal
@@ -528,32 +529,55 @@ private fun ViewportCard(
                                 style = Stroke(width = 1.5.dp.toPx()),
                             )
                         }
-                        // Yellow lane lines & corridor overlay when driving with camera active
+                        // Highlight detected bright red brake lights ahead
+                        for (spot in state.visionState.brakeLightBoxes) {
+                            val left = spot.normLeft * size.width
+                            val top = spot.normTop * size.height
+                            val right = spot.normRight * size.width
+                            val bottom = spot.normBottom * size.height
+                            drawRect(
+                                color = Color(0xFFFF1744),
+                                topLeft = Offset(left, top),
+                                size = Size((right - left).coerceAtLeast(8f), (bottom - top).coerceAtLeast(8f)),
+                                style = Stroke(width = 3.dp.toPx()),
+                            )
+                        }
+                        // Drivable road surface coloring + yellow lane lines when driving with camera active
                         if (state.isDrivingSessionActive && state.settings.sensorCameraEnabled) {
                             val lane = state.visionState.laneOverlay
+                            val yellowLane = Color(0xFFFFD600)
+                            val alertRed = Color(0xFFFF5252)
+                            val isShifting = lane.shiftEvent != LaneShiftEvent.NONE
+
+                            // Color the segmented drivable road polygon
+                            if (lane.roadLeftPoints.size >= 2 && lane.roadRightPoints.size >= 2) {
+                                val roadPath = Path().apply {
+                                    val firstL = lane.roadLeftPoints.first()
+                                    moveTo(firstL.first * size.width, firstL.second * size.height)
+                                    for (pt in lane.roadLeftPoints.drop(1)) {
+                                        lineTo(pt.first * size.width, pt.second * size.height)
+                                    }
+                                    for (pt in lane.roadRightPoints.reversed()) {
+                                        lineTo(pt.first * size.width, pt.second * size.height)
+                                    }
+                                    close()
+                                }
+                                drawPath(
+                                    path = roadPath,
+                                    color = if (isShifting) alertRed.copy(alpha = 0.22f) else MintTeal.copy(alpha = 0.22f),
+                                )
+                            }
+
                             val lTop = Offset(lane.leftTopX * size.width, lane.leftTopY * size.height)
                             val lBot = Offset(lane.leftBottomX * size.width, lane.leftBottomY * size.height)
                             val rTop = Offset(lane.rightTopX * size.width, lane.rightTopY * size.height)
                             val rBot = Offset(lane.rightBottomX * size.width, lane.rightBottomY * size.height)
-                            val yellowLane = Color(0xFFFFD600)
-                            val alertRed = Color(0xFFFF5252)
                             val leftColor = if (lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_LEFT || lane.shiftEvent == LaneShiftEvent.SHIFTING_LEFT) alertRed else yellowLane
                             val rightColor = if (lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_RIGHT || lane.shiftEvent == LaneShiftEvent.SHIFTING_RIGHT) alertRed else yellowLane
                             val dashEffect = if (lane.lanesDetected) null else PathEffect.dashPathEffect(floatArrayOf(18f, 14f), 0f)
                             val laneStroke = if (lane.lanesDetected) 4.dp.toPx() else 2.5.dp.toPx()
                             val laneAlpha = if (lane.lanesDetected) 0.95f else 0.55f
 
-                            val corridor = Path().apply {
-                                moveTo(lTop.x, lTop.y)
-                                lineTo(rTop.x, rTop.y)
-                                lineTo(rBot.x, rBot.y)
-                                lineTo(lBot.x, lBot.y)
-                                close()
-                            }
-                            drawPath(
-                                path = corridor,
-                                color = yellowLane.copy(alpha = if (lane.lanesDetected) 0.12f else 0.05f),
-                            )
                             drawLine(
                                 color = leftColor.copy(alpha = laneAlpha),
                                 start = lTop,

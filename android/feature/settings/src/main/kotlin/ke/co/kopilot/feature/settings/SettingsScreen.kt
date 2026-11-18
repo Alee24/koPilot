@@ -291,6 +291,57 @@ fun SettingsScreen(
                     settings.hazardAdvisoriesEnabled,
                     viewModel::setHazardAdvisories,
                 )
+                Spacer(Modifier.height(6.dp))
+                var showSignsDbDialog by remember { mutableStateOf(false) }
+                OutlinedButton(onClick = { showSignsDbDialog = true }) {
+                    Text("View Road Signs Database (${viewModel.roadSignDatabase.size} Signs)")
+                }
+                if (showSignsDbDialog) {
+                    var signQuery by remember { mutableStateOf("") }
+                    val filteredSigns = remember(signQuery) {
+                        val q = signQuery.trim().lowercase()
+                        viewModel.roadSignDatabase.filter {
+                            q.isEmpty() || it.title.lowercase().contains(q) || it.spokenAdvice.lowercase().contains(q) || it.shape.lowercase().contains(q)
+                        }
+                    }
+                    AlertDialog(
+                        onDismissRequest = { showSignsDbDialog = false },
+                        title = { Text("Kenyan Road Signs Database") },
+                        text = {
+                            Column(
+                                modifier = Modifier.verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = if (viewModel.isCustomSignModelLoaded) {
+                                        "Engine: Custom LiteRT TFLite + OCR + Shape CV"
+                                    } else {
+                                        "Engine: Hybrid Offline OCR + Shape/Symbol CV (train custom .tflite via ml/training/)"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                OutlinedTextField(
+                                    value = signQuery,
+                                    onValueChange = { signQuery = it },
+                                    label = { Text("Search road sign...") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                filteredSigns.forEach { entry ->
+                                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                        Text("${entry.title} (${entry.code})", style = MaterialTheme.typography.titleSmall)
+                                        Text("Shape: ${entry.shape}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                        Text("Meaning & Action: ${entry.spokenAdvice}", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showSignsDbDialog = false }) { Text("Close") }
+                        },
+                    )
+                }
             }
 
             // Navigation

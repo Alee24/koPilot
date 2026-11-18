@@ -3,6 +3,7 @@ package ke.co.kopilot.feature.vision
 import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.annotation.VisibleForTesting
+import kotlin.math.abs
 
 enum class LaneShiftEvent {
     NONE,
@@ -14,6 +15,7 @@ enum class LaneShiftEvent {
 
 data class LaneOverlayState(
     val lanesDetected: Boolean = false,
+    val roadSurfaceDetected: Boolean = false,
     val leftTopX: Float = 0.36f,
     val leftTopY: Float = 0.56f,
     val leftBottomX: Float = 0.14f,
@@ -22,14 +24,16 @@ data class LaneOverlayState(
     val rightTopY: Float = 0.56f,
     val rightBottomX: Float = 0.86f,
     val rightBottomY: Float = 0.94f,
+    val roadLeftPoints: List<Pair<Float, Float>> = emptyList(),
+    val roadRightPoints: List<Pair<Float, Float>> = emptyList(),
     val centerOffset: Float = 0f,
     val shiftEvent: LaneShiftEvent = LaneShiftEvent.NONE,
 )
 
 /**
- * Fast on-device road lane detector (< 2 ms per frame).
- * Scans the lower road region for white or yellow lane markings, fits left/right lane lines,
- * and computes lane-centering offset and lane shift/departure events.
+ * Fast on-device drivable road segmentation & lane tracker (< 2 ms per frame).
+ * Learns the bottom-center asphalt signature, traces left/right drivable road boundaries
+ * across 6 scan rows so the UI can color the active road surface and detect veering off-road.
  */
 object LaneDetector {
 
@@ -40,64 +44,83 @@ object LaneDetector {
         val h = bitmap.height
         if (w < 64 || h < 64) return LaneOverlayState()
 
-        val leftHits = mutableListOf<Pair<Float, Float>>()
-        val rightHits = mutableListOf<Pair<Float, Float>>()
+        val (roadR, roadG, roadB, roadLum) = estimateBottomRoadColor(bitmap, w, h)
+
+        val roadLeftPts = mutableListOf<Pair<Float, Float>>()
+        val roadRightPts = mutableListOf<Pair<Float, Float>>()
+        val laneLeftHits = mutableListOf<Pair<Float, Float>>()
+        val laneRightHits = mutableListOf<Pair<Float, Float>>()
+
+        val step = (w / 120).coerceAtLeast(1)
 
         for (yNorm in SCAN_Y_NORMS) {
             val y = (yNorm * h).toInt().coerceIn(0, h - 1)
-            val roadBaselineLum = estimateRoadLuminance(bitmap, w, y)
+            val rowLum = estimateRoadLuminance(bitmap, w, y)
 
-            // Search outward from lane center (0.48 -> 0.05) for left marking
-            var foundLeftX: Float? = null
+            // Scan left from center (0.48 -> 0.04)
+            var leftEdgeX = 0.04f
+            var foundLaneLeft: Float? = null
             var x = (w * 0.48f).toInt()
-            val minLeft = (w * 0.05f).toInt()
-            val step = (w / 140).coerceAtLeast(1)
+            val minLeft = (w * 0.04f).toInt()
             while (x >= minLeft) {
-                if (isLaneMarkingPixel(bitmap.getPixel(x, y), roadBaselineLum)) {
-                    foundLeftX = x.toFloat() / w
+                val px = bitmap.getPixel(x, y)
+                if (isLaneMarkingPixel(px, rowLum)) {
+                    foundLaneLeft = x.toFloat() / w
+                    leftEdgeX = foundLaneLeft
+                    break
+                }
+                if (!matchesRoadAsphalt(px, roadR, roadG, roadB, roadLum)) {
+                    leftEdgeX = (x.toFloat() / w).coerceIn(0.04f, 0.46f)
                     break
                 }
                 x -= step
             }
-            if (foundLeftX != null) leftHits.add(foundLeftX to yNorm)
+            roadLeftPts.add(leftEdgeX to yNorm)
+            if (foundLaneLeft != null) laneLeftHits.add(foundLaneLeft to yNorm)
 
-            // Search outward from lane center (0.52 -> 0.95) for right marking
-            var foundRightX: Float? = null
+            // Scan right from center (0.52 -> 0.96)
+            var rightEdgeX = 0.96f
+            var foundLaneRight: Float? = null
             x = (w * 0.52f).toInt()
-            val maxRight = (w * 0.95f).toInt()
+            val maxRight = (w * 0.96f).toInt()
             while (x <= maxRight) {
-                if (isLaneMarkingPixel(bitmap.getPixel(x, y), roadBaselineLum)) {
-                    foundRightX = x.toFloat() / w
+                val px = bitmap.getPixel(x, y)
+                if (isLaneMarkingPixel(px, rowLum)) {
+                    foundLaneRight = x.toFloat() / w
+                    rightEdgeX = foundLaneRight
+                    break
+                }
+                if (!matchesRoadAsphalt(px, roadR, roadG, roadB, roadLum)) {
+                    rightEdgeX = (x.toFloat() / w).coerceIn(0.54f, 0.96f)
                     break
                 }
                 x += step
             }
-            if (foundRightX != null) rightHits.add(foundRightX to yNorm)
+            roadRightPts.add(rightEdgeX to yNorm)
+            if (foundLaneRight != null) laneRightHits.add(foundLaneRight to yNorm)
         }
 
-        val hasLeft = leftHits.size >= 2
-        val hasRight = rightHits.size >= 2
-        if (!hasLeft && !hasRight) {
-            return LaneOverlayState(lanesDetected = false)
-        }
+        val hasLaneMarks = laneLeftHits.size >= 2 || laneRightHits.size >= 2
+        val lTop = if (laneLeftHits.size >= 2) laneLeftHits.first() else roadLeftPts.first()
+        val lBot = if (laneLeftHits.size >= 2) laneLeftHits.last() else roadLeftPts.last()
+        val rTop = if (laneRightHits.size >= 2) laneRightHits.first() else roadRightPts.first()
+        val rBot = if (laneRightHits.size >= 2) laneRightHits.last() else roadRightPts.last()
 
-        val leftTop = if (hasLeft) leftHits.first() else (1f - rightHits.first().first).coerceIn(0.15f, 0.48f) to rightHits.first().second
-        val leftBot = if (hasLeft) leftHits.last() else (1f - rightHits.last().first).coerceIn(0.05f, 0.46f) to rightHits.last().second
-        val rightTop = if (hasRight) rightHits.first() else (1f - leftTop.first).coerceIn(0.52f, 0.85f) to leftTop.second
-        val rightBot = if (hasRight) rightHits.last() else (1f - leftBot.first).coerceIn(0.54f, 0.95f) to leftBot.second
-
-        val (offset, shiftEvent) = computeLaneShift(leftBot.first, rightBot.first)
+        val (offset, shiftEvent) = computeLaneShift(lBot.first, rBot.first)
 
         return LaneOverlayState(
-            lanesDetected = true,
-            leftTopX = leftTop.first,
-            leftTopY = leftTop.second,
-            leftBottomX = leftBot.first,
-            leftBottomY = leftBot.second,
-            rightTopX = rightTop.first,
-            rightTopY = rightTop.second,
-            rightBottomX = rightBot.first,
-            rightBottomY = rightBot.second,
+            lanesDetected = hasLaneMarks,
+            roadSurfaceDetected = roadLeftPts.isNotEmpty() && roadRightPts.isNotEmpty(),
+            leftTopX = lTop.first,
+            leftTopY = lTop.second,
+            leftBottomX = lBot.first,
+            leftBottomY = lBot.second,
+            rightTopX = rTop.first,
+            rightTopY = rTop.second,
+            rightBottomX = rBot.first,
+            rightBottomY = rBot.second,
+            roadLeftPoints = roadLeftPts,
+            roadRightPoints = roadRightPts,
             centerOffset = offset,
             shiftEvent = shiftEvent,
         )
@@ -107,7 +130,6 @@ object LaneDetector {
     internal fun computeLaneShift(leftBottomX: Float, rightBottomX: Float): Pair<Float, LaneShiftEvent> {
         val laneWidth = (rightBottomX - leftBottomX).coerceAtLeast(0.18f)
         val laneMid = (leftBottomX + rightBottomX) / 2f
-        // Positive offset => car center (0.5) is to the right of laneMid (shifting right)
         val offset = ((0.5f - laneMid) / (laneWidth / 2f)).coerceIn(-1f, 1f)
         val event = when {
             offset <= -0.45f -> LaneShiftEvent.LANE_DEPARTURE_LEFT
@@ -117,6 +139,48 @@ object LaneDetector {
             else -> LaneShiftEvent.NONE
         }
         return offset to event
+    }
+
+    private data class RoadColorSample(val r: Float, val g: Float, val b: Float, val lum: Float)
+
+    private fun estimateBottomRoadColor(bitmap: Bitmap, w: Int, h: Int): RoadColorSample {
+        var sr = 0f
+        var sg = 0f
+        var sb = 0f
+        var count = 0
+        val yStart = (h * 0.86f).toInt()
+        val yEnd = (h * 0.94f).toInt()
+        val xStart = (w * 0.35f).toInt()
+        val xEnd = (w * 0.65f).toInt()
+        val stepX = ((xEnd - xStart) / 8).coerceAtLeast(1)
+        val stepY = ((yEnd - yStart) / 3).coerceAtLeast(1)
+        var y = yStart
+        while (y <= yEnd) {
+            var x = xStart
+            while (x <= xEnd) {
+                val px = bitmap.getPixel(x.coerceIn(0, w - 1), y.coerceIn(0, h - 1))
+                sr += Color.red(px)
+                sg += Color.green(px)
+                sb += Color.blue(px)
+                count++
+                x += stepX
+            }
+            y += stepY
+        }
+        if (count == 0) return RoadColorSample(80f, 80f, 80f, 80f)
+        val r = sr / count
+        val g = sg / count
+        val b = sb / count
+        return RoadColorSample(r, g, b, 0.299f * r + 0.587f * g + 0.114f * b)
+    }
+
+    private fun matchesRoadAsphalt(px: Int, roadR: Float, roadG: Float, roadB: Float, roadLum: Float): Boolean {
+        val r = Color.red(px)
+        val g = Color.green(px)
+        val b = Color.blue(px)
+        val lum = 0.299f * r + 0.587f * g + 0.114f * b
+        val colorDist = (abs(r - roadR) + abs(g - roadG) + abs(b - roadB)) / 3f
+        return abs(lum - roadLum) <= 44f && colorDist <= 38f
     }
 
     private fun estimateRoadLuminance(bitmap: Bitmap, w: Int, y: Int): Float {

@@ -19,6 +19,9 @@ import ke.co.kopilot.feature.diagnostics.ObdBluetoothManager
 import ke.co.kopilot.feature.diagnostics.PairedBluetoothDevice
 import ke.co.kopilot.feature.trips.TripRepository
 import ke.co.kopilot.feature.vehicle.VehicleProfileRepository
+import ke.co.kopilot.feature.vision.LiteRtSignClassifier
+import ke.co.kopilot.feature.vision.LocalRoadSignCatalog
+import ke.co.kopilot.feature.vision.LocalRoadSignEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -46,7 +49,11 @@ class SettingsViewModel @Inject constructor(
     private val tokenStore: SecureTokenStore,
     private val okHttpClient: OkHttpClient,
     private val speechSink: SpeechSink,
+    private val signCatalog: LocalRoadSignCatalog,
+    private val liteRtSignClassifier: LiteRtSignClassifier,
 ) : ViewModel() {
+    val roadSignDatabase: List<LocalRoadSignEntry> get() = signCatalog.allEntries()
+    val isCustomSignModelLoaded: Boolean get() = liteRtSignClassifier.isAvailable
 
     private val _backendUrl = MutableStateFlow(tokenStore.getBackendBaseUrl())
     val backendUrl: StateFlow<String> = _backendUrl.asStateFlow()
