@@ -146,6 +146,7 @@ class MainActivity : ComponentActivity() {
                             onOpenSettings = { navController.navigate("settings") },
                             onOpenSensors = { navController.navigate("sensors") },
                             onOpenRoadQuality = { navController.navigate("road_quality") },
+                            onOpenDrivingBehaviour = { navController.navigate("driving_behaviour") },
                             onOpenObd = { navController.navigate("obd") },
                             onOpenTrips = { navController.navigate("trips") },
                             onCallEmergency = { phone ->
@@ -172,6 +173,13 @@ class MainActivity : ComponentActivity() {
                             onBack = { navController.popBackStack() },
                             onOpenTrips = { navController.navigate("trips") },
                             initialTab = 1,
+                        )
+                    }
+                    composable("driving_behaviour") {
+                        SensorsScreen(
+                            onBack = { navController.popBackStack() },
+                            onOpenTrips = { navController.navigate("trips") },
+                            initialTab = 2,
                         )
                     }
                     composable("settings") {

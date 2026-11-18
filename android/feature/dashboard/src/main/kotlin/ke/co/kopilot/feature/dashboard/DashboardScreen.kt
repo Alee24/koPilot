@@ -84,6 +84,7 @@ import ke.co.kopilot.feature.diagnostics.ObdPidCapability
 import ke.co.kopilot.feature.diagnostics.PidSupportStatus
 import ke.co.kopilot.feature.sensors.LateralMotionState
 import ke.co.kopilot.feature.vision.LaneShiftEvent
+import ke.co.kopilot.feature.vision.LocalRoadSignEntry
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -118,6 +119,7 @@ fun DashboardScreen(
     onOpenSettings: () -> Unit,
     onOpenSensors: () -> Unit = {},
     onOpenRoadQuality: () -> Unit = {},
+    onOpenDrivingBehaviour: () -> Unit = {},
     onOpenObd: () -> Unit = {},
     onOpenTrips: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
@@ -130,6 +132,7 @@ fun DashboardScreen(
     var showTripsDialog by remember { mutableStateOf(false) }
     var showVisionDiagDialog by remember { mutableStateOf(false) }
     var showObdLiveDialog by remember { mutableStateOf(false) }
+    var showSignsDbDialog by remember { mutableStateOf(false) }
     val isParked = (state.speedEvaluation.currentSpeedKmh ?: 0f) < 5f
 
     if (!state.settings.safetyDisclosureAccepted) {
@@ -236,6 +239,13 @@ fun DashboardScreen(
         )
     }
 
+    if (showSignsDbDialog) {
+        RoadSignsDatabaseDialog(
+            signs = viewModel.visionPipeline.signCatalog.allEntries(),
+            onDismiss = { showSignsDbDialog = false },
+        )
+    }
+
     val screenBgColor by animateColorAsState(
         targetValue = when (state.speedZone) {
             SpeedZone.OPTIMAL_CRUISE -> Color(0xFF0A244D)
@@ -300,10 +310,20 @@ fun DashboardScreen(
                         )
                     }
                 }
+                    QuickPagesStrip(
+                        isParked = isParked,
+                        onOpenRoadQuality = onOpenRoadQuality,
+                        onOpenDrivingBehaviour = onOpenDrivingBehaviour,
+                        onOpenSensors = onOpenSensors,
+                        onOpenObd = onOpenObd,
+                        onOpenTrips = onOpenTrips,
+                        onOpenSignsDb = { showSignsDbDialog = true },
+                        onOpenVisionDiag = { showVisionDiagDialog = true },
+                    )
                     QuickInfoCardsRow(
                         state = state,
                         onOpenDestination = { showDestinationDialog = true },
-                        onOpenSettings = onOpenSettings,
+                        onOpenObd = onOpenObd,
                     )
                     PrimaryActionButtonsRow(
                         state = state,
@@ -367,6 +387,16 @@ fun DashboardScreen(
                     state = state,
                     onClick = onOpenRoadQuality,
                 )
+                QuickPagesStrip(
+                    isParked = isParked,
+                    onOpenRoadQuality = onOpenRoadQuality,
+                    onOpenDrivingBehaviour = onOpenDrivingBehaviour,
+                    onOpenSensors = onOpenSensors,
+                    onOpenObd = onOpenObd,
+                    onOpenTrips = onOpenTrips,
+                    onOpenSignsDb = { showSignsDbDialog = true },
+                    onOpenVisionDiag = { showVisionDiagDialog = true },
+                )
                 VoiceAssistantBar(
                     state = state,
                     onToggleVoice = viewModel::toggleVoiceConnection,
@@ -375,7 +405,7 @@ fun DashboardScreen(
                 QuickInfoCardsRow(
                     state = state,
                     onOpenDestination = { showDestinationDialog = true },
-                    onOpenSettings = onOpenSettings,
+                    onOpenObd = onOpenObd,
                 )
                 PrimaryActionButtonsRow(
                     state = state,
@@ -1162,7 +1192,7 @@ private fun VoiceAssistantBar(
 private fun QuickInfoCardsRow(
     state: DashboardUiState,
     onOpenDestination: () -> Unit,
-    onOpenSettings: () -> Unit,
+    onOpenObd: () -> Unit,
 ) {
     val route = state.navigationState.activeRoute
     val destText = state.navigationState.destinationName ?: "Not set"
@@ -1202,7 +1232,7 @@ private fun QuickInfoCardsRow(
             showChevron = false,
         )
         QuickInfoCard(
-            modifier = Modifier.weight(1f).clickable(onClick = onOpenSettings),
+            modifier = Modifier.weight(1f).clickable(onClick = onOpenObd),
             icon = Icons.Default.DirectionsCar,
             iconTint = MintTeal,
             title = "Vehicle (OBD-II)",
@@ -1927,6 +1957,168 @@ private fun ObdLiveDashboardDialog(
                                 text = "${cap.pidHex} ${cap.name}: ${cap.status.name}",
                                 style = MaterialTheme.typography.bodySmall,
                             )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+@Composable
+private fun QuickPagesStrip(
+    isParked: Boolean,
+    onOpenRoadQuality: () -> Unit,
+    onOpenDrivingBehaviour: () -> Unit,
+    onOpenSensors: () -> Unit,
+    onOpenObd: () -> Unit,
+    onOpenTrips: () -> Unit,
+    onOpenSignsDb: () -> Unit,
+    onOpenVisionDiag: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        QuickPageChip(
+            icon = Icons.Default.GraphicEq,
+            label = "Road Quality",
+            accent = KoPilotClusterTokens.SmoothRoad,
+            onClick = onOpenRoadQuality,
+        )
+        QuickPageChip(
+            icon = Icons.Default.DirectionsCar,
+            label = "Driving Behaviour",
+            accent = MintTeal,
+            onClick = onOpenDrivingBehaviour,
+        )
+        QuickPageChip(
+            icon = Icons.Default.SatelliteAlt,
+            label = "Sensors Hub",
+            accent = NavBlue,
+            onClick = onOpenSensors,
+        )
+        QuickPageChip(
+            icon = Icons.Default.DirectionsCar,
+            label = "OBD-II Gauges",
+            accent = MintTeal,
+            onClick = onOpenObd,
+        )
+        QuickPageChip(
+            icon = Icons.Default.Route,
+            label = "My Trips (.txt)",
+            accent = NavBlue,
+            onClick = onOpenTrips,
+        )
+        QuickPageChip(
+            icon = Icons.Default.Navigation,
+            label = "Road Signs DB",
+            accent = KoPilotClusterTokens.ModerateRoad,
+            onClick = onOpenSignsDb,
+        )
+        if (isParked) {
+            QuickPageChip(
+                icon = Icons.Default.Videocam,
+                label = "Vision Diag",
+                accent = KoPilotClusterTokens.SecondaryText,
+                onClick = onOpenVisionDiag,
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuickPageChip(
+    icon: ImageVector,
+    label: String,
+    accent: Color,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = KoPilotClusterTokens.ElevatedSurface,
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.4f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                text = label,
+                color = KoPilotClusterTokens.PrimaryText,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RoadSignsDatabaseDialog(
+    signs: List<LocalRoadSignEntry>,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Kenyan Road Signs Database (${signs.size})",
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (signs.isEmpty()) {
+                    Text(
+                        text = "No road sign catalog entries loaded.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                } else {
+                    signs.forEach { sign ->
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(
+                                    text = "${sign.code} · ${sign.title}",
+                                    fontWeight = FontWeight.SemiBold,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = "${sign.category} (${sign.shape})",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    text = sign.spokenAdvice,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
                         }
                     }
                 }
