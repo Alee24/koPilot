@@ -44,20 +44,27 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.SatelliteAlt
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Traffic
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.WbCloudy
 import androidx.compose.material3.AlertDialog
@@ -350,16 +357,23 @@ fun DashboardScreen(
                 )
             }
         } else {
-            FullBleedArHudLanding(
+            KoPilotCockpitLanding(
                 state = state,
                 viewModel = viewModel,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
                 onOpenMenu = { showToolsDialog = true },
-                onOpenObdLive = { showObdLiveDialog = true },
+                onOpenSettings = onOpenSettings,
+                onOpenObd = onOpenObd,
+                onOpenVisionDiag = { showVisionDiagDialog = true },
+                onOpenSignsDb = { showSignsDbDialog = true },
                 onOpenRoadQuality = onOpenRoadQuality,
+                onOpenDrivingBehaviour = onOpenDrivingBehaviour,
                 onOpenDrivingIntelligence = onOpenDrivingIntelligence,
+                onOpenVehicleIntelligence = onOpenVehicleIntelligence,
+                onOpenTrips = onOpenTrips,
+                onOpenSoundStudio = onOpenSoundStudio,
                 onOpenNavigation = onOpenNavigation,
                 onToggleFullscreenCamera = { isCameraFullscreen = true },
             )
@@ -1417,6 +1431,559 @@ private fun PrimaryActionButtonsRow(
                     modifier = Modifier.size(20.dp),
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun KoPilotCockpitLanding(
+    state: DashboardUiState,
+    viewModel: DashboardViewModel,
+    modifier: Modifier = Modifier,
+    onOpenMenu: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenObd: () -> Unit,
+    onOpenVisionDiag: () -> Unit,
+    onOpenSignsDb: () -> Unit,
+    onOpenRoadQuality: () -> Unit,
+    onOpenDrivingBehaviour: () -> Unit,
+    onOpenDrivingIntelligence: () -> Unit,
+    onOpenVehicleIntelligence: () -> Unit,
+    onOpenTrips: () -> Unit,
+    onOpenSoundStudio: () -> Unit,
+    onOpenNavigation: () -> Unit,
+    onToggleFullscreenCamera: () -> Unit,
+) {
+    val intel = state.intelligenceState
+    val motion = state.motionAnalysis
+    val stats = motion.behaviourStats
+    val speedKmh = state.speedEvaluation.currentSpeedKmh?.toInt() ?: 0
+    val obdConnected = state.diagnosticsState.obdConnected
+    val hasDtc = state.diagnosticsState.dtcCodes.isNotEmpty()
+    val healthLabel = when {
+        hasDtc -> "Check DTC (${state.diagnosticsState.dtcCodes.size})"
+        (state.diagnosticsState.coolantTempC ?: 0) >= 102 -> "Coolant High"
+        obdConnected -> "Good"
+        else -> "OBD Offline"
+    }
+    val healthColor = when {
+        hasDtc || (state.diagnosticsState.coolantTempC ?: 0) >= 102 -> KoPilotClusterTokens.VeryRough
+        obdConnected -> KoPilotClusterTokens.SmoothRoad
+        else -> KoPilotClusterTokens.SecondaryText
+    }
+    val roadLabel = when (motion.roadVibrationLevel) {
+        RoadVibrationLevel.SMOOTH -> "Smooth"
+        RoadVibrationLevel.MODERATE_VIBRATION -> "Moderate"
+        RoadVibrationLevel.ROUGH_ROAD_EXPERIMENTAL -> "Rough"
+        RoadVibrationLevel.VERY_ROUGH -> "Very Rough"
+        RoadVibrationLevel.UNKNOWN -> "Standby"
+    }
+    val roadColor = when (motion.roadVibrationLevel) {
+        RoadVibrationLevel.SMOOTH -> KoPilotClusterTokens.SmoothRoad
+        RoadVibrationLevel.MODERATE_VIBRATION -> KoPilotClusterTokens.ModerateRoad
+        RoadVibrationLevel.ROUGH_ROAD_EXPERIMENTAL -> KoPilotClusterTokens.RoughRoad
+        RoadVibrationLevel.VERY_ROUGH -> KoPilotClusterTokens.VeryRough
+        RoadVibrationLevel.UNKNOWN -> KoPilotClusterTokens.SecondaryText
+    }
+
+    Column(
+        modifier = modifier
+            .background(KoPilotClusterTokens.Background)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        // 1. Header: Steering icon + KoPilot / AI Driving Copilot + Bell & Settings
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .background(KoPilotClusterTokens.ElevatedSurface, CircleShape)
+                        .border(1.5.dp, KoPilotClusterTokens.PrimaryAccent, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DirectionsCar,
+                        contentDescription = null,
+                        tint = KoPilotClusterTokens.PrimaryAccent,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                Column {
+                    Text(
+                        text = "KoPilot",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = KoPilotClusterTokens.PrimaryText,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "AI Driving Copilot",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = KoPilotClusterTokens.SecondaryText,
+                    )
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconButton(onClick = onOpenMenu, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = "Alerts & Tools",
+                        tint = KoPilotClusterTokens.PrimaryText,
+                    )
+                }
+                IconButton(onClick = onOpenSettings, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Settings",
+                        tint = KoPilotClusterTokens.PrimaryText,
+                    )
+                }
+            }
+        }
+
+        // 2. Status Pills Row: OBD Connected | AI Offline ✓
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Surface(
+                onClick = onOpenObd,
+                modifier = Modifier.weight(1f),
+                shape = CircleShape,
+                color = KoPilotClusterTokens.GlassCardSurface,
+                border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(
+                                if (obdConnected) KoPilotClusterTokens.SmoothRoad else KoPilotClusterTokens.SecondaryText,
+                                CircleShape,
+                            ),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = if (obdConnected) "OBD Connected" else "OBD Disconnected",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = KoPilotClusterTokens.PrimaryText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            Surface(
+                onClick = onOpenVisionDiag,
+                modifier = Modifier.weight(1f),
+                shape = CircleShape,
+                color = KoPilotClusterTokens.GlassCardSurface,
+                border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = if (state.visionState.modelLoaded) "AI Offline Ready" else "AI Vision Standby",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = KoPilotClusterTokens.PrimaryAccent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+
+        // 3. Camera Preview Card
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .heightIn(min = 160.dp, max = 210.dp),
+        ) {
+            ViewportCard(
+                state = state,
+                viewModel = viewModel,
+                isFullscreen = false,
+                onToggleFullscreen = onToggleFullscreenCamera,
+            )
+        }
+
+        // 4. Speedometer + Vehicle Health / Fuel Row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Left Circular Speedometer
+            Surface(
+                onClick = {
+                    if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
+                },
+                shape = RoundedCornerShape(16.dp),
+                color = KoPilotClusterTokens.GlassCardSurface,
+                border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+                modifier = Modifier.size(134.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                    Canvas(modifier = Modifier.fillMaxSize().padding(10.dp)) {
+                        val stroke = 8.dp.toPx()
+                        drawArc(
+                            color = KoPilotClusterTokens.ElevatedSurface,
+                            startAngle = 135f,
+                            sweepAngle = 270f,
+                            useCenter = false,
+                            style = Stroke(width = stroke, cap = StrokeCap.Round),
+                        )
+                        val sweep = ((speedKmh / 140f).coerceIn(0.05f, 1f)) * 270f
+                        drawArc(
+                            color = KoPilotClusterTokens.PrimaryAccent,
+                            startAngle = 135f,
+                            sweepAngle = sweep,
+                            useCenter = false,
+                            style = Stroke(width = stroke, cap = StrokeCap.Round),
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "$speedKmh",
+                            style = MaterialTheme.typography.headlineLarge,
+                            color = KoPilotClusterTokens.PrimaryText,
+                            fontWeight = FontWeight.Black,
+                        )
+                        Text(
+                            text = "km/h",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = KoPilotClusterTokens.SecondaryText,
+                        )
+                        Text(
+                            text = if (state.isDrivingSessionActive) "DRIVING" else "TAP START",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (state.isDrivingSessionActive) KoPilotClusterTokens.SmoothRoad else KoPilotClusterTokens.PrimaryAccent,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+
+            // Right Stacked Vehicle Health + Fuel Cards
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Surface(
+                    onClick = onOpenVehicleIntelligence,
+                    shape = RoundedCornerShape(14.dp),
+                    color = KoPilotClusterTokens.GlassCardSurface,
+                    border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+                    modifier = Modifier.fillMaxWidth().height(63.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.VerifiedUser,
+                                contentDescription = null,
+                                tint = healthColor,
+                                modifier = Modifier.size(24.dp),
+                            )
+                            Column {
+                                Text(
+                                    text = "Vehicle Health",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = KoPilotClusterTokens.SecondaryText,
+                                )
+                                Text(
+                                    text = healthLabel,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = healthColor,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                        Text(">", color = KoPilotClusterTokens.SecondaryText, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Surface(
+                    onClick = onOpenDrivingIntelligence,
+                    shape = RoundedCornerShape(14.dp),
+                    color = KoPilotClusterTokens.GlassCardSurface,
+                    border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+                    modifier = Modifier.fillMaxWidth().height(63.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LocalGasStation,
+                                contentDescription = null,
+                                tint = KoPilotClusterTokens.ModerateRoad,
+                                modifier = Modifier.size(24.dp),
+                            )
+                            Column {
+                                Text(
+                                    text = "Fuel Efficiency",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = KoPilotClusterTokens.SecondaryText,
+                                )
+                                Text(
+                                    text = "${intel.fuelEfficiencyScore}/100",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = KoPilotClusterTokens.PrimaryText,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                        Text(">", color = KoPilotClusterTokens.SecondaryText, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // 5. 3-Column Metrics Strip: Safety Score | Road Condition | Last Event
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            LandingStatTile(
+                title = "Safety Score",
+                value = "${intel.safetyScore}/100",
+                valueColor = KoPilotClusterTokens.SmoothRoad,
+                onClick = onOpenDrivingIntelligence,
+                modifier = Modifier.weight(1f),
+            )
+            LandingStatTile(
+                title = "Road Condition",
+                value = roadLabel,
+                valueColor = roadColor,
+                onClick = onOpenRoadQuality,
+                modifier = Modifier.weight(1f),
+            )
+            LandingStatTile(
+                title = "Last Event",
+                value = intel.latestEvent?.title ?: "Clean",
+                valueColor = if (intel.latestEvent != null) KoPilotClusterTokens.ModerateRoad else KoPilotClusterTokens.PrimaryText,
+                onClick = onOpenDrivingIntelligence,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        // 6. 2x3 Feature Action Grid
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            LandingActionTile("OBD Diagnostics", Icons.Default.Build, KoPilotClusterTokens.SecondaryAccent, onOpenObd, Modifier.weight(1f))
+            LandingActionTile("Road Signs", Icons.Default.Traffic, KoPilotClusterTokens.VeryRough, onOpenSignsDb, Modifier.weight(1f))
+            LandingActionTile("Driving Analysis", Icons.Default.BarChart, KoPilotClusterTokens.PrimaryAccent, onOpenDrivingBehaviour, Modifier.weight(1f))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            LandingActionTile("Trips & History", Icons.Default.Route, KoPilotClusterTokens.SecondaryAccent, onOpenTrips, Modifier.weight(1f))
+            LandingActionTile("AI Assistant", Icons.Default.SmartToy, KoPilotClusterTokens.PrimaryAccent, onOpenVehicleIntelligence, Modifier.weight(1f))
+            LandingActionTile("Sound Studio", Icons.Default.GraphicEq, KoPilotClusterTokens.PrimaryAccent, onOpenSoundStudio, Modifier.weight(1f))
+        }
+
+        // Quick Drive / Navigate / Voice Control Row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                onClick = {
+                    if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
+                },
+                modifier = Modifier.weight(1f).height(48.dp),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (state.isDrivingSessionActive) KoPilotClusterTokens.VeryRough else KoPilotClusterTokens.PrimaryAccent,
+                    contentColor = if (state.isDrivingSessionActive) Color.White else KoPilotClusterTokens.Background,
+                ),
+            ) {
+                Text(if (state.isDrivingSessionActive) "Stop Driving" else "Start Driving", fontWeight = FontWeight.Bold)
+            }
+            OutlinedButton(
+                onClick = onOpenNavigation,
+                modifier = Modifier.weight(1f).height(48.dp),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, KoPilotClusterTokens.SecondaryAccent),
+            ) {
+                Text("Navigate", color = KoPilotClusterTokens.SecondaryAccent, fontWeight = FontWeight.Bold)
+            }
+            OutlinedButton(
+                onClick = viewModel::toggleVoiceConnection,
+                modifier = Modifier.height(48.dp),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, KoPilotClusterTokens.Border),
+            ) {
+                Icon(Icons.Default.Mic, contentDescription = "Voice", tint = KoPilotClusterTokens.PrimaryAccent)
+            }
+        }
+
+        // 7. Recent Driving Events Card
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = KoPilotClusterTokens.GlassCardSurface,
+            border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Recent Driving Events",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = KoPilotClusterTokens.PrimaryText,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    TextButton(onClick = onOpenDrivingIntelligence) {
+                        Text("View All >", color = KoPilotClusterTokens.SecondaryAccent)
+                    }
+                }
+                if (intel.recentEvents.isEmpty()) {
+                    Text(
+                        text = "No harsh braking, aggressive acceleration, or road impact events recorded yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = KoPilotClusterTokens.SecondaryText,
+                    )
+                } else {
+                    val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                    intel.recentEvents.take(3).forEach { evt ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = evt.title,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (evt.severity == ke.co.kopilot.feature.sensors.EventSeverity.HIGH) {
+                                    KoPilotClusterTokens.VeryRough
+                                } else {
+                                    KoPilotClusterTokens.ModerateRoad
+                                },
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                text = fmt.format(java.util.Date(evt.timestampMillis)),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = KoPilotClusterTokens.SecondaryText,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LandingStatTile(
+    title: String,
+    value: String,
+    valueColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = KoPilotClusterTokens.GlassCardSurface,
+        border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+        modifier = modifier.height(68.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(8.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelSmall,
+                color = KoPilotClusterTokens.SecondaryText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.labelLarge,
+                color = valueColor,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LandingActionTile(
+    label: String,
+    icon: ImageVector,
+    tint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = KoPilotClusterTokens.GlassCardSurface,
+        border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+        modifier = modifier.height(74.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(8.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = KoPilotClusterTokens.PrimaryText,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

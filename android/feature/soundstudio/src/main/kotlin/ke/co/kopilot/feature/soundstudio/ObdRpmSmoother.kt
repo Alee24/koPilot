@@ -8,7 +8,7 @@ package ke.co.kopilot.feature.soundstudio
  * - Derives conservative throttle estimate from engine load / RPM delta if PID 0111 is absent
  */
 class ObdRpmSmoother(
-    private val staleTimeoutMs: Long = 3_500L,
+    private val staleTimeoutMs: Long = 8_000L,
 ) {
     data class ProcessedTelemetry(
         val smoothedRpm: Float,

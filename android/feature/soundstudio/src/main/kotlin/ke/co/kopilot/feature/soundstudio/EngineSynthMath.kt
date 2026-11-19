@@ -90,16 +90,18 @@ object EngineSynthMath {
         val growl = profile.intakeGrowl
         val sportBoost = if (sportMode) 1.25f else 1.0f
 
-        // Fundamental firing order + sub-octave rumble + upper harmonics
-        val h0 = sin((phase * 0.5f) * TWO_PI) * (0.28f * warmth)
-        val h1 = sin(phase * TWO_PI) * 0.48f
-        val h2 = sin((phase * 2.0f) * TWO_PI) * (0.22f + 0.16f * throttle * sportBoost)
-        val h3 = sin((phase * 3.0f) * TWO_PI) * (0.10f + 0.14f * growl * throttle)
-        val h4 = sin((phase * 4.0f) * TWO_PI) * (0.05f + 0.10f * growl * sportBoost)
+        // Fundamental firing order + sub-octave rumble + upper harmonics (audible on phone speakers at idle)
+        val h0 = sin((phase * 0.5f) * TWO_PI) * (0.24f * warmth)
+        val h1 = sin(phase * TWO_PI) * 0.44f
+        val h2 = sin((phase * 2.0f) * TWO_PI) * (0.28f + 0.16f * throttle * sportBoost)
+        val h3 = sin((phase * 3.0f) * TWO_PI) * (0.20f + 0.16f * growl * throttle)
+        val h4 = sin((phase * 4.0f) * TWO_PI) * (0.16f + 0.14f * growl * sportBoost)
+        val h6 = sin((phase * 6.0f) * TWO_PI) * (0.12f + 0.10f * growl)
+        val h8 = sin((phase * 8.0f) * TWO_PI) * (0.08f + 0.08f * throttle)
 
         // Diesel high-compression pulse shaping
         val dieselKnock = if (profile.category.isDiesel) {
-            val pulse = sin((phase * 6.0f) * TWO_PI) * 0.14f + sin((phase * 8.0f) * TWO_PI) * 0.08f
+            val pulse = sin((phase * 6.0f) * TWO_PI) * 0.16f + sin((phase * 8.0f) * TWO_PI) * 0.10f
             pulse * (0.6f + 0.4f * throttle)
         } else {
             0f
@@ -114,8 +116,8 @@ object EngineSynthMath {
             0f
         }
 
-        val loadGain = 0.42f + 0.58f * throttle
-        val raw = (h0 + h1 + h2 + h3 + h4 + dieselKnock) * loadGain + turboWhistle
-        return raw * (if (sportMode) 1.15f else 0.95f)
+        val loadGain = 0.55f + 0.45f * throttle
+        val raw = (h0 + h1 + h2 + h3 + h4 + h6 + h8 + dieselKnock) * loadGain + turboWhistle
+        return raw * (if (sportMode) 1.22f else 1.05f)
     }
 }

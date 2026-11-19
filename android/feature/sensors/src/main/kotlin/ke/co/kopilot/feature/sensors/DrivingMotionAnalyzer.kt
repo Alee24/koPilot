@@ -62,9 +62,10 @@ class DrivingMotionAnalyzer @Inject constructor() {
         }
 
         val yawRate = gyroY // Vertical axis in upright portrait mount
-        val isMoving = (gpsSpeedKmh ?: 0f) >= 5f
+        val isMoving = (gpsSpeedKmh ?: 0f) >= 8.0f
         val latState = when {
-            isMoving && (abs(yawRate) >= SHARP_CORNER_RAD_S || abs(lateral) >= SHARP_LATERAL_MPS2) ->
+            !isMoving -> LateralMotionState.STRAIGHT
+            abs(yawRate) >= SHARP_CORNER_RAD_S || abs(lateral) >= SHARP_LATERAL_MPS2 ->
                 LateralMotionState.SHARP_CORNERING
             yawRate >= TURN_RAD_S -> LateralMotionState.LEFT_TURN
             yawRate <= -TURN_RAD_S -> LateralMotionState.RIGHT_TURN
@@ -106,7 +107,7 @@ class DrivingMotionAnalyzer @Inject constructor() {
             else -> RoadVibrationLevel.SMOOTH
         }
 
-        val currentScore = (100f - (rms / 3.0f) * 100f).toInt().coerceIn(0, 100)
+        val currentScore = (100f - (rms / 4.2f) * 100f).toInt().coerceIn(0, 100)
 
         // Update road-quality & driving-behaviour statistics (ignore stationary phone handling)
         var bumpInWindow = false
@@ -236,21 +237,21 @@ class DrivingMotionAnalyzer @Inject constructor() {
     companion object {
         const val WINDOW_SIZE = 20
         const val MAX_GRAPH_SAMPLES = 250
-        const val POTHOLE_SPIKE_MPS2 = 4.5f
-        const val MODERATE_VIBRATION_RMS_MPS2 = 0.7f
-        const val ROUGH_ROAD_RMS_MPS2 = 1.4f
-        const val VERY_ROUGH_RMS_MPS2 = 2.4f
-        const val ACCEL_MPS2 = 1.6f
-        const val HARD_ACCEL_MPS2 = 3.5f
-        const val BRAKE_MPS2 = -1.8f
-        const val HARSH_BRAKE_MPS2 = -4.2f
-        const val LANE_SHIFT_RAD_S = 0.12f
-        const val LANE_SHIFT_LATERAL_MPS2 = 0.95f
-        const val TURN_RAD_S = 0.25f
-        const val SHARP_CORNER_RAD_S = 0.65f
-        const val SHARP_LATERAL_MPS2 = 3.8f
-        const val PHONE_ROTATION_THRESHOLD_RAD_S = 1.4f
-        const val SUDDEN_JERK_MPS2 = 6.5f
-        const val SUDDEN_IMPACT_MPS2 = 11.0f
+        const val POTHOLE_SPIKE_MPS2 = 5.5f
+        const val MODERATE_VIBRATION_RMS_MPS2 = 1.15f
+        const val ROUGH_ROAD_RMS_MPS2 = 2.10f
+        const val VERY_ROUGH_RMS_MPS2 = 3.20f
+        const val ACCEL_MPS2 = 1.8f
+        const val HARD_ACCEL_MPS2 = 3.8f
+        const val BRAKE_MPS2 = -2.0f
+        const val HARSH_BRAKE_MPS2 = -4.5f
+        const val LANE_SHIFT_RAD_S = 0.28f
+        const val LANE_SHIFT_LATERAL_MPS2 = 2.2f
+        const val TURN_RAD_S = 0.48f
+        const val SHARP_CORNER_RAD_S = 0.95f
+        const val SHARP_LATERAL_MPS2 = 4.8f
+        const val PHONE_ROTATION_THRESHOLD_RAD_S = 1.6f
+        const val SUDDEN_JERK_MPS2 = 7.5f
+        const val SUDDEN_IMPACT_MPS2 = 12.0f
     }
 }

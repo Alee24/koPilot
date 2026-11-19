@@ -204,14 +204,17 @@ class SoundStudioViewModel @Inject constructor(
                         masterGain = gain,
                     )
                 } else {
-                    val obdConnected = obdManager.connectionState.value == ObdConnectionState.CONNECTED
+                    val obdConnected = obdManager.connectionState.value == ObdConnectionState.CONNECTED ||
+                        obdManager.state.value.obdConnected
                     val tel = obdManager.liveTelemetry.value
+                    val effectiveRpm = tel.engineRpm ?: if (obdConnected) uiState.value.selectedProfile.idleRpm else null
+                    val effectiveTimestamp = tel.lastUpdatedMillis ?: if (obdConnected) now else 0L
                     val processed = smoother.update(
                         obdConnected = obdConnected,
-                        rawRpm = tel.engineRpm,
+                        rawRpm = effectiveRpm,
                         rawThrottlePct = tel.throttlePositionPct,
                         rawEngineLoadPct = tel.engineLoadPct,
-                        sampleTimestampMs = tel.lastUpdatedMillis ?: 0L,
+                        sampleTimestampMs = effectiveTimestamp,
                         nowMs = now,
                         responsiveness = settings.rpmResponsiveness,
                         dtSec = dtSec,
@@ -223,18 +226,18 @@ class SoundStudioViewModel @Inject constructor(
 
                     val safetyMute = isMutedFlow.value ||
                         (settings.muteOnPhoneCall && phoneCallActive) ||
-                        (settings.pauseOnSafetyAlert && alertsActive) ||
                         (settings.pauseOnObdDisconnect && processed.isStale)
+                    val alertDuck = if (settings.pauseOnSafetyAlert && alertsActive) 0.25f else 1f
 
                     pauseReasonFlow.value = when {
                         isMutedFlow.value -> "Muted by driver"
                         settings.muteOnPhoneCall && phoneCallActive -> "Muted for phone call"
-                        settings.pauseOnSafetyAlert && alertsActive -> "Paused for safety alert"
                         processed.isStale -> "Paused — waiting for live OBD-II RPM"
+                        settings.pauseOnSafetyAlert && alertsActive -> "Ducked for safety alert"
                         else -> null
                     }
 
-                    val gain = if (safetyMute) 0f else processed.safeOutputScale
+                    val gain = if (safetyMute) 0f else (processed.safeOutputScale * alertDuck)
                     synthesizer.updateParameters(
                         rpm = processed.smoothedRpm,
                         throttle = processed.throttleFraction,

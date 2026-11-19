@@ -271,7 +271,7 @@ class EngineAudioSynthesizer @Inject constructor(
             .build()
         focusRequest = req
         val res = audioManager.requestAudioFocus(req)
-        hasAudioFocus = res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        hasAudioFocus = res != AudioManager.AUDIOFOCUS_REQUEST_FAILED
     }
 
     private fun abandonFocus() {

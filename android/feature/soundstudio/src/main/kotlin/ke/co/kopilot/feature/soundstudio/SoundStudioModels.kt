@@ -67,8 +67,8 @@ data class EngineSoundProfile(
 
 @Serializable
 data class EngineAudioSettings(
-    val masterVolume: Float = 0.45f,          // Conservative default to preserve road/safety awareness
-    val soundIntensity: Float = 0.70f,
+    val masterVolume: Float = 0.75f,
+    val soundIntensity: Float = 0.80f,
     val rpmResponsiveness: Float = 0.75f,     // 0.2 (smooth) .. 1.0 (snappy)
     val crossfadeSmoothing: Float = 0.65f,
     val simulationMode: EngineSimulationMode = EngineSimulationMode.AUTHENTIC_RPM,

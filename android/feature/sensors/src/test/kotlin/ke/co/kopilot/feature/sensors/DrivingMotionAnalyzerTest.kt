@@ -25,11 +25,11 @@ class DrivingMotionAnalyzerTest {
         assertEquals(LongitudinalMotionState.HARSH_BRAKING, brake.longitudinalState)
 
         val corner = analyzer.analyze(
-            linearAccelX = 4.2f,
+            linearAccelX = 5.0f,
             linearAccelY = 0.3f,
             linearAccelZ = 0f,
             gyroX = 0f,
-            gyroY = 0.8f,
+            gyroY = 1.05f,
             gyroZ = 0f,
             azimuthDeg = 110f,
             pitchDeg = 5f,
@@ -42,7 +42,7 @@ class DrivingMotionAnalyzerTest {
         repeat(8) {
             vibResult = analyzer.analyze(
                 linearAccelX = 0f,
-                linearAccelY = 3.0f,
+                linearAccelY = 3.8f,
                 linearAccelZ = 0f,
                 gyroX = 0f,
                 gyroY = 0f,
@@ -62,11 +62,11 @@ class DrivingMotionAnalyzerTest {
         val analyzer = DrivingMotionAnalyzer()
 
         val shiftLeft = analyzer.analyze(
-            linearAccelX = 1.2f,
+            linearAccelX = 2.4f,
             linearAccelY = 0f,
             linearAccelZ = 0f,
             gyroX = 0f,
-            gyroY = 0.16f,
+            gyroY = 0.32f,
             gyroZ = 0f,
             azimuthDeg = 90f,
             pitchDeg = 0f,
@@ -76,11 +76,11 @@ class DrivingMotionAnalyzerTest {
         assertEquals(LateralMotionState.LANE_SHIFT_LEFT, shiftLeft.lateralState)
 
         val shiftRight = analyzer.analyze(
-            linearAccelX = -1.2f,
+            linearAccelX = -2.4f,
             linearAccelY = 0f,
             linearAccelZ = 0f,
             gyroX = 0f,
-            gyroY = -0.16f,
+            gyroY = -0.32f,
             gyroZ = 0f,
             azimuthDeg = 90f,
             pitchDeg = 0f,
@@ -88,6 +88,20 @@ class DrivingMotionAnalyzerTest {
             gpsSpeedKmh = 50f,
         )
         assertEquals(LateralMotionState.LANE_SHIFT_RIGHT, shiftRight.lateralState)
+
+        val stationary = analyzer.analyze(
+            linearAccelX = 2.4f,
+            linearAccelY = 0f,
+            linearAccelZ = 0f,
+            gyroX = 0f,
+            gyroY = 0.32f,
+            gyroZ = 0f,
+            azimuthDeg = 90f,
+            pitchDeg = 0f,
+            rollDeg = 0f,
+            gpsSpeedKmh = 0f,
+        )
+        assertEquals(LateralMotionState.STRAIGHT, stationary.lateralState)
     }
 
     @Test
@@ -112,7 +126,7 @@ class DrivingMotionAnalyzerTest {
         }
         val afterBrake = analyzer.analyze(
             linearAccelX = 0f,
-            linearAccelY = 5.0f, // pothole bump spike
+            linearAccelY = 6.0f, // pothole bump spike
             linearAccelZ = -4.6f, // harsh braking
             gyroX = 0f,
             gyroY = 0f,
