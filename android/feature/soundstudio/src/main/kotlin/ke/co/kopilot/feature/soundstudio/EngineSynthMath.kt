@@ -74,7 +74,8 @@ object EngineSynthMath {
 
     /**
      * Synthesizes one mono sample for the selected built-in engine profile using
-     * phase-continuous multi-harmonic synthesis.
+     * asymmetric combustion-pulse shaping, cylinder-bank modulation, band-shaped
+     * exhaust turbulence noise, overrun crackles, and warm saturation.
      */
     fun synthesizeProceduralSample(
         phase: Float,
@@ -85,39 +86,66 @@ object EngineSynthMath {
         profile: EngineSoundProfile,
         sportMode: Boolean,
         turboEnabled: Boolean,
+        noiseSample: Float = 0f,
     ): Float {
         val warmth = profile.exhaustWarmth
         val growl = profile.intakeGrowl
-        val sportBoost = if (sportMode) 1.25f else 1.0f
+        val sportBoost = if (sportMode) 1.28f else 1.0f
+        val isV8OrBass = profile.category == EngineCategory.V8_MUSCLE || profile.category == EngineCategory.CLASSIC_ENGINE
+        val isExotic = profile.category == EngineCategory.V10_SUPERCAR || profile.category == EngineCategory.V12_SUPERCAR
 
-        // Fundamental firing order + sub-octave rumble + upper harmonics (audible on phone speakers at idle)
-        val h0 = sin((phase * 0.5f) * TWO_PI) * (0.24f * warmth)
-        val h1 = sin(phase * TWO_PI) * 0.44f
-        val h2 = sin((phase * 2.0f) * TWO_PI) * (0.28f + 0.16f * throttle * sportBoost)
-        val h3 = sin((phase * 3.0f) * TWO_PI) * (0.20f + 0.16f * growl * throttle)
-        val h4 = sin((phase * 4.0f) * TWO_PI) * (0.16f + 0.14f * growl * sportBoost)
-        val h6 = sin((phase * 6.0f) * TWO_PI) * (0.12f + 0.10f * growl)
-        val h8 = sin((phase * 8.0f) * TWO_PI) * (0.08f + 0.08f * throttle)
+        // Asymmetric combustion pulse wave (sharper attack than pure sine -> realistic exhaust slap)
+        val saw = (phase * 2f - 1f)
+        val combPulse = tanh((saw * (1.8f + 1.4f * throttle)).toDouble()).toFloat() * 0.42f
 
-        // Diesel high-compression pulse shaping
+        // Sub-harmonic crank/bank lope (gives Mustang / Bass / Classic V8 its deep chop)
+        val lopeGain = if (isV8OrBass) 0.42f * warmth else 0.16f * warmth
+        val subHalf = sin((phase * 0.5f) * TWO_PI) * lopeGain
+        val subQuarter = if (isV8OrBass) sin((phase * 0.25f) * TWO_PI) * (0.24f * warmth) else 0f
+
+        // Core firing harmonics + exotic upper scream
+        val h1 = sin(phase * TWO_PI) * 0.45f
+        val h2 = sin((phase * 2.0f) * TWO_PI) * (0.30f + 0.18f * throttle * sportBoost)
+        val h3 = sin((phase * 3.0f) * TWO_PI) * (0.22f + 0.18f * growl * throttle)
+        val h4 = sin((phase * 4.0f) * TWO_PI) * (0.16f + (if (isExotic) 0.22f else 0.12f) * growl * sportBoost)
+        val h6 = sin((phase * 6.0f) * TWO_PI) * (if (isExotic) 0.18f else 0.10f) * (0.6f + 0.4f * growl)
+        val h8 = sin((phase * 8.0f) * TWO_PI) * (if (isExotic) 0.12f else 0.06f) * (0.5f + 0.5f * throttle)
+
+        // Diesel high-compression injection clatter & big-rig low thump
         val dieselKnock = if (profile.category.isDiesel) {
-            val pulse = sin((phase * 6.0f) * TWO_PI) * 0.16f + sin((phase * 8.0f) * TWO_PI) * 0.10f
-            pulse * (0.6f + 0.4f * throttle)
+            val knock = tanh((sin((phase * 6.0f) * TWO_PI) * 1.9f).toDouble()).toFloat() * 0.24f +
+                sin((phase * 9.0f) * TWO_PI) * 0.12f
+            knock * (0.7f + 0.3f * throttle)
         } else {
             0f
         }
 
-        // Optional turbo spool whistle under load + lift-off flutter
+        // Exhaust air turbulence noise (modulated by firing phase so it breathes with each stroke)
+        val strokeEnv = 0.55f + 0.45f * sin(phase * TWO_PI)
+        val turbulence = noiseSample * strokeEnv * (0.18f + 0.26f * throttle + 0.10f * growl)
+
+        // Overrun / lift-off exhaust crackle when decelerating from mid/high RPM
+        val decelOverrun = if (rpmDeltaPerSec < -320f && rpm > 1400f) {
+            val crackle = if (abs(noiseSample) > 0.72f) noiseSample * 0.35f else 0f
+            crackle * (if (sportMode || isV8OrBass || isExotic) 1.2f else 0.6f)
+        } else {
+            0f
+        }
+
+        // Turbocharger spool whistle + wastegate flutter
         val turboWhistle = if (turboEnabled && profile.turboSpoolAmount > 0.05f) {
-            val spoolLevel = ((rpm - 1400f) / 3000f).coerceIn(0f, 1f) * throttle * profile.turboSpoolAmount
-            val flutter = if (rpmDeltaPerSec < -400f) 0.12f * profile.turboSpoolAmount else 0f
-            sin(turboPhase * TWO_PI) * (0.14f * spoolLevel + flutter)
+            val spoolLevel = ((rpm - 1100f) / 2800f).coerceIn(0f, 1f) * (0.35f + 0.65f * throttle) * profile.turboSpoolAmount
+            val flutter = if (rpmDeltaPerSec < -350f) 0.16f * profile.turboSpoolAmount else 0f
+            sin(turboPhase * TWO_PI) * (0.18f * spoolLevel + flutter)
         } else {
             0f
         }
 
-        val loadGain = 0.55f + 0.45f * throttle
-        val raw = (h0 + h1 + h2 + h3 + h4 + h6 + h8 + dieselKnock) * loadGain + turboWhistle
-        return raw * (if (sportMode) 1.22f else 1.05f)
+        val loadGain = 0.58f + 0.42f * throttle
+        val drive = 1.35f + (warmth * 0.65f) + (if (sportMode) 0.35f else 0f)
+        val combined = (combPulse + subHalf + subQuarter + h1 + h2 + h3 + h4 + h6 + h8 + dieselKnock + turbulence) * loadGain +
+            decelOverrun + turboWhistle
+
+        return tanh((combined * drive).toDouble()).toFloat() * 0.92f
     }
 }

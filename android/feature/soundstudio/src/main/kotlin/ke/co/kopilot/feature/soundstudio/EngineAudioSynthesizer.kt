@@ -152,6 +152,8 @@ class EngineAudioSynthesizer @Inject constructor(
             var smoothedGain = 0f
             var smoothedRpm = 750f
             var lastWaveformEmitMs = 0L
+            var rngState = 0x1234567
+            var noiseLp = 0f
 
             while (running) {
                 val settings = currentSettings
@@ -173,8 +175,14 @@ class EngineAudioSynthesizer @Inject constructor(
                 val turboOn = settings.turboEffectsEnabled
 
                 for (i in 0 until blockSize) {
-                    smoothedGain += (desiredGain - smoothedGain) * 0.004f
-                    smoothedRpm += (targetRpm.coerceAtLeast(300f) - smoothedRpm) * 0.004f
+                    smoothedGain += (desiredGain - smoothedGain) * 0.008f
+                    smoothedRpm += (targetRpm.coerceAtLeast(300f) - smoothedRpm) * 0.015f
+
+                    // Fast zero-allocation LCG noise + 1-pole low-pass for realistic exhaust air roar
+                    rngState = rngState * 1664525 + 1013904223
+                    val white = ((rngState ushr 16) and 0x7FFF) / 16384f - 1f
+                    val lpAlpha = (0.04f + (smoothedRpm / 8000f) * 0.18f).coerceIn(0.04f, 0.25f)
+                    noiseLp += (white - noiseLp) * lpAlpha
 
                     val rawSample = if (useCustomWav && layerWeights.isNotEmpty()) {
                         var mixed = 0f
@@ -218,6 +226,7 @@ class EngineAudioSynthesizer @Inject constructor(
                             profile = profile,
                             sportMode = sportMode,
                             turboEnabled = turboOn,
+                            noiseSample = noiseLp,
                         )
                     }
 
