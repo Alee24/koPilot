@@ -958,7 +958,12 @@ private fun SpeedCockpitRow(
     val fix = state.locationState.currentFix
     val isGpsAvailable = state.speedEvaluation.signalState != GpsSignalState.UNAVAILABLE && fix != null
     val isStale = fix != null && (System.currentTimeMillis() - fix.timestampMillis) > 6_000L
-    val speedKmh = if (isGpsAvailable && !isStale) state.speedEvaluation.currentSpeedKmh else null
+    val gpsSpeed = if (isGpsAvailable && !isStale) state.speedEvaluation.currentSpeedKmh else null
+    val speedKmh = when {
+        gpsSpeed != null && gpsSpeed >= 1f -> gpsSpeed
+        state.diagnosticsState.obdSpeedKmh != null -> state.diagnosticsState.obdSpeedKmh!!.toFloat()
+        else -> gpsSpeed
+    }
     val speedText = speedKmh?.let { "%.0f".format(it) } ?: "--"
     val isOverspeed = state.speedEvaluation.decision == SpeedAlertDecision.POSSIBLE_OVERSPEED_WARNING ||
         state.speedZone == SpeedZone.REDUCE_SPEED ||
@@ -1487,7 +1492,13 @@ private fun KoPilotCockpitLanding(
     val intel = state.intelligenceState
     val motion = state.motionAnalysis
     val stats = motion.behaviourStats
-    val speedKmh = state.speedEvaluation.currentSpeedKmh?.toInt() ?: 0
+    val gpsKmh = state.speedEvaluation.currentSpeedKmh?.toInt()
+    val obdKmh = state.diagnosticsState.obdSpeedKmh
+    val speedKmh = when {
+        gpsKmh != null && gpsKmh > 0 -> gpsKmh
+        obdKmh != null -> obdKmh
+        else -> gpsKmh ?: 0
+    }
     val obdConnected = state.diagnosticsState.obdConnected
     val hasDtc = state.diagnosticsState.dtcCodes.isNotEmpty()
     val healthLabel = when {
@@ -2111,7 +2122,13 @@ private fun FullBleedArHudLanding(
     val intel = state.intelligenceState
     val motion = state.motionAnalysis
     val stats = motion.behaviourStats
-    val speedKmh = state.speedEvaluation.currentSpeedKmh?.toInt() ?: 0
+    val gpsKmh = state.speedEvaluation.currentSpeedKmh?.toInt()
+    val obdKmh = state.diagnosticsState.obdSpeedKmh
+    val speedKmh = when {
+        gpsKmh != null && gpsKmh > 0 -> gpsKmh
+        obdKmh != null -> obdKmh
+        else -> gpsKmh ?: 0
+    }
     val limitKmh = state.speedEvaluation.applicableSpeedLimitKmh ?: state.visionState.lastSpeedLimitKmh
     val satCount = state.locationState.satellitesUsedInFix
     val obdConnected = state.diagnosticsState.obdConnected

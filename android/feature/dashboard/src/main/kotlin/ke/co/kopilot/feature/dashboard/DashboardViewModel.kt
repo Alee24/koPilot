@@ -1112,11 +1112,11 @@ class DashboardViewModel @Inject constructor(
             autoObdConnectAttempted = true
             obdManager.connectAndMonitor(s.lastObdDeviceAddress, bluetoothGranted)
         }
-        // App starts in Auto Mode: keep lightweight motion & GPS watch active to auto-start trips on motion
+        // Keep high-accuracy GPS & lightweight motion watch active whenever the app is running
+        if (locationGranted) {
+            locationTracker.startTracking(highAccuracy = true)
+        }
         if (autoModeArmed && !isDriving.value) {
-            if (locationGranted) {
-                locationTracker.startTracking(highAccuracy = false)
-            }
             sensorManagerRepo.startMonitoring(SensorSamplingProfile.IDLE)
         }
     }
@@ -1343,14 +1343,15 @@ class DashboardViewModel @Inject constructor(
 
         isDriving.value = false
         tripStartedAt.value = null
-        locationTracker.stopTracking()
         sensorManagerRepo.stopMonitoring()
+        if (uiState.value.settings.sensorGpsEnabled) {
+            locationTracker.startTracking(highAccuracy = true)
+        } else {
+            locationTracker.stopTracking()
+        }
         if (autoModeArmed && uiState.value.settings.sensorMotionEnabled) {
             // Re-arm lightweight IDLE watch so the next drive auto-starts on motion
             sensorManagerRepo.startMonitoring(SensorSamplingProfile.IDLE)
-            if (uiState.value.settings.sensorGpsEnabled) {
-                locationTracker.startTracking(highAccuracy = false)
-            }
         }
         voiceClient.disconnect()
         speedAlertEngine.reset()

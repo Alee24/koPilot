@@ -47,6 +47,7 @@ class LocationTracker @Inject constructor(
     private var lastAcceptedLocation: Location? = null
     private var locationCallback: LocationCallback? = null
     private var gnssCallback: GnssStatus.Callback? = null
+    private var activeHighAccuracy: Boolean? = null
 
     fun setPermissionGranted(granted: Boolean) {
         _state.value = _state.value.copy(
@@ -57,7 +58,11 @@ class LocationTracker @Inject constructor(
 
     @SuppressLint("MissingPermission")
     fun startTracking(highAccuracy: Boolean = true) {
-        if (!_state.value.permissionGranted || locationCallback != null) return
+        if (!_state.value.permissionGranted) return
+        if (locationCallback != null && activeHighAccuracy == highAccuracy) return
+        locationCallback?.let { fusedClient.removeLocationUpdates(it) }
+        locationCallback = null
+        activeHighAccuracy = highAccuracy
 
         val priority = if (highAccuracy) {
             Priority.PRIORITY_HIGH_ACCURACY
@@ -131,6 +136,7 @@ class LocationTracker @Inject constructor(
     private fun processLocation(loc: Location) {
         val prev = lastAcceptedLocation
         var addedDistance = 0.0
+        var computedSpeedMps: Float? = null
         if (prev != null && loc.hasAccuracy() && loc.accuracy <= 35f) {
             val deltaMeters = prev.distanceTo(loc).toDouble()
             val deltaSeconds = ((loc.time - prev.time).coerceAtLeast(100L)) / 1000.0
@@ -138,6 +144,7 @@ class LocationTracker @Inject constructor(
             // Reject physically implausible position jumps (> 65 m/s ~ 234 km/h)
             if (impliedSpeedMps <= 65.0 && deltaMeters >= 1.0) {
                 addedDistance = deltaMeters
+                computedSpeedMps = impliedSpeedMps.toFloat()
                 lastAcceptedLocation = loc
             }
         } else if (loc.hasAccuracy() && loc.accuracy <= 35f) {
@@ -153,7 +160,7 @@ class LocationTracker @Inject constructor(
         val fix = GpsFix(
             latitude = loc.latitude,
             longitude = loc.longitude,
-            speedMps = if (loc.hasSpeed()) loc.speed else null,
+            speedMps = if (loc.hasSpeed()) loc.speed else computedSpeedMps,
             speedAccuracyMps = speedAcc,
             horizontalAccuracyMeters = if (loc.hasAccuracy()) loc.accuracy else null,
             bearingDegrees = if (loc.hasBearing()) loc.bearing else null,

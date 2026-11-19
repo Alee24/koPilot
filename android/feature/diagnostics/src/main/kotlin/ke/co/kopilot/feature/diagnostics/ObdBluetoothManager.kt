@@ -196,7 +196,7 @@ class ObdBluetoothManager @Inject constructor(
                     // Real-time fast path: RPM (010C) and Throttle (0111) every cycle for zero-lag Sound Studio
                     val rpm = if ("010C" in supportedPids) ObdPidParser.parseRpm(connectionManager.sendCommand("010C")) else null
                     val throttle = if ("0111" in supportedPids) ObdPidParser.parseThrottlePosPct(connectionManager.sendCommand("0111")) else null
-                    val speed = if (cycle % 2 == 0 && "010D" in supportedPids) ObdPidParser.parseVehicleSpeedKmh(connectionManager.sendCommand("010D")) else null
+                    val speed = if ("010D" in supportedPids) ObdPidParser.parseVehicleSpeedKmh(connectionManager.sendCommand("010D")) else null
                     val load = if (cycle % 2 == 1 && "0104" in supportedPids) ObdPidParser.parseEngineLoadPct(connectionManager.sendCommand("0104")) else null
 
                     var coolant = currentTel.coolantTempC
