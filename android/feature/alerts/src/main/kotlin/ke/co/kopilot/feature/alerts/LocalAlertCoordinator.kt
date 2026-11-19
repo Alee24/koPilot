@@ -67,6 +67,13 @@ class AndroidTtsSpeechSink @Inject constructor(
         }
     }
 
+    fun playConnectionBeep() {
+        runCatching {
+            val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 85)
+            tg.startTone(ToneGenerator.TONE_PROP_ACK, 180)
+        }
+    }
+
     fun setVoiceProfile(voiceName: String) {
         selectedVoiceProfile = voiceName
         selectedPitch = when (voiceName.lowercase()) {

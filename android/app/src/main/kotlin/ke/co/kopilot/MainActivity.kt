@@ -160,18 +160,26 @@ class MainActivity : ComponentActivity() {
                 val permissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestMultiplePermissions(),
                 ) {
+                    val btOk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                    } else true
                     dashboardViewModel.updatePermissions(
                         cameraGranted = hasPermission(Manifest.permission.CAMERA),
                         locationGranted = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION),
                         micGranted = hasPermission(Manifest.permission.RECORD_AUDIO),
+                        bluetoothGranted = btOk,
                     )
                 }
 
                 LaunchedEffect(Unit) {
+                    val btOk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                    } else true
                     dashboardViewModel.updatePermissions(
                         cameraGranted = hasPermission(Manifest.permission.CAMERA),
                         locationGranted = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION),
                         micGranted = hasPermission(Manifest.permission.RECORD_AUDIO),
+                        bluetoothGranted = btOk,
                     )
                     if (requiredPermissions.any { !hasPermission(it) }) {
                         permissionLauncher.launch(requiredPermissions)

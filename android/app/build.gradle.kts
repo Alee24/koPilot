@@ -14,8 +14,8 @@ android {
         applicationId = "ke.co.kopilot"
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "2.9.5"
+        versionCode = 19
+        versionName = "2.9.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["MAPS_API_KEY"] = System.getenv("KOPILOT_MAPS_API_KEY") ?: ""

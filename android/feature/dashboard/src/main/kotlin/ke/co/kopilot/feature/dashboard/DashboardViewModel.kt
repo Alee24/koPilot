@@ -144,6 +144,20 @@ class DashboardViewModel @Inject constructor(
     private var motionDetectedSinceMs = 0L
     private var lastVehicleMovingMs = 0L
     private var autoModeArmed = true
+    private var autoObdConnectAttempted = false
+    private var preflightObdSpoken = false
+    private var obdBeepPlayed = false
+    private var gpsBeepPlayed = false
+    private var bluetoothGranted = false
+    private var lastTrackLat: Double? = null
+    private var lastTrackLng: Double? = null
+    private var lastTrackMs = 0L
+    private var fuelRateSum = 0.0
+    private var fuelRateCount = 0
+    private var voltSum = 0.0
+    private var voltCount = 0
+    private var voltMin = Float.MAX_VALUE
+    private var voltMax = 0f
     private val explainedSignsInTrip = mutableSetOf<TrafficSignCategory>()
 
     private val coreFlows = combine(
@@ -217,6 +231,94 @@ class DashboardViewModel @Inject constructor(
                 if (speechSink is AndroidTtsSpeechSink) {
                     speechSink.setVoiceProfile(s.aiVoiceName)
                 }
+                if (s.sensorObdEnabled &&
+                    s.lastObdDeviceAddress.isNotBlank() &&
+                    bluetoothGranted &&
+                    !autoObdConnectAttempted &&
+                    !obdManager.state.value.obdConnected
+                ) {
+                    autoObdConnectAttempted = true
+                    obdManager.connectAndMonitor(s.lastObdDeviceAddress, bluetoothGranted)
+                }
+            }
+        }
+        // OBD Connection Beep, Persistence & Pre-Flight Voice Check
+        viewModelScope.launch {
+            obdManager.state.collect { obdState ->
+                if (!obdState.obdConnected) {
+                    obdBeepPlayed = false
+                    preflightObdSpoken = false
+                    return@collect
+                }
+                if (!obdBeepPlayed) {
+                    obdBeepPlayed = true
+                    (speechSink as? AndroidTtsSpeechSink)?.playConnectionBeep()
+                    val addr = obdManager.lastAttemptedAddress.value
+                    if (!addr.isNullOrBlank()) {
+                        val name = obdManager.discoveredDevices.value
+                            .firstOrNull { it.address == addr }?.name
+                            ?: uiState.value.settings.lastObdDeviceName.ifBlank { "OBD-II Adapter" }
+                        prefsRepo.setLastObdDevice(addr, name)
+                    }
+                }
+                if (!preflightObdSpoken) {
+                    preflightObdSpoken = true
+                    // Wait briefly for initial ATRV, MAF, and Coolant PIDs to arrive
+                    var waitedMs = 0L
+                    while (waitedMs < 2_500L) {
+                        val t = obdManager.liveTelemetry.value
+                        if ((t.controlModuleVoltageV != null || t.adapterVoltageV != null) &&
+                            (t.mafGramsPerSec != null || t.engineRpm != null)
+                        ) {
+                            break
+                        }
+                        kotlinx.coroutines.delay(250L)
+                        waitedMs += 250L
+                    }
+                    val t = obdManager.liveTelemetry.value
+                    val s = uiState.value.settings
+                    val volt = t.controlModuleVoltageV ?: t.adapterVoltageV
+                    val voltText = when {
+                        volt == null -> "Battery voltage check unavailable."
+                        volt < 11.8f -> "Battery voltage check: ${"%.1f".format(volt)} volts, low."
+                        else -> "Battery voltage check: ${"%.1f".format(volt)} volts, normal."
+                    }
+                    val maf = t.mafGramsPerSec
+                    val mafText = when {
+                        maf != null -> "Mass airflow check: ${"%.1f".format(maf)} grams per second, normal."
+                        (t.engineRpm ?: 0) > 0 -> "Mass airflow check: engine running, nominal."
+                        else -> "Mass airflow check: standby."
+                    }
+                    val coolantText = t.coolantTempC?.let { "Coolant temperature $it degrees." } ?: ""
+                    val dtcs = obdManager.state.value.dtcCodes
+                    val readiness = if (dtcs.isEmpty()) {
+                        "All systems check, ready to start."
+                    } else {
+                        "Diagnostic code ${dtcs.first()} found. Systems check complete, ready to start."
+                    }
+                    val fullMsg = listOf(
+                        "OBD connected.",
+                        voltText,
+                        mafText,
+                        coolantText,
+                        readiness,
+                    ).filter { it.isNotBlank() }.joinToString(" ")
+                    if (!s.alertsMuted) {
+                        alertCoordinator.submit(
+                            alert = AlertMessage(
+                                id = UUID.randomUUID().toString(),
+                                priority = AlertPriority.VEHICLE_DIAGNOSTIC,
+                                spokenText = fullMsg,
+                                displayText = "Pre-Flight Check: ${volt?.let { "%.1fV".format(it) } ?: "--"} • MAF ${maf?.let { "%.1fg/s".format(it) } ?: "--"}",
+                                dedupKey = "obd_preflight_${System.currentTimeMillis() / 10000L}",
+                                timestampMillis = System.currentTimeMillis(),
+                            ),
+                            speechRate = s.voiceSpeed,
+                            language = s.language,
+                            globalMute = s.alertsMuted,
+                        )
+                    }
+                }
             }
         }
         // Independent Real-Time Driving Intelligence loop (4 Hz, off main thread, non-blocking)
@@ -228,15 +330,20 @@ class DashboardViewModel @Inject constructor(
                 val obdConnected = obdManager.state.value.obdConnected
                 val tel = obdManager.liveTelemetry.value
                 val signLimit = visionPipeline.state.value.lastObservation?.category?.speedLimitKmh
-                val effectiveSpeedKmh = fix?.speedKmh ?: tel.vehicleSpeedKmh?.toFloat() ?: 0f
+                val effectiveSpeedKmh = maxOf(fix?.speedKmh ?: 0f, tel.vehicleSpeedKmh?.toFloat() ?: 0f)
                 val isSensorMotion = !hub.motionAnalysis.phoneMovementDetected &&
-                    kotlin.math.abs(hub.motionAnalysis.longitudinalAccelMps2) >= 1.2f
+                    kotlin.math.abs(hub.motionAnalysis.longitudinalAccelMps2) >= 1.0f
+
+                if (fix != null && !gpsBeepPlayed) {
+                    gpsBeepPlayed = true
+                    (speechSink as? AndroidTtsSpeechSink)?.playConnectionBeep()
+                }
 
                 // Auto Mode: automatically start trip when sustained vehicle motion is detected
                 if (autoModeArmed && !isDriving.value) {
-                    if (effectiveSpeedKmh >= 10.0f || (isSensorMotion && effectiveSpeedKmh >= 4.0f)) {
+                    if (effectiveSpeedKmh >= 4.0f || isSensorMotion) {
                         if (motionDetectedSinceMs == 0L) motionDetectedSinceMs = now
-                        if ((now - motionDetectedSinceMs) >= 2_000L) {
+                        if ((now - motionDetectedSinceMs) >= 1_500L) {
                             motionDetectedSinceMs = 0L
                             lastVehicleMovingMs = now
                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
@@ -245,6 +352,47 @@ class DashboardViewModel @Inject constructor(
                         }
                     } else {
                         motionDetectedSinceMs = 0L
+                    }
+                }
+
+                // Record GPS track & OBD fuel/voltage stats during active trip
+                if (isDriving.value) {
+                    if (fix != null) {
+                        val movedEnough = lastTrackLat == null || lastTrackLng == null ||
+                            ke.co.kopilot.feature.navigation.NavigationRepository.haversineMeters(
+                                lastTrackLat!!,
+                                lastTrackLng!!,
+                                fix.latitude,
+                                fix.longitude,
+                            ) >= 20.0
+                        if (movedEnough || (now - lastTrackMs) >= 5_000L) {
+                            lastTrackLat = fix.latitude
+                            lastTrackLng = fix.longitude
+                            lastTrackMs = now
+                            tripActivityLogger.logActivity(
+                                type = "GPS_TRACK",
+                                details = "${"%.6f".format(java.util.Locale.US, fix.latitude)},${"%.6f".format(java.util.Locale.US, fix.longitude)}",
+                                timestampMillis = now,
+                            )
+                        }
+                    }
+                    if (obdConnected) {
+                        tel.mafGramsPerSec?.let { maf ->
+                            if (maf > 0f) {
+                                // Gasoline stoichiometric ~14.7:1, density ~745 g/L -> L/h = (maf * 3600) / (14.7 * 745)
+                                val lph = (maf * 3600.0) / (14.7 * 745.0)
+                                fuelRateSum += lph
+                                fuelRateCount += 1
+                            }
+                        }
+                        (tel.controlModuleVoltageV ?: tel.adapterVoltageV)?.let { v ->
+                            if (v in 6.0f..18.0f) {
+                                voltSum += v
+                                voltCount += 1
+                                if (v < voltMin) voltMin = v
+                                if (v > voltMax) voltMax = v
+                            }
+                        }
                     }
                 }
 
@@ -789,10 +937,26 @@ class DashboardViewModel @Inject constructor(
         }
     }
 
-    fun updatePermissions(cameraGranted: Boolean, locationGranted: Boolean, micGranted: Boolean) {
+    fun updatePermissions(
+        cameraGranted: Boolean,
+        locationGranted: Boolean,
+        micGranted: Boolean,
+        bluetoothGranted: Boolean = this.bluetoothGranted,
+    ) {
+        this.bluetoothGranted = bluetoothGranted
         cameraController.setPermissionGranted(cameraGranted)
         locationTracker.setPermissionGranted(locationGranted)
         voiceClient.setMicPermissionGranted(micGranted)
+        val s = uiState.value.settings
+        if (s.sensorObdEnabled &&
+            s.lastObdDeviceAddress.isNotBlank() &&
+            bluetoothGranted &&
+            !autoObdConnectAttempted &&
+            !obdManager.state.value.obdConnected
+        ) {
+            autoObdConnectAttempted = true
+            obdManager.connectAndMonitor(s.lastObdDeviceAddress, bluetoothGranted)
+        }
         // App starts in Auto Mode: keep lightweight motion & GPS watch active to auto-start trips on motion
         if (autoModeArmed && !isDriving.value) {
             if (locationGranted) {
@@ -836,8 +1000,18 @@ class DashboardViewModel @Inject constructor(
         lastIntelVoiceType = null
         lastVehicleMovingMs = started
         motionDetectedSinceMs = 0L
+        lastTrackLat = null
+        lastTrackLng = null
+        lastTrackMs = 0L
+        fuelRateSum = 0.0
+        fuelRateCount = 0
+        voltSum = 0.0
+        voltCount = 0
+        voltMin = Float.MAX_VALUE
+        voltMax = 0f
         explainedSignsInTrip.clear()
         realTimeIntelligence.resetForNewJourney(started)
+        (speechSink as? AndroidTtsSpeechSink)?.playConnectionBeep()
 
         val fix = locationTracker.state.value.currentFix
         val dest = navigationRepo.state.value.destinationName
@@ -896,6 +1070,32 @@ class DashboardViewModel @Inject constructor(
         } else {
             ""
         }
+        val avgFuelLph = if (fuelRateCount > 0) fuelRateSum / fuelRateCount else null
+        val durationHours = if (started != null) ((ended - started) / 3_600_000.0).coerceAtLeast(0.0) else 0.0
+        val totalFuelLiters = avgFuelLph?.let { it * durationHours }
+        val fuelSummary = when {
+            totalFuelLiters != null && distanceKm >= 0.3 ->
+                "${"%.2f".format(java.util.Locale.US, totalFuelLiters)} L (${"%.1f".format(java.util.Locale.US, (totalFuelLiters / distanceKm) * 100.0)} L/100km)"
+            avgFuelLph != null -> "${"%.2f".format(java.util.Locale.US, avgFuelLph)} L/h"
+            else -> "OBD Offline"
+        }
+        val voltSummary = when {
+            voltCount > 0 -> "${"%.1f".format(java.util.Locale.US, voltSum / voltCount)}V (${"%.1f".format(java.util.Locale.US, voltMin)}-${"%.1f".format(java.util.Locale.US, voltMax)}V)"
+            obdManager.state.value.obdConnected ->
+                (obdLive.controlModuleVoltageV ?: obdLive.adapterVoltageV)?.let { "${"%.1f".format(java.util.Locale.US, it)}V" } ?: "N/A"
+            else -> "OBD Offline"
+        }
+        val roadLabel = when {
+            motionStats.averageRoadScore >= 85 -> "Smooth"
+            motionStats.averageRoadScore >= 65 -> "Fair"
+            else -> "Rough"
+        }
+        val overallSummary = "Safety ${motionStats.driverBehaviourScore}/100 • Road $roadLabel (${motionStats.averageRoadScore}/100)"
+        tripActivityLogger.logActivity(
+            type = "TRIP_SUMMARY",
+            details = "Fuel=$fuelSummary | Battery=$voltSummary | Summary=$overallSummary",
+            timestampMillis = ended,
+        )
         tripActivityLogger.logActivity(
             type = "ALL_SENSORS_SUMMARY",
             details = "Orientation(Pitch=${"%.1f".format(motion.pitchDegrees)}, Roll=${"%.1f".format(motion.rollDegrees)}, Az=${"%.0f".format(motion.azimuthDegrees)})$obdSummary | PhysicalSensors($allSensorsLine)",

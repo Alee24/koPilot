@@ -41,6 +41,9 @@ class ObdBluetoothManager @Inject constructor(
 
     private var pollingJob: Job? = null
 
+    private val _lastAttemptedAddress = MutableStateFlow<String?>(null)
+    val lastAttemptedAddress: StateFlow<String?> = _lastAttemptedAddress.asStateFlow()
+
     fun listPairedDevices(bluetoothPermissionGranted: Boolean): List<PairedBluetoothDevice> {
         return connectionManager.listPairedDevices(bluetoothPermissionGranted).map {
             PairedBluetoothDevice(name = it.name, address = it.address)
@@ -56,6 +59,7 @@ class ObdBluetoothManager @Inject constructor(
     }
 
     fun connectAndMonitor(address: String, bluetoothPermissionGranted: Boolean) {
+        _lastAttemptedAddress.value = address
         pollingJob?.cancel()
         pollingJob = null
         connectionManager.disconnect()

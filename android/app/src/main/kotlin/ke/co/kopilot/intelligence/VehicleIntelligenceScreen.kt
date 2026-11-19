@@ -55,6 +55,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import ke.co.kopilot.feature.trips.TripsContent
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -207,7 +210,7 @@ fun VehicleIntelligenceScreen(
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Overview", "Ask KoPilot", "Sensors", "Report")
+    val tabs = listOf("Overview", "Trips", "Ask KoPilot", "Sensors", "Report")
 
     Column(
         modifier = Modifier
@@ -272,8 +275,9 @@ fun VehicleIntelligenceScreen(
             }
         }
 
-        TabRow(
+        ScrollableTabRow(
             selectedTabIndex = selectedTab,
+            edgePadding = 8.dp,
             containerColor = KoPilotClusterTokens.CardSurface,
             contentColor = KoPilotClusterTokens.PrimaryAccent,
             indicator = { tabPositions ->
@@ -299,17 +303,18 @@ fun VehicleIntelligenceScreen(
         }
 
         when (selectedTab) {
-            0 -> OverviewTab(ui = ui, onOpenAsk = { selectedTab = 1 }, onOpenReport = {
+            0 -> OverviewTab(ui = ui, onOpenAsk = { selectedTab = 2 }, onOpenReport = {
                 viewModel.generateHealthReport(speakSummary = false)
-                selectedTab = 3
+                selectedTab = 4
             })
-            1 -> AskKoPilotTab(
+            1 -> TripsContent(modifier = Modifier.fillMaxSize())
+            2 -> AskKoPilotTab(
                 ui = ui,
                 onAsk = { q -> viewModel.askQuestion(q, speakReply = false) },
                 onMic = { viewModel.startVoiceQuestion() },
                 onSpeak = { viewModel.speakCurrentAnswer() },
             )
-            2 -> SensorExplorerTab(ui = ui)
+            3 -> SensorExplorerTab(ui = ui)
             else -> HealthReportTab(
                 ui = ui,
                 onGenerate = { viewModel.generateHealthReport(speakSummary = false) },
@@ -761,25 +766,48 @@ private fun HealthReportTab(
         }
 
         val rep = ui.healthReport
+        var showTechnicalDetails by remember { mutableStateOf(false) }
+        val snap = ui.snapshot
         if (rep == null) {
             ViCard {
                 Text(
-                    text = "Tap 'Run Full Report' to inspect live OBD-II telemetry, perform a safe read-only DTC scan (if connected), analyze recent sensor trends, and review maintenance recommendations.",
+                    text = "Tap 'Run Full Report' for a simple summary of your fuel consumption, battery voltage, engine health, and fault codes.",
                     style = MaterialTheme.typography.bodySmall,
                     color = KoPilotClusterTokens.SecondaryText,
                 )
             }
         } else {
-            ReportSectionCard("Monitoring Status", listOf(rep.monitoringStatus))
-            ReportSectionCard("Engine Observations", rep.engineObservations)
-            ReportSectionCard("Electrical Observations", rep.electricalObservations)
-            ReportSectionCard("Fuel Observations", rep.fuelObservations)
-            ReportSectionCard("Diagnostic Findings", rep.diagnosticFindings)
-            if (rep.recentTrends.isNotEmpty()) ReportSectionCard("Recent Trends", rep.recentTrends)
-            if (rep.potentialConcerns.isNotEmpty()) ReportSectionCard("Potential Concerns", rep.potentialConcerns)
-            ReportSectionCard("Recommended Checks", rep.recommendedChecks)
-            if (rep.missingOrUnsupported.isNotEmpty()) {
-                ReportSectionCard("Missing / Unsupported Sensors", rep.missingOrUnsupported)
+            val fuelLine = rep.fuelObservations.firstOrNull() ?: "Fuel data unavailable"
+            val batteryLine = rep.electricalObservations.firstOrNull() ?: "Battery data unavailable"
+            val engineLine = rep.engineObservations.firstOrNull() ?: "Engine standby"
+            val dtcs = snap.diagnostics.storedCodes
+            val faultLine = if (dtcs.isEmpty()) "No Fault Codes" else "${dtcs.size} Code(s): ${dtcs.joinToString(", ")}"
+
+            ReportSectionCard(
+                title = "All-in-One Vehicle Summary",
+                lines = listOf(
+                    "Fuel: $fuelLine",
+                    "Battery: $batteryLine",
+                    "Engine: $engineLine",
+                    "Fault Check: $faultLine",
+                ),
+            )
+
+            TextButton(onClick = { showTechnicalDetails = !showTechnicalDetails }) {
+                Text(
+                    text = if (showTechnicalDetails) "Hide Technical Sensor Details" else "Show Technical Sensor Details",
+                    color = KoPilotClusterTokens.PrimaryAccent,
+                )
+            }
+
+            if (showTechnicalDetails) {
+                ReportSectionCard("Engine Observations", rep.engineObservations)
+                ReportSectionCard("Electrical Observations", rep.electricalObservations)
+                ReportSectionCard("Fuel Observations", rep.fuelObservations)
+                ReportSectionCard("Diagnostic Findings", rep.diagnosticFindings)
+                if (rep.recentTrends.isNotEmpty()) ReportSectionCard("Recent Trends", rep.recentTrends)
+                if (rep.potentialConcerns.isNotEmpty()) ReportSectionCard("Potential Concerns", rep.potentialConcerns)
+                ReportSectionCard("Recommended Checks", rep.recommendedChecks)
             }
         }
     }

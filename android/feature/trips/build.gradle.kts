@@ -32,6 +32,8 @@ dependencies {
     implementation(project(":core:database"))
     implementation(project(":core:network"))
     implementation(project(":core:security"))
+    implementation(project(":feature:navigation"))
+    implementation(libs.play.services.maps)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)

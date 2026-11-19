@@ -71,6 +71,9 @@ data class KoPilotSettings(
     val dataRetentionDays: Int = 90,
     val diagnosticLoggingEnabled: Boolean = false,
     val telemetryOptIn: Boolean = false,
+    // Saved OBD-II Adapter for Auto-Reconnect
+    val lastObdDeviceAddress: String = "",
+    val lastObdDeviceName: String = "",
 ) {
     fun watchedPlatesList(): List<String> =
         watchedPlatesCsv.split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }
@@ -130,6 +133,8 @@ class PreferencesRepository @Inject constructor(
             dataRetentionDays = prefs[KEY_RETENTION_DAYS] ?: 90,
             diagnosticLoggingEnabled = prefs[KEY_DIAGNOSTIC_LOGGING] ?: false,
             telemetryOptIn = prefs[KEY_TELEMETRY_OPT_IN] ?: false,
+            lastObdDeviceAddress = prefs[KEY_LAST_OBD_ADDRESS] ?: "",
+            lastObdDeviceName = prefs[KEY_LAST_OBD_NAME] ?: "",
         )
     }
 
@@ -195,6 +200,10 @@ class PreferencesRepository @Inject constructor(
     suspend fun setDataRetentionDays(days: Int) = edit { it[KEY_RETENTION_DAYS] = days.coerceIn(7, 365) }
     suspend fun setDiagnosticLoggingEnabled(enabled: Boolean) = edit { it[KEY_DIAGNOSTIC_LOGGING] = enabled }
     suspend fun setTelemetryOptIn(optIn: Boolean) = edit { it[KEY_TELEMETRY_OPT_IN] = optIn }
+    suspend fun setLastObdDevice(address: String, name: String) = edit {
+        it[KEY_LAST_OBD_ADDRESS] = address.trim()
+        it[KEY_LAST_OBD_NAME] = name.trim()
+    }
 
     suspend fun clearAll() {
         context.dataStore.edit { it.clear() }
@@ -245,5 +254,7 @@ class PreferencesRepository @Inject constructor(
         val KEY_RETENTION_DAYS = intPreferencesKey("retention_days")
         val KEY_DIAGNOSTIC_LOGGING = booleanPreferencesKey("diagnostic_logging")
         val KEY_TELEMETRY_OPT_IN = booleanPreferencesKey("telemetry_opt_in")
+        val KEY_LAST_OBD_ADDRESS = stringPreferencesKey("last_obd_address")
+        val KEY_LAST_OBD_NAME = stringPreferencesKey("last_obd_name")
     }
 }
