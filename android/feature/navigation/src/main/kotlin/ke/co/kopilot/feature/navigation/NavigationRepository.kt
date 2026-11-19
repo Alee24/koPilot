@@ -73,26 +73,52 @@ class NavigationRepository @Inject constructor(
     )
 
     suspend fun searchPlaces(query: String, lat: Double?, lng: Double?): List<PlaceItemDto> {
+        val trimmed = query.trim()
+        val offlineMatches = kenyanCities
+            .filter { (name, _) -> trimmed.isBlank() || name.contains(trimmed, ignoreCase = true) }
+            .map { (name, coords) ->
+                PlaceItemDto(
+                    placeId = "ke_${name.lowercase()}",
+                    name = name,
+                    formattedAddress = "$name, Kenya (Offline Preset)",
+                    latitude = coords.latitude,
+                    longitude = coords.longitude,
+                )
+            }
         if (!connectivityObserver.isCurrentlyOnline()) {
-            _state.value = _state.value.copy(errorMessage = "Offline: destination search unavailable")
-            return emptyList()
+            _state.value = _state.value.copy(
+                searchResults = offlineMatches,
+                isSearching = false,
+                errorMessage = if (offlineMatches.isEmpty()) "Offline: no matching cached city found" else null,
+            )
+            return offlineMatches
         }
         _state.value = _state.value.copy(isSearching = true, errorMessage = null)
         return runCatching {
-            val directKey = tokenStore.getGoogleMapsApiKey()
-            val results = if (directKey != null) {
-                searchPlacesDirect(directKey, query, lat, lng)
+            val nominatimResults = runCatching { searchPlacesNominatim(trimmed, lat, lng) }.getOrDefault(emptyList())
+            val results = if (nominatimResults.isNotEmpty()) {
+                nominatimResults
             } else {
-                apiService.searchPlaces(query = query, latitude = lat, longitude = lng).results
+                val directKey = tokenStore.getGoogleMapsApiKey()
+                if (directKey != null) {
+                    searchPlacesDirect(directKey, trimmed, lat, lng)
+                } else {
+                    runCatching {
+                        apiService.searchPlaces(query = trimmed, latitude = lat, longitude = lng).results
+                    }.getOrDefault(offlineMatches)
+                }
             }
             _state.value = _state.value.copy(searchResults = results, isSearching = false)
             results
         }.getOrElse { err ->
             _state.value = _state.value.copy(
+                searchResults = offlineMatches,
                 isSearching = false,
-                errorMessage = "Places search unavailable: ${err.localizedMessage ?: "network error"}",
+                errorMessage = if (offlineMatches.isEmpty()) {
+                    "Places search unavailable: ${err.localizedMessage ?: "network error"}"
+                } else null,
             )
-            emptyList()
+            offlineMatches
         }
     }
 
@@ -105,7 +131,7 @@ class NavigationRepository @Inject constructor(
         avoidTolls: Boolean,
     ): Boolean {
         if (!connectivityObserver.isCurrentlyOnline()) {
-            _state.value = _state.value.copy(errorMessage = "Offline: cloud routing unavailable")
+            _state.value = _state.value.copy(errorMessage = "Offline: turn-by-turn routing requires internet")
             return false
         }
         _state.value = _state.value.copy(
@@ -115,24 +141,31 @@ class NavigationRepository @Inject constructor(
             errorMessage = null,
         )
         return runCatching {
-            val directKey = tokenStore.getGoogleMapsApiKey()
-            val routes = if (directKey != null) {
-                computeRoutesDirect(directKey, originLat, originLng, destLat, destLng, avoidTolls)
+            val osrmRoutes = runCatching {
+                computeRoutesOsrm(originLat, originLng, destLat, destLng, avoidTolls)
+            }.getOrDefault(emptyList())
+            val routes = if (osrmRoutes.isNotEmpty()) {
+                osrmRoutes
             } else {
-                apiService.computeRoutes(
-                    RouteComputeRequestDto(
-                        origin = LatLngDto(originLat, originLng),
-                        destination = LatLngDto(destLat, destLng),
-                        avoidTolls = avoidTolls,
-                        computeAlternatives = true,
-                    ),
-                ).routes
+                val directKey = tokenStore.getGoogleMapsApiKey()
+                if (directKey != null) {
+                    computeRoutesDirect(directKey, originLat, originLng, destLat, destLng, avoidTolls)
+                } else {
+                    apiService.computeRoutes(
+                        RouteComputeRequestDto(
+                            origin = LatLngDto(originLat, originLng),
+                            destination = LatLngDto(destLat, destLng),
+                            avoidTolls = avoidTolls,
+                            computeAlternatives = true,
+                        ),
+                    ).routes
+                }
             }
             val primary = routes.firstOrNull()
             if (primary == null) {
                 _state.value = _state.value.copy(
                     isComputingRoute = false,
-                    errorMessage = "No route returned by routing provider",
+                    errorMessage = "No route returned by OpenStreetMap OSRM",
                 )
                 return false
             }
@@ -151,6 +184,54 @@ class NavigationRepository @Inject constructor(
             )
             false
         }
+    }
+
+    private suspend fun searchPlacesNominatim(
+        query: String,
+        lat: Double?,
+        lng: Double?,
+    ): List<PlaceItemDto> = withContext(dispatchers.io) {
+        if (query.isBlank()) return@withContext emptyList()
+        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+        val viewBoxParam = if (lat != null && lng != null) {
+            val delta = 0.6
+            "&viewbox=${lng - delta},${lat + delta},${lng + delta},${lat - delta}"
+        } else {
+            ""
+        }
+        val url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=ke&limit=8&q=$encodedQuery$viewBoxParam"
+        val req = Request.Builder()
+            .url(url)
+            .addHeader("User-Agent", "KoPilot/2.9.5 (Android OpenStreetMap Navigation)")
+            .addHeader("Accept-Language", "en")
+            .get()
+            .build()
+        val raw = okHttpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) error("Nominatim HTTP ${resp.code}")
+            resp.body?.string().orEmpty()
+        }
+        parseNominatimPlaces(raw, json)
+    }
+
+    private suspend fun computeRoutesOsrm(
+        originLat: Double,
+        originLng: Double,
+        destLat: Double,
+        destLng: Double,
+        avoidTolls: Boolean,
+    ): List<RouteOptionDto> = withContext(dispatchers.io) {
+        val excludeParam = if (avoidTolls) "&exclude=toll" else ""
+        val url = "https://router.project-osrm.org/route/v1/driving/$originLng,$originLat;$destLng,$destLat?overview=full&geometries=geojson&steps=true&alternatives=true$excludeParam"
+        val req = Request.Builder()
+            .url(url)
+            .addHeader("User-Agent", "KoPilot/2.9.5 (Android OpenStreetMap Navigation)")
+            .get()
+            .build()
+        val raw = okHttpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) error("OSRM HTTP ${resp.code}")
+            resp.body?.string().orEmpty()
+        }
+        parseOsrmRoutes(raw, json)
     }
 
     private suspend fun searchPlacesDirect(
@@ -273,6 +354,120 @@ class NavigationRepository @Inject constructor(
     }
 
     companion object {
+        fun parseNominatimPlaces(
+            raw: String,
+            jsonParser: Json = Json { ignoreUnknownKeys = true },
+        ): List<PlaceItemDto> {
+            if (raw.isBlank()) return emptyList()
+            val arr = jsonParser.parseToJsonElement(raw).jsonArray
+            return arr.mapNotNull { el ->
+                val o = el.jsonObject
+                val lat = o["lat"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: return@mapNotNull null
+                val lon = o["lon"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: return@mapNotNull null
+                val displayName = o["display_name"]?.jsonPrimitive?.content.orEmpty()
+                val shortName = o["name"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                    ?: displayName.substringBefore(",").trim().ifBlank { "Destination" }
+                PlaceItemDto(
+                    placeId = "osm_${o["place_id"]?.jsonPrimitive?.content ?: "${lat}_$lon"}",
+                    name = shortName,
+                    formattedAddress = displayName.ifBlank { "$shortName, Kenya" },
+                    latitude = lat,
+                    longitude = lon,
+                )
+            }
+        }
+
+        fun parseOsrmRoutes(
+            raw: String,
+            jsonParser: Json = Json { ignoreUnknownKeys = true },
+        ): List<RouteOptionDto> {
+            if (raw.isBlank()) return emptyList()
+            val root = jsonParser.parseToJsonElement(raw).jsonObject
+            val routesArr = root["routes"]?.jsonArray ?: return emptyList()
+            return routesArr.mapIndexedNotNull { idx, el ->
+                val r = el.jsonObject
+                val coords = r["geometry"]?.jsonObject?.get("coordinates")?.jsonArray ?: return@mapIndexedNotNull null
+                val points = coords.mapNotNull { ptEl ->
+                    val pair = ptEl.jsonArray
+                    if (pair.size >= 2) {
+                        val lon = pair[0].jsonPrimitive.doubleOrNull
+                        val lat = pair[1].jsonPrimitive.doubleOrNull
+                        if (lat != null && lon != null) LatLng(lat, lon) else null
+                    } else null
+                }
+                if (points.isEmpty()) return@mapIndexedNotNull null
+
+                val distanceM = r["distance"]?.jsonPrimitive?.doubleOrNull?.toInt() ?: 0
+                val durationS = r["duration"]?.jsonPrimitive?.doubleOrNull?.toInt() ?: 0
+                val firstLeg = r["legs"]?.jsonArray?.firstOrNull()?.jsonObject
+                val legSummary = firstLeg?.get("summary")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                val steps = firstLeg?.get("steps")?.jsonArray?.map { sEl ->
+                    val sObj = sEl.jsonObject
+                    val maneuver = sObj["maneuver"]?.jsonObject
+                    val mType = maneuver?.get("type")?.jsonPrimitive?.content.orEmpty()
+                    val mMod = maneuver?.get("modifier")?.jsonPrimitive?.content.orEmpty()
+                    val street = sObj["name"]?.jsonPrimitive?.content.orEmpty()
+                    RouteStepSummaryDto(
+                        instruction = formatOsrmManeuver(mType, mMod, street),
+                        distanceMeters = sObj["distance"]?.jsonPrimitive?.doubleOrNull?.toInt() ?: 0,
+                        durationSeconds = sObj["duration"]?.jsonPrimitive?.doubleOrNull?.toInt() ?: 0,
+                    )
+                }.orEmpty()
+
+                RouteOptionDto(
+                    routeId = "osrm_$idx",
+                    summary = legSummary?.let { "Via $it (OSM)" } ?: "OSM Route ${idx + 1}",
+                    distanceMeters = distanceM,
+                    durationSeconds = durationS,
+                    staticDurationSeconds = durationS,
+                    trafficDelaySeconds = 0,
+                    encodedPolyline = encodePolyline(points),
+                    steps = steps,
+                )
+            }
+        }
+
+        private fun formatOsrmManeuver(type: String, modifier: String, streetName: String): String {
+            val onRoad = if (streetName.isNotBlank()) " onto $streetName" else ""
+            val dir = modifier.replace('-', ' ').trim()
+            return when (type) {
+                "depart" -> if (streetName.isNotBlank()) "Start on $streetName" else "Start driving"
+                "arrive" -> "Arrive at destination"
+                "turn", "end of road", "fork", "off ramp", "on ramp" -> {
+                    val action = if (dir.isNotBlank()) "Turn $dir" else "Turn"
+                    "$action$onRoad"
+                }
+                "roundabout", "rotary" -> "Take the roundabout$onRoad"
+                "merge" -> "Merge${if (dir.isNotBlank()) " $dir" else ""}$onRoad"
+                "new name", "continue" -> if (streetName.isNotBlank()) "Continue onto $streetName" else "Continue straight"
+                else -> if (streetName.isNotBlank()) "Continue on $streetName" else "Continue"
+            }
+        }
+
+        fun encodePolyline(points: List<LatLng>): String {
+            val result = StringBuilder()
+            var prevLat = 0
+            var prevLng = 0
+            for (pt in points) {
+                val lat = Math.round(pt.latitude * 1E5).toInt()
+                val lng = Math.round(pt.longitude * 1E5).toInt()
+                encodeSignedValue(lat - prevLat, result)
+                encodeSignedValue(lng - prevLng, result)
+                prevLat = lat
+                prevLng = lng
+            }
+            return result.toString()
+        }
+
+        private fun encodeSignedValue(value: Int, out: StringBuilder) {
+            var v = if (value < 0) (value shl 1).inv() else (value shl 1)
+            while (v >= 0x20) {
+                out.append(((0x20 or (v and 0x1f)) + 63).toChar())
+                v = v shr 5
+            }
+            out.append((v + 63).toChar())
+        }
+
         fun decodePolyline(encoded: String): List<LatLng> {
             if (encoded.isEmpty()) return emptyList()
             val poly = mutableListOf<LatLng>()
