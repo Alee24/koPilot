@@ -58,6 +58,7 @@ data class KoPilotSettings(
     val alertSpeedLimitEnabled: Boolean = true,
     val alertWeatherEnabled: Boolean = true,
     val alertNumberPlatesEnabled: Boolean = true,
+    val alertRoadQualityEnabled: Boolean = true,
     val watchedPlatesCsv: String = "",
     // Sensors (activated only when Start Driving is pressed)
     val sensorCameraEnabled: Boolean = true,
@@ -118,6 +119,7 @@ class PreferencesRepository @Inject constructor(
             alertSpeedLimitEnabled = prefs[KEY_ALERT_SPEED_LIMIT] ?: true,
             alertWeatherEnabled = prefs[KEY_ALERT_WEATHER] ?: true,
             alertNumberPlatesEnabled = prefs[KEY_ALERT_NUMBER_PLATES] ?: true,
+            alertRoadQualityEnabled = prefs[KEY_ALERT_ROAD_QUALITY] ?: true,
             watchedPlatesCsv = prefs[KEY_WATCHED_PLATES] ?: "",
             sensorCameraEnabled = prefs[KEY_SENSOR_CAMERA] ?: true,
             sensorGpsEnabled = prefs[KEY_SENSOR_GPS] ?: true,
@@ -177,6 +179,7 @@ class PreferencesRepository @Inject constructor(
     }
     suspend fun setTripHistoryEnabled(enabled: Boolean) = edit { it[KEY_TRIP_HISTORY] = enabled }
     suspend fun setAlertNumberPlatesEnabled(enabled: Boolean) = edit { it[KEY_ALERT_NUMBER_PLATES] = enabled }
+    suspend fun setAlertRoadQualityEnabled(enabled: Boolean) = edit { it[KEY_ALERT_ROAD_QUALITY] = enabled }
     suspend fun addWatchedPlate(rawPlate: String) = edit { prefs ->
         val clean = rawPlate.uppercase().replace(Regex("[^A-Z0-9\\s]"), "").replace(Regex("\\s+"), " ").trim()
         if (clean.length < 4) return@edit
@@ -231,6 +234,7 @@ class PreferencesRepository @Inject constructor(
         val KEY_ALERT_SPEED_LIMIT = booleanPreferencesKey("alert_speed_limit")
         val KEY_ALERT_WEATHER = booleanPreferencesKey("alert_weather")
         val KEY_ALERT_NUMBER_PLATES = booleanPreferencesKey("alert_number_plates")
+        val KEY_ALERT_ROAD_QUALITY = booleanPreferencesKey("alert_road_quality")
         val KEY_WATCHED_PLATES = stringPreferencesKey("watched_plates")
         val KEY_SENSOR_CAMERA = booleanPreferencesKey("sensor_camera")
         val KEY_SENSOR_GPS = booleanPreferencesKey("sensor_gps")

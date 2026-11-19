@@ -247,7 +247,7 @@ class SoundStudioViewModel @Inject constructor(
                 }
 
                 synthesizer.refreshOutputRoute()
-                delay(if (settings.batterySavingMode) 90L else 45L)
+                delay(if (settings.batterySavingMode) 60L else 20L)
             }
         }
     }

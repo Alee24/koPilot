@@ -178,15 +178,22 @@ class ObdBluetoothManager @Inject constructor(
                     supportedPidHexes = supportedPids.toSet(),
                 )
 
+                val slowPids = listOf(
+                    "0105", "010F", "0103", "0106", "0107", "0108", "0109", "010A",
+                    "010B", "010E", "0110", "0114", "011F", "0123", "012F", "0133",
+                    "0142", "0143", "0145", "0146", "015C", "015E", "DTC_03", "DTC_07", "DTC_0A",
+                ).filter { it.startsWith("DTC") || it in supportedPids }
+
                 var cycle = 0
                 while (isActive && connectionManager.connectionState.value == ObdConnectionState.CONNECTED) {
                     val now = System.currentTimeMillis()
                     val currentTel = _liveTelemetry.value
 
+                    // Real-time fast path: RPM (010C) and Throttle (0111) every cycle for zero-lag Sound Studio
                     val rpm = if ("010C" in supportedPids) ObdPidParser.parseRpm(connectionManager.sendCommand("010C")) else null
-                    val speed = if ("010D" in supportedPids) ObdPidParser.parseVehicleSpeedKmh(connectionManager.sendCommand("010D")) else null
-                    val load = if ("0104" in supportedPids) ObdPidParser.parseEngineLoadPct(connectionManager.sendCommand("0104")) else null
                     val throttle = if ("0111" in supportedPids) ObdPidParser.parseThrottlePosPct(connectionManager.sendCommand("0111")) else null
+                    val speed = if (cycle % 2 == 0 && "010D" in supportedPids) ObdPidParser.parseVehicleSpeedKmh(connectionManager.sendCommand("010D")) else null
+                    val load = if (cycle % 2 == 1 && "0104" in supportedPids) ObdPidParser.parseEngineLoadPct(connectionManager.sendCommand("0104")) else null
 
                     var coolant = currentTel.coolantTempC
                     var intake = currentTel.intakeAirTempC
@@ -216,42 +223,52 @@ class ObdBluetoothManager @Inject constructor(
                     var dtcScanCompleted = currentTel.dtcScanCompleted
                     var lastDtcScanMillis = currentTel.lastDtcScanMillis
 
-                    if (cycle % 4 == 0) {
-                        if ("0105" in supportedPids) coolant = ObdPidParser.parseCoolantTempC(connectionManager.sendCommand("0105")) ?: coolant
-                        if ("010F" in supportedPids) intake = ObdPidParser.parseIntakeAirTempC(connectionManager.sendCommand("010F")) ?: intake
-                        if ("0103" in supportedPids) fuelSys = ObdPidParser.parseFuelSystemStatus(connectionManager.sendCommand("0103")) ?: fuelSys
-                        if ("0106" in supportedPids) stft = ObdPidParser.parseShortTermFuelTrimPct(connectionManager.sendCommand("0106")) ?: stft
-                        if ("0107" in supportedPids) ltft = ObdPidParser.parseLongTermFuelTrimPct(connectionManager.sendCommand("0107")) ?: ltft
-                        if ("0108" in supportedPids) stftB2 = ObdPidParser.parseShortTermFuelTrimB2Pct(connectionManager.sendCommand("0108")) ?: stftB2
-                        if ("0109" in supportedPids) ltftB2 = ObdPidParser.parseLongTermFuelTrimB2Pct(connectionManager.sendCommand("0109")) ?: ltftB2
-                        if ("010A" in supportedPids) fuelPressGauge = ObdPidParser.parseFuelPressureGaugeKpa(connectionManager.sendCommand("010A")) ?: fuelPressGauge
-                        if ("010B" in supportedPids) mapKpa = ObdPidParser.parseMapKpa(connectionManager.sendCommand("010B")) ?: mapKpa
-                        if ("010E" in supportedPids) timing = ObdPidParser.parseTimingAdvanceDeg(connectionManager.sendCommand("010E")) ?: timing
-                        if ("0110" in supportedPids) maf = ObdPidParser.parseMafGramsPerSec(connectionManager.sendCommand("0110")) ?: maf
-                        if ("0114" in supportedPids) o2v = ObdPidParser.parseO2Voltage(connectionManager.sendCommand("0114")) ?: o2v
-                        if ("011F" in supportedPids) runtime = ObdPidParser.parseRuntimeSec(connectionManager.sendCommand("011F")) ?: runtime
-                        if ("0123" in supportedPids) fuelPress = ObdPidParser.parseFuelPressureKpa(connectionManager.sendCommand("0123")) ?: fuelPress
-                        if ("012F" in supportedPids) fuelLevel = ObdPidParser.parseFuelLevelPct(connectionManager.sendCommand("012F")) ?: fuelLevel
-                        if ("0133" in supportedPids) baroKpa = ObdPidParser.parseBarometricPressureKpa(connectionManager.sendCommand("0133")) ?: baroKpa
-                        if ("0142" in supportedPids) ctrlVolt = ObdPidParser.parseControlModuleVoltage(connectionManager.sendCommand("0142")) ?: ctrlVolt
-                        if ("0143" in supportedPids) absLoad = ObdPidParser.parseAbsoluteLoadPct(connectionManager.sendCommand("0143")) ?: absLoad
-                        if ("0145" in supportedPids) relThrottle = ObdPidParser.parseRelativeThrottlePct(connectionManager.sendCommand("0145")) ?: relThrottle
-                        if ("0146" in supportedPids) ambient = ObdPidParser.parseAmbientTempC(connectionManager.sendCommand("0146")) ?: ambient
-                        if ("015C" in supportedPids) oilTemp = ObdPidParser.parseEngineOilTempC(connectionManager.sendCommand("015C")) ?: oilTemp
-                        if ("015E" in supportedPids) fuelRate = ObdPidParser.parseEngineFuelRateLph(connectionManager.sendCommand("015E")) ?: fuelRate
-                        val mode03Resp = connectionManager.sendCommand("03")
-                        if (!ObdPidParser.isAdapterError(mode03Resp) && mode03Resp.uppercase().replace(" ", "").contains("43")) {
-                            dtcs = ObdPidParser.parseDtcCodes(mode03Resp, "43")
-                            dtcScanCompleted = true
-                            lastDtcScanMillis = now
-                        }
-                        val mode07Resp = connectionManager.sendCommand("07")
-                        if (!ObdPidParser.isAdapterError(mode07Resp) && mode07Resp.uppercase().replace(" ", "").contains("47")) {
-                            pendingDtcs = ObdPidParser.parseDtcCodes(mode07Resp, "47")
-                        }
-                        val mode0AResp = connectionManager.sendCommand("0A")
-                        if (!ObdPidParser.isAdapterError(mode0AResp) && mode0AResp.uppercase().replace(" ", "").contains("4A")) {
-                            permanentDtcs = ObdPidParser.parseDtcCodes(mode0AResp, "4A")
+                    // Round-robin: poll at most ONE slow PID per cycle so RPM never stalls
+                    if (slowPids.isNotEmpty()) {
+                        when (val slowCmd = slowPids[cycle % slowPids.size]) {
+                            "0105" -> coolant = ObdPidParser.parseCoolantTempC(connectionManager.sendCommand("0105")) ?: coolant
+                            "010F" -> intake = ObdPidParser.parseIntakeAirTempC(connectionManager.sendCommand("010F")) ?: intake
+                            "0103" -> fuelSys = ObdPidParser.parseFuelSystemStatus(connectionManager.sendCommand("0103")) ?: fuelSys
+                            "0106" -> stft = ObdPidParser.parseShortTermFuelTrimPct(connectionManager.sendCommand("0106")) ?: stft
+                            "0107" -> ltft = ObdPidParser.parseLongTermFuelTrimPct(connectionManager.sendCommand("0107")) ?: ltft
+                            "0108" -> stftB2 = ObdPidParser.parseShortTermFuelTrimB2Pct(connectionManager.sendCommand("0108")) ?: stftB2
+                            "0109" -> ltftB2 = ObdPidParser.parseLongTermFuelTrimB2Pct(connectionManager.sendCommand("0109")) ?: ltftB2
+                            "010A" -> fuelPressGauge = ObdPidParser.parseFuelPressureGaugeKpa(connectionManager.sendCommand("010A")) ?: fuelPressGauge
+                            "010B" -> mapKpa = ObdPidParser.parseMapKpa(connectionManager.sendCommand("010B")) ?: mapKpa
+                            "010E" -> timing = ObdPidParser.parseTimingAdvanceDeg(connectionManager.sendCommand("010E")) ?: timing
+                            "0110" -> maf = ObdPidParser.parseMafGramsPerSec(connectionManager.sendCommand("0110")) ?: maf
+                            "0114" -> o2v = ObdPidParser.parseO2Voltage(connectionManager.sendCommand("0114")) ?: o2v
+                            "011F" -> runtime = ObdPidParser.parseRuntimeSec(connectionManager.sendCommand("011F")) ?: runtime
+                            "0123" -> fuelPress = ObdPidParser.parseFuelPressureKpa(connectionManager.sendCommand("0123")) ?: fuelPress
+                            "012F" -> fuelLevel = ObdPidParser.parseFuelLevelPct(connectionManager.sendCommand("012F")) ?: fuelLevel
+                            "0133" -> baroKpa = ObdPidParser.parseBarometricPressureKpa(connectionManager.sendCommand("0133")) ?: baroKpa
+                            "0142" -> ctrlVolt = ObdPidParser.parseControlModuleVoltage(connectionManager.sendCommand("0142")) ?: ctrlVolt
+                            "0143" -> absLoad = ObdPidParser.parseAbsoluteLoadPct(connectionManager.sendCommand("0143")) ?: absLoad
+                            "0145" -> relThrottle = ObdPidParser.parseRelativeThrottlePct(connectionManager.sendCommand("0145")) ?: relThrottle
+                            "0146" -> ambient = ObdPidParser.parseAmbientTempC(connectionManager.sendCommand("0146")) ?: ambient
+                            "015C" -> oilTemp = ObdPidParser.parseEngineOilTempC(connectionManager.sendCommand("015C")) ?: oilTemp
+                            "015E" -> fuelRate = ObdPidParser.parseEngineFuelRateLph(connectionManager.sendCommand("015E")) ?: fuelRate
+                            "DTC_03" -> {
+                                val mode03Resp = connectionManager.sendCommand("03")
+                                if (!ObdPidParser.isAdapterError(mode03Resp) && mode03Resp.uppercase().replace(" ", "").contains("43")) {
+                                    dtcs = ObdPidParser.parseDtcCodes(mode03Resp, "43")
+                                    dtcScanCompleted = true
+                                    lastDtcScanMillis = now
+                                }
+                            }
+                            "DTC_07" -> {
+                                val mode07Resp = connectionManager.sendCommand("07")
+                                if (!ObdPidParser.isAdapterError(mode07Resp) && mode07Resp.uppercase().replace(" ", "").contains("47")) {
+                                    pendingDtcs = ObdPidParser.parseDtcCodes(mode07Resp, "47")
+                                }
+                            }
+                            "DTC_0A" -> {
+                                val mode0AResp = connectionManager.sendCommand("0A")
+                                if (!ObdPidParser.isAdapterError(mode0AResp) && mode0AResp.uppercase().replace(" ", "").contains("4A")) {
+                                    permanentDtcs = ObdPidParser.parseDtcCodes(mode0AResp, "4A")
+                                }
+                            }
+                            else -> Unit
                         }
                     }
 
@@ -314,7 +331,7 @@ class ObdBluetoothManager @Inject constructor(
                     )
 
                     cycle++
-                    delay(750L)
+                    delay(40L)
                 }
             }
         }

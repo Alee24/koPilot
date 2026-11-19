@@ -234,7 +234,7 @@ class RealTimeDrivingIntelligence @Inject constructor() {
                         type = DrivingEventType.HARSH_BRAKING,
                         severity = EventSeverity.HIGH,
                         title = "Harsh Braking",
-                        detail = "Sudden deceleration (${"%.1f".format(motion.longitudinalAccelMps2)} m/s²)",
+                        detail = "Sudden braking — please keep a safe following distance.",
                         speedKmh = input.gpsSpeedKmh,
                         safetyImpact = -5,
                         fuelImpact = -3,
@@ -278,7 +278,7 @@ class RealTimeDrivingIntelligence @Inject constructor() {
                         type = DrivingEventType.SHARP_CORNERING,
                         severity = EventSeverity.HIGH,
                         title = "Sharp Cornering",
-                        detail = "High lateral G / yaw (${"%.2f".format(motion.yawRateRadPerSec)} rad/s)",
+                        detail = "Sharp turn detected — please slow down through corners.",
                         speedKmh = input.gpsSpeedKmh,
                         safetyImpact = -4,
                         fuelImpact = -2,
@@ -287,17 +287,17 @@ class RealTimeDrivingIntelligence @Inject constructor() {
                 )
             }
 
-            // 4. Pothole / Road Impact
+            // 4. Pothole / Road Impact (only while moving >= 8 km/h; polite message without raw RMS decimals)
             val currentPotholes = motion.behaviourStats.potholeBumpCount
-            if (newlyConfirmedEvent == null && currentPotholes > lastPotholeCount) {
+            if (newlyConfirmedEvent == null && speed >= 8.0f && currentPotholes > lastPotholeCount) {
                 lastPotholeCount = currentPotholes
                 potholeImpactCount++
                 newlyConfirmedEvent = recordEvent(
                     DrivingIntelligenceEvent(
                         type = DrivingEventType.POTHOLE_IMPACT,
                         severity = EventSeverity.MODERATE,
-                        title = "Road Impact",
-                        detail = "Rough bump / pothole shock (${"%.1f".format(motion.verticalVibrationRmsMps2)} m/s² RMS)",
+                        title = "Bump Hit",
+                        detail = "Bump hit — please slow down and be watchful.",
                         speedKmh = input.gpsSpeedKmh,
                         safetyImpact = -1,
                         fuelImpact = 0,

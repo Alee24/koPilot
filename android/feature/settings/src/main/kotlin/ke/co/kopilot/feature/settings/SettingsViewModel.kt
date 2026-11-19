@@ -96,7 +96,14 @@ class SettingsViewModel @Inject constructor(
     fun setTrafficAlerts(enabled: Boolean) = viewModelScope.launch { prefsRepo.setTrafficAlertsEnabled(enabled) }
     fun setNavVoice(enabled: Boolean) = viewModelScope.launch { prefsRepo.setNavVoiceGuidanceEnabled(enabled) }
     fun setVoiceMode(mode: VoiceMode) = viewModelScope.launch { prefsRepo.setVoiceMode(mode) }
-    fun setAiVoiceName(voice: String) = viewModelScope.launch { prefsRepo.setAiVoiceName(voice) }
+    fun setAiVoiceName(voice: String) {
+        if (speechSink is AndroidTtsSpeechSink) {
+            speechSink.setVoiceProfile(voice)
+        }
+        viewModelScope.launch { prefsRepo.setAiVoiceName(voice) }
+    }
+    fun availableVoices(): List<String> =
+        if (speechSink is AndroidTtsSpeechSink) speechSink.availableSystemVoices() else listOf("Default", "Feminine", "Masculine", "Futuristic")
     fun setAlertChimeEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertChimeEnabled(enabled) }
     fun setVoiceVolume(vol: Float) = viewModelScope.launch { prefsRepo.setVoiceVolume(vol) }
     fun setMicMode(mode: MicMode) = viewModelScope.launch { prefsRepo.setMicMode(mode) }
@@ -106,6 +113,7 @@ class SettingsViewModel @Inject constructor(
     fun setAlertSpeedLimitEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertSpeedLimitEnabled(enabled) }
     fun setAlertWeatherEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertWeatherEnabled(enabled) }
     fun setAlertNumberPlatesEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertNumberPlatesEnabled(enabled) }
+    fun setAlertRoadQualityEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertRoadQualityEnabled(enabled) }
     fun addWatchedPlate(plate: String) = viewModelScope.launch { prefsRepo.addWatchedPlate(plate) }
     fun removeWatchedPlate(plate: String) = viewModelScope.launch { prefsRepo.removeWatchedPlate(plate) }
     fun setSensorCameraEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorCameraEnabled(enabled) }
@@ -117,11 +125,14 @@ class SettingsViewModel @Inject constructor(
 
     fun testVoiceSound() {
         val s = settings.value
-        if (s.alertChimeEnabled && speechSink is AndroidTtsSpeechSink) {
-            speechSink.playChime()
+        if (speechSink is AndroidTtsSpeechSink) {
+            speechSink.setVoiceProfile(s.aiVoiceName)
+            if (s.alertChimeEnabled) {
+                speechSink.playChime()
+            }
         }
         speechSink.speak(
-            text = "KoPilot voice and alert sound check. Speed limit 50 kilometres per hour observed.",
+            text = "KoPilot voice and alert sound check. Bump ahead, please slow down and drive carefully.",
             flushQueue = true,
             speechRate = s.voiceSpeed,
             languageTag = s.language,

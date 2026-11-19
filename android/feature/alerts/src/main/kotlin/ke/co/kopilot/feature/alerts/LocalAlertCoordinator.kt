@@ -29,6 +29,8 @@ class AndroidTtsSpeechSink @Inject constructor(
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var tts: TextToSpeech? = null
     private var ready = false
+    private var selectedVoiceProfile: String = "Default"
+    private var selectedPitch: Float = 1.0f
 
     private val focusRequest: AudioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
         .setAudioAttributes(
@@ -65,6 +67,37 @@ class AndroidTtsSpeechSink @Inject constructor(
         }
     }
 
+    fun setVoiceProfile(voiceName: String) {
+        selectedVoiceProfile = voiceName
+        selectedPitch = when (voiceName.lowercase()) {
+            "feminine" -> 1.14f
+            "masculine" -> 0.84f
+            "futuristic" -> 0.94f
+            else -> 1.0f
+        }
+        if (ready) {
+            runCatching {
+                val installed = tts?.voices.orEmpty().firstOrNull { it.name.equals(voiceName, ignoreCase = true) }
+                if (installed != null) {
+                    tts?.voice = installed
+                }
+            }
+        }
+    }
+
+    fun availableSystemVoices(): List<String> {
+        val presets = listOf("Default", "Feminine", "Masculine", "Futuristic")
+        if (!ready) return presets
+        val localVoices = runCatching {
+            tts?.voices.orEmpty()
+                .filter { !it.isNetworkConnectionRequired && (it.locale.language == "en" || it.locale.language == "sw") }
+                .map { it.name }
+                .distinct()
+                .take(6)
+        }.getOrDefault(emptyList())
+        return (presets + localVoices).distinct()
+    }
+
     override fun speak(text: String, flushQueue: Boolean, speechRate: Float, languageTag: String) {
         if (!ready) return
         val preferred = if (languageTag == "sw") Locale("sw", "KE") else Locale("en", "KE")
@@ -75,7 +108,13 @@ class AndroidTtsSpeechSink @Inject constructor(
                 tts?.setLanguage(Locale.getDefault())
             }
         }
-        tts?.setSpeechRate(speechRate)
+        val effectiveRate = if (selectedVoiceProfile.equals("Futuristic", ignoreCase = true)) {
+            (speechRate * 1.06f).coerceIn(0.6f, 1.8f)
+        } else {
+            speechRate
+        }
+        tts?.setPitch(selectedPitch)
+        tts?.setSpeechRate(effectiveRate)
         audioManager.requestAudioFocus(focusRequest)
         val mode = if (flushQueue) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
         tts?.speak(text, mode, null, "kopilot_${System.currentTimeMillis()}")

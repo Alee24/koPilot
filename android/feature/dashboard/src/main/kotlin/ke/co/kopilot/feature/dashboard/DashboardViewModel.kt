@@ -212,6 +212,13 @@ class DashboardViewModel @Inject constructor(
 
     init {
         visionPipeline.initializeIfNeeded()
+        viewModelScope.launch {
+            prefsRepo.settingsFlow.collect { s ->
+                if (speechSink is AndroidTtsSpeechSink) {
+                    speechSink.setVoiceProfile(s.aiVoiceName)
+                }
+            }
+        }
         // Independent Real-Time Driving Intelligence loop (4 Hz, off main thread, non-blocking)
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             while (true) {
@@ -274,18 +281,25 @@ class DashboardViewModel @Inject constructor(
                         timestampMillis = evt.timestampMillis,
                     )
                     val s = uiState.value.settings
-                    val shouldSpeak = evt.type.isSafetyCritical &&
+                    val allowRoadBump = evt.type != ke.co.kopilot.feature.sensors.DrivingEventType.POTHOLE_IMPACT || s.alertRoadQualityEnabled
+                    val shouldSpeak = allowRoadBump &&
+                        evt.type.isSafetyCritical &&
                         !s.alertsMuted &&
                         (evt.type.name != lastIntelVoiceType || (now - lastIntelVoiceAlertMs) >= 30_000L)
                     if (shouldSpeak && (s.voiceMode != VoiceMode.QUIET || evt.severity == ke.co.kopilot.feature.sensors.EventSeverity.HIGH)) {
                         lastIntelVoiceAlertMs = now
                         lastIntelVoiceType = evt.type.name
+                        val spokenMsg = if (evt.type == ke.co.kopilot.feature.sensors.DrivingEventType.POTHOLE_IMPACT) {
+                            evt.detail
+                        } else {
+                            "${evt.title}. ${evt.detail}"
+                        }
                         alertCoordinator.submit(
                             alert = AlertMessage(
                                 id = UUID.randomUUID().toString(),
                                 priority = AlertPriority.ROAD_OBSERVATION,
-                                spokenText = "${evt.title}. ${evt.detail}.",
-                                displayText = "${evt.title}: ${evt.detail}",
+                                spokenText = spokenMsg,
+                                displayText = evt.detail,
                                 dedupKey = "intel_${evt.type.name}",
                                 timestampMillis = now,
                             ),

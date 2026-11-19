@@ -136,7 +136,35 @@ fun SettingsScreen(
                 SettingSwitch("Lane Drifting & Turning Alerts", settings.alertLaneTurnEnabled, viewModel::setAlertLaneTurnEnabled)
                 SettingSwitch("Overspeed & Speed Limit Alerts", settings.alertSpeedLimitEnabled, viewModel::setAlertSpeedLimitEnabled)
                 SettingSwitch("Weather & Headlight Advisories", settings.alertWeatherEnabled, viewModel::setAlertWeatherEnabled)
+                SettingSwitch("Road Bump & Rough Road Alerts", settings.alertRoadQualityEnabled, viewModel::setAlertRoadQualityEnabled)
                 SettingSwitch("Play Chime Before Alerts", settings.alertChimeEnabled, viewModel::setAlertChimeEnabled)
+            }
+
+            // 1b. Voice Studio & System Voice Selection
+            SettingsCard {
+                SectionTitle("Voice Selection", "Choose a preset or installed offline system voice for KoPilot.")
+                Spacer(Modifier.height(6.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    viewModel.availableVoices().forEach { voice ->
+                        val selected = settings.aiVoiceName.equals(voice, ignoreCase = true)
+                        FilterChip(
+                            selected = selected,
+                            onClick = { viewModel.setAiVoiceName(voice) },
+                            label = { Text(voice) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = viewModel::testVoiceSound,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                ) {
+                    Text("Test Selected Voice")
+                }
             }
 
             // 2. Kenyan Number Plate Watchlist (100% offline OCR matching)

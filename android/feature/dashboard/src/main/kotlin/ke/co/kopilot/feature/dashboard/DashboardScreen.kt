@@ -1505,10 +1505,10 @@ private fun KoPilotCockpitLanding(
 
     Column(
         modifier = modifier
+            .fillMaxSize()
             .background(KoPilotClusterTokens.Background)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // 1. Header: Steering icon + KoPilot / AI Driving Copilot + Bell & Settings
         Row(
@@ -1626,16 +1626,16 @@ private fun KoPilotCockpitLanding(
             }
         }
 
-        // 3. Road Preview Card (replaces live camera on standby landing page; tapping Start Driving launches Full-Bleed AR HUD)
+        // 3. Road Preview Card (flexible height so entire landing page fits without scrolling)
         Surface(
             onClick = { viewModel.startDriving() },
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(14.dp),
             color = KoPilotClusterTokens.CardSurface,
             border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .heightIn(min = 160.dp, max = 210.dp),
+                .weight(1f)
+                .heightIn(min = 96.dp),
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Image(
@@ -1713,10 +1713,10 @@ private fun KoPilotCockpitLanding(
                 onClick = {
                     if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
                 },
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(14.dp),
                 color = KoPilotClusterTokens.GlassCardSurface,
                 border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
-                modifier = Modifier.size(134.dp),
+                modifier = Modifier.size(104.dp),
             ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                     Canvas(modifier = Modifier.fillMaxSize().padding(10.dp)) {
@@ -1762,14 +1762,14 @@ private fun KoPilotCockpitLanding(
             // Right Stacked Vehicle Health + Fuel Cards
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Surface(
                     onClick = onOpenVehicleIntelligence,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(12.dp),
                     color = KoPilotClusterTokens.GlassCardSurface,
                     border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
-                    modifier = Modifier.fillMaxWidth().height(63.dp),
+                    modifier = Modifier.fillMaxWidth().height(49.dp),
                 ) {
                     Row(
                         modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
@@ -1806,10 +1806,10 @@ private fun KoPilotCockpitLanding(
 
                 Surface(
                     onClick = onOpenDrivingIntelligence,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(12.dp),
                     color = KoPilotClusterTokens.GlassCardSurface,
                     border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
-                    modifier = Modifier.fillMaxWidth().height(63.dp),
+                    modifier = Modifier.fillMaxWidth().height(49.dp),
                 ) {
                     Row(
                         modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
@@ -1928,65 +1928,30 @@ private fun KoPilotCockpitLanding(
             }
         }
 
-        // 7. Recent Driving Events Card
+        // 7. Compact Recent Driving Event Strip
         Surface(
-            shape = RoundedCornerShape(14.dp),
+            onClick = onOpenDrivingIntelligence,
+            shape = RoundedCornerShape(12.dp),
             color = KoPilotClusterTokens.GlassCardSurface,
             border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Recent Driving Events",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = KoPilotClusterTokens.PrimaryText,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    TextButton(onClick = onOpenDrivingIntelligence) {
-                        Text("View All >", color = KoPilotClusterTokens.SecondaryAccent)
-                    }
-                }
-                if (intel.recentEvents.isEmpty()) {
-                    Text(
-                        text = "No harsh braking, aggressive acceleration, or road impact events recorded yet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = KoPilotClusterTokens.SecondaryText,
-                    )
-                } else {
-                    val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                    intel.recentEvents.take(3).forEach { evt ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = evt.title,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (evt.severity == ke.co.kopilot.feature.sensors.EventSeverity.HIGH) {
-                                    KoPilotClusterTokens.VeryRough
-                                } else {
-                                    KoPilotClusterTokens.ModerateRoad
-                                },
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                text = fmt.format(java.util.Date(evt.timestampMillis)),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = KoPilotClusterTokens.SecondaryText,
-                            )
-                        }
-                    }
-                }
+                val latest = intel.recentEvents.firstOrNull()
+                Text(
+                    text = latest?.let { "${it.title}: ${it.detail}" } ?: "No recent driving warnings",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (latest != null) KoPilotClusterTokens.ModerateRoad else KoPilotClusterTokens.SecondaryText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("View All >", style = MaterialTheme.typography.labelSmall, color = KoPilotClusterTokens.SecondaryAccent, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -2005,10 +1970,10 @@ private fun LandingStatTile(
         shape = RoundedCornerShape(12.dp),
         color = KoPilotClusterTokens.GlassCardSurface,
         border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
-        modifier = modifier.height(68.dp),
+        modifier = modifier.height(54.dp),
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(8.dp),
+            modifier = Modifier.fillMaxSize().padding(6.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -2045,15 +2010,15 @@ private fun LandingActionTile(
         shape = RoundedCornerShape(12.dp),
         color = KoPilotClusterTokens.GlassCardSurface,
         border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
-        modifier = modifier.height(74.dp),
+        modifier = modifier.height(56.dp),
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(8.dp),
+            modifier = Modifier.fillMaxSize().padding(6.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
-            Spacer(Modifier.height(4.dp))
+            Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.height(2.dp))
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,

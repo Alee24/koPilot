@@ -470,16 +470,15 @@ private fun AskKoPilotTab(
     onMic: () -> Unit,
     onSpeak: () -> Unit,
 ) {
+    var showKeyboardInput by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
     val suggestions = listOf(
         "How is my car performing right now?",
-        "Tell me everything you know about my car right now",
-        "Give me a full vehicle health report",
+        "Are there any check engine codes?",
         "What's my engine temperature?",
-        "Has my engine temperature increased during this trip?",
-        "Are there any fault codes?",
+        "What's my RPM and voltage?",
+        "Give me a full vehicle health report",
         "What sensors are available?",
-        "What should I check before driving?",
     )
 
     Column(
@@ -489,81 +488,103 @@ private fun AskKoPilotTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        ViCard {
-            Text(
-                text = "Ask KoPilot Anything About My Car (Offline)",
-                style = MaterialTheme.typography.titleSmall,
-                color = KoPilotClusterTokens.PrimaryText,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(
+        // Hands-Free Voice-First Centerpiece (no keyboard popping up automatically)
+        ViCard(borderColor = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.5f)) {
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    placeholder = { Text("Ask about engine temp, RPM, faults, fuel...") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = KoPilotClusterTokens.PrimaryAccent,
-                        unfocusedBorderColor = KoPilotClusterTokens.Border,
-                        focusedTextColor = KoPilotClusterTokens.PrimaryText,
-                        unfocusedTextColor = KoPilotClusterTokens.PrimaryText,
-                    ),
+                Text(
+                    text = "Hands-Free Voice Assistant (Offline)",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = KoPilotClusterTokens.PrimaryText,
+                    fontWeight = FontWeight.Bold,
                 )
-                IconButton(
-                    onClick = {
-                        if (inputText.isNotBlank()) {
-                            onAsk(inputText)
-                            inputText = ""
-                        }
-                    },
-                    modifier = Modifier.size(48.dp),
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send question",
-                        tint = KoPilotClusterTokens.PrimaryAccent,
-                    )
-                }
-                IconButton(
+                Surface(
                     onClick = onMic,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(
-                            if (ui.isListening) KoPilotClusterTokens.VeryRough else KoPilotClusterTokens.ElevatedSurface,
-                            CircleShape,
-                        ),
+                    shape = CircleShape,
+                    color = if (ui.isListening) KoPilotClusterTokens.VeryRough else KoPilotClusterTokens.PrimaryAccent,
+                    modifier = Modifier.size(76.dp),
                 ) {
-                    Icon(
-                        Icons.Default.Mic,
-                        contentDescription = "Voice question",
-                        tint = KoPilotClusterTokens.PrimaryText,
-                    )
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Tap to Speak",
+                            tint = if (ui.isListening) Color.White else KoPilotClusterTokens.Background,
+                            modifier = Modifier.size(34.dp),
+                        )
+                    }
                 }
-            }
+                Text(
+                    text = if (ui.isListening) "Listening... Speak your question" else "Tap microphone and speak naturally",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (ui.isListening) KoPilotClusterTokens.VeryRough else KoPilotClusterTokens.PrimaryAccent,
+                    fontWeight = FontWeight.SemiBold,
+                )
 
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                suggestions.forEach { q ->
-                    FilterChip(
-                        selected = false,
-                        onClick = { onAsk(q) },
-                        label = { Text(q) },
-                        modifier = Modifier.height(48.dp),
-                        colors = FilterChipDefaults.filterChipColors(
-                            labelColor = KoPilotClusterTokens.PrimaryText,
-                        ),
-                    )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    suggestions.forEach { q ->
+                        FilterChip(
+                            selected = false,
+                            onClick = { onAsk(q) },
+                            label = { Text(q) },
+                            modifier = Modifier.height(44.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                labelColor = KoPilotClusterTokens.PrimaryText,
+                            ),
+                        )
+                    }
+                }
+
+                if (showKeyboardInput) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = inputText,
+                            onValueChange = { inputText = it },
+                            placeholder = { Text("Type optional question...") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = KoPilotClusterTokens.PrimaryAccent,
+                                unfocusedBorderColor = KoPilotClusterTokens.Border,
+                                focusedTextColor = KoPilotClusterTokens.PrimaryText,
+                                unfocusedTextColor = KoPilotClusterTokens.PrimaryText,
+                            ),
+                        )
+                        IconButton(
+                            onClick = {
+                                if (inputText.isNotBlank()) {
+                                    onAsk(inputText)
+                                    inputText = ""
+                                }
+                            },
+                            modifier = Modifier.size(48.dp),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Send",
+                                tint = KoPilotClusterTokens.PrimaryAccent,
+                            )
+                        }
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { showKeyboardInput = true },
+                        modifier = Modifier.height(40.dp),
+                        border = BorderStroke(1.dp, KoPilotClusterTokens.Border),
+                    ) {
+                        Text("Optional Text Input", style = MaterialTheme.typography.labelSmall, color = KoPilotClusterTokens.SecondaryText)
+                    }
                 }
             }
         }
@@ -575,7 +596,7 @@ private fun AskKoPilotTab(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (ui.lastQuestion.isNotBlank()) "Q: ${ui.lastQuestion}" else "KoPilot Response",
+                    text = if (ui.lastQuestion.isNotBlank()) "You asked: ${ui.lastQuestion}" else "KoPilot Response",
                     style = MaterialTheme.typography.labelMedium,
                     color = KoPilotClusterTokens.PrimaryAccent,
                     modifier = Modifier.weight(1f),

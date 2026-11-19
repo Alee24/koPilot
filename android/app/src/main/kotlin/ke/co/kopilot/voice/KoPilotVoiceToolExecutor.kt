@@ -110,6 +110,41 @@ class KoPilotVoiceToolExecutor @Inject constructor(
             prefsRepo.setVoiceMode(mode)
             """{"status":"ok","voice_mode":"${mode.name}"}"""
         }
+        "voice_configure_setting" -> {
+            val command = arguments["command"]?.jsonPrimitive?.content?.lowercase().orEmpty()
+            when {
+                command.contains("add plate") || command.contains("watch plate") -> {
+                    val plate = command.substringAfter("plate").trim().uppercase()
+                    if (plate.length >= 4) {
+                        prefsRepo.addWatchedPlate(plate)
+                        """{"status":"ok","message":"Added plate $plate to your watchlist."}"""
+                    } else {
+                        """{"status":"unavailable","message":"Please say the full number plate after add plate."}"""
+                    }
+                }
+                command.contains("unmute") -> {
+                    prefsRepo.setAlertsMuted(false)
+                    """{"status":"ok","message":"Alerts unmuted."}"""
+                }
+                command.contains("mute") -> {
+                    prefsRepo.setAlertsMuted(true)
+                    """{"status":"ok","message":"Alerts muted."}"""
+                }
+                command.contains("feminine") -> {
+                    prefsRepo.setAiVoiceName("Feminine")
+                    """{"status":"ok","message":"Switched voice to Feminine."}"""
+                }
+                command.contains("masculine") -> {
+                    prefsRepo.setAiVoiceName("Masculine")
+                    """{"status":"ok","message":"Switched voice to Masculine."}"""
+                }
+                command.contains("futuristic") -> {
+                    prefsRepo.setAiVoiceName("Futuristic")
+                    """{"status":"ok","message":"Switched voice to Futuristic."}"""
+                }
+                else -> """{"status":"unavailable","message":"Setting command not recognized."}"""
+            }
+        }
         "get_vehicle_diagnostics" -> {
             val obd = obdManager.state.value
             val tel = obdManager.liveTelemetry.value

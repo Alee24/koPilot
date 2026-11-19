@@ -316,8 +316,18 @@ class VehicleIntelligenceEngine @Inject constructor(
             return obs.joinToString(" ") to null
         }
 
-        if (q.contains("fault") || q.contains("dtc") || q.contains("error code") || q.contains("check engine")) {
-            return analyzeDiagnostics(snap).joinToString(" ") to null
+        if (q.contains("fault") || q.contains("dtc") || q.contains("error code") || q.contains("check engine") || q.contains("warning light") || q.contains("mil")) {
+            val diag = snap.diagnostics
+            val msg = when (diag.scanStatus) {
+                DtcScanStatus.UNAVAILABLE -> "I cannot check for Check Engine Light codes because OBD-II is disconnected."
+                DtcScanStatus.NOT_SCANNED -> "A Check Engine diagnostic scan has not completed yet. Connect OBD-II and wait a moment."
+                DtcScanStatus.SCANNED_CLEAN -> "No Check Engine Light fault codes are stored right now. Regular maintenance checks still apply."
+                DtcScanStatus.SCANNED_FAULTS_FOUND -> {
+                    val codes = getDiagnosticCodes().joinToString("; ") { "${it.code}: ${it.description}" }
+                    "Check Engine Light alert: ${diag.storedCodes.size} stored fault code(s) found — $codes. Please have your vehicle inspected."
+                }
+            }
+            return msg to null
         }
 
         if (q.contains("fuel")) {

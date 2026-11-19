@@ -205,6 +205,11 @@ class LocalVoiceCommandEngine @Inject constructor(
                     "Last observed sign: ${res["sign"]?.jsonPrimitive?.content}."
                 }
             }
+            q.contains("add plate") || q.contains("watch plate") || q.contains("mute alert") || q.contains("unmute alert") || q.contains("set voice") || q.contains("change voice") -> {
+                val args = buildJsonObject { put("command", utterance) }
+                val res = parseObj(toolExecutor.executeTool("voice_configure_setting", args))
+                res["message"]?.jsonPrimitive?.content ?: "Updated setting."
+            }
             q.contains("my car") ||
                 q.contains("everything about") ||
                 q.contains("health report") ||
@@ -215,6 +220,8 @@ class LocalVoiceCommandEngine @Inject constructor(
                 q.contains("fault") ||
                 q.contains("dtc") ||
                 q.contains("error code") ||
+                q.contains("check engine") ||
+                q.contains("warning light") ||
                 q.contains("voltage") ||
                 q.contains("battery") ||
                 q.contains("how much fuel") ||
