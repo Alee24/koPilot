@@ -161,6 +161,7 @@ fun DashboardScreen(
     onOpenSoundStudio: () -> Unit = {},
     onOpenSafetySettings: () -> Unit = {},
     onOpenLiveMap: () -> Unit = {},
+    onOpenPerformanceThermal: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -263,6 +264,10 @@ fun DashboardScreen(
                 viewModel.visionPipeline.platePipeline.deleteAllEvidence()
             },
             evidenceCount = viewModel.visionPipeline.platePipeline.listEvidenceFiles().size,
+            onOpenPerformanceThermal = {
+                showVisionDiagDialog = false
+                onOpenPerformanceThermal()
+            },
             onDismiss = { showVisionDiagDialog = false },
         )
     }
@@ -331,6 +336,10 @@ fun DashboardScreen(
             onOpenVisionDiag = {
                 showToolsDialog = false
                 showVisionDiagDialog = true
+            },
+            onOpenPerformanceThermal = {
+                showToolsDialog = false
+                onOpenPerformanceThermal()
             },
             onToggleMuteAlerts = viewModel::toggleAlertsMute,
             onCallEmergency = {
@@ -536,6 +545,7 @@ private fun ViewportCard(
                             imageProxy = imageProxy,
                             rotationDegrees = rotation,
                             timestampMillis = ts,
+                            thermalModeName = state.cameraStatus.thermalState.name,
                             onConfirmedSign = viewModel::onConfirmedSign,
                         )
                     },
@@ -3652,10 +3662,12 @@ private fun VisionDiagnosticsDialog(
     onSavePlateEvidence: () -> Unit,
     onDeletePlateEvidence: () -> Unit,
     evidenceCount: Int,
+    onOpenPerformanceThermal: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val cam = state.cameraStatus
     val vis = state.visionState
+    val perf = vis.performanceMetrics
     val allErrors = (cam.recentErrors + vis.recentErrors).takeLast(10)
 
     AlertDialog(
@@ -3666,6 +3678,19 @@ private fun VisionDiagnosticsDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                Button(
+                    onClick = onOpenPerformanceThermal,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MintTeal,
+                        contentColor = CockpitDarkBg,
+                    ),
+                ) {
+                    Text(
+                        text = "Open Performance & Thermal Screen",
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
                 Text(
                     text = "Actual measured on-device LiteRT & CameraX metrics (never simulated):",
                     style = MaterialTheme.typography.bodySmall,
@@ -3680,11 +3705,12 @@ private fun VisionDiagnosticsDialog(
                         Text("Model: ${vis.modelVersion}", fontWeight = FontWeight.Medium)
                         Text("Accelerator: ${vis.activeAccelerator}")
                         Text("Mode: ${vis.validationStatus}", style = MaterialTheme.typography.bodySmall)
-                        Text("Inference Latency: ${vis.lastInferenceLatencyMs} ms")
+                        Text("Latency (Last / Avg / P95): ${vis.lastInferenceLatencyMs} ms / ${"%.1f".format(perf.avgTotalLatencyMs)} ms / ${"%.0f".format(perf.p95TotalLatencyMs)} ms")
                         Text("Camera FPS: ${"%.1f".format(cam.cameraFps)} | Inference FPS: ${"%.1f".format(cam.inferenceFps)}")
                         Text("Camera Resolution: ${cam.actualResolution}")
-                        Text("Frames Analyzed: ${cam.analyzedFrames} | Dropped: ${cam.droppedFrames}")
-                        Text("Thermal: ${cam.thermalState.name} | Battery: ${if (cam.batteryPercent >= 0) "${cam.batteryPercent}%" else "Unknown"}")
+                        Text("Frames Analyzed: ${cam.analyzedFrames} | Paced: ${cam.droppedFrames} (${"%.1f".format(cam.droppedFramePercent)}%)")
+                        Text("Thermal: ${cam.thermalState.name} (${cam.osThermalStatusLabel}) | Battery: ${if (cam.batteryPercent >= 0) "${cam.batteryPercent}%" else "Unknown"} ${cam.batteryTemperatureC?.let { "(${"%.1f".format(it)} C)" } ?: ""}")
+                        Text("Memory: JVM ${cam.jvmHeapUsedMb}/${cam.jvmHeapMaxMb} MB | Native ${cam.nativeHeapAllocatedMb} MB")
                         Text("Scene Luminance: ${vis.averageLuminance.toInt()} | Zoom: ${"%.1f".format(vis.recommendedZoomRatio)}x")
                     }
                 }
@@ -3907,6 +3933,7 @@ private fun DashboardToolsDialog(
     onOpenTrips: () -> Unit,
     onOpenSignsDb: () -> Unit,
     onOpenVisionDiag: () -> Unit,
+    onOpenPerformanceThermal: () -> Unit = {},
     onToggleMuteAlerts: () -> Unit,
     onCallEmergency: () -> Unit,
 ) {
@@ -3949,6 +3976,7 @@ private fun DashboardToolsDialog(
                     OutlinedButton(onClick = onOpenTrips) { Text("My Trips (.txt)") }
                     OutlinedButton(onClick = onOpenSignsDb) { Text("Road Signs DB") }
                     OutlinedButton(onClick = onOpenVisionDiag) { Text("Offline AI Diag") }
+                    OutlinedButton(onClick = onOpenPerformanceThermal) { Text("Performance & Thermal") }
                     OutlinedButton(onClick = onToggleMuteAlerts) {
                         Text(if (state.settings.alertsMuted) "Unmute Alerts" else "Mute Alerts")
                     }

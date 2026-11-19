@@ -169,11 +169,17 @@ fun RoadCameraPreview(
                     val now = System.currentTimeMillis()
                     performanceController.recordResolution(imageProxy.width, imageProxy.height)
                     if (performanceController.shouldAnalyzeFrame(now, analysisIntervalMs)) {
-                        onFrameListener.onFrame(
-                            imageProxy = imageProxy,
-                            rotationDegrees = imageProxy.imageInfo.rotationDegrees,
-                            timestampMillis = now,
-                        )
+                        val t0 = System.nanoTime()
+                        try {
+                            onFrameListener.onFrame(
+                                imageProxy = imageProxy,
+                                rotationDegrees = imageProxy.imageInfo.rotationDegrees,
+                                timestampMillis = now,
+                            )
+                        } finally {
+                            val elapsedMs = ((System.nanoTime() - t0) / 1_000_000L).coerceAtLeast(1L)
+                            performanceController.recordFrameLatency(elapsedMs, queueDepth = 0)
+                        }
                     } else {
                         imageProxy.close()
                     }

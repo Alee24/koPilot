@@ -18,8 +18,34 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
+
+enum class LiteRtAcceleratorBackend(
+    val displayName: String,
+    val useNnapi: Boolean,
+    val requestedThreads: Int,
+) {
+    AUTO_XNNPACK("Auto XNNPACK CPU", useNnapi = false, requestedThreads = 0),
+    XNNPACK_2_THREADS("XNNPACK CPU (2 Threads)", useNnapi = false, requestedThreads = 2),
+    XNNPACK_4_THREADS("XNNPACK CPU (4 Threads)", useNnapi = false, requestedThreads = 4),
+    NNAPI("Android NNAPI Delegate", useNnapi = true, requestedThreads = 2),
+}
+
+data class AcceleratorBenchmarkResult(
+    val backend: LiteRtAcceleratorBackend,
+    val available: Boolean,
+    val avgLatencyMs: Float,
+    val p50LatencyMs: Float,
+    val p95LatencyMs: Float,
+    val p99LatencyMs: Float,
+    val maxOutputDeviation: Float,
+    val numericallyConsistent: Boolean,
+    val selectedAsBest: Boolean,
+    val statusNote: String,
+)
 
 data class YoloSignDetection(
     val category: TrafficSignCategory,
@@ -44,6 +70,7 @@ class LiteRtYoloSignDetector @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
     private var interpreter: Interpreter? = null
+    private var mappedModelBuffer: MappedByteBuffer? = null
     private var labels: List<String> = DEFAULT_LABELS
     private var inputWidth = 320
     private var inputHeight = 320
@@ -61,7 +88,15 @@ class LiteRtYoloSignDetector @Inject constructor(
     private var reusableOutArr: Array<Array<FloatArray>>? = null
 
     @Volatile
+    var selectedBackend: LiteRtAcceleratorBackend = LiteRtAcceleratorBackend.AUTO_XNNPACK
+        private set
+
+    @Volatile
     var activeAccelerator: String = "Unavailable"
+        private set
+
+    @Volatile
+    var lastBenchmarkResults: List<AcceleratorBenchmarkResult> = emptyList()
         private set
 
     @Volatile
@@ -98,29 +133,9 @@ class LiteRtYoloSignDetector @Inject constructor(
             val mapped: MappedByteBuffer = FileInputStream(afd.fileDescriptor).use { fis ->
                 fis.channel.map(FileChannel.MapMode.READ_ONLY, afd.startOffset, afd.declaredLength)
             }
+            mappedModelBuffer = mapped
 
-            val optimalThreads = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(2, 4)
-
-            // Prefer XNNPACK multi-threaded CPU execution for FP16/FP32 YOLO11n across heterogeneous Android SoCs,
-            // with NNAPI fallback if XNNPACK initialization fails.
-            val interp = try {
-                val cpuOpts = Interpreter.Options().apply {
-                    setUseXNNPACK(true)
-                    setNumThreads(optimalThreads)
-                }
-                Interpreter(mapped, cpuOpts).also {
-                    activeAccelerator = "XNNPACK CPU ($optimalThreads threads)"
-                }
-            } catch (_: Throwable) {
-                val nnapiOpts = Interpreter.Options().apply {
-                    setUseNNAPI(true)
-                    setNumThreads(optimalThreads)
-                }
-                Interpreter(mapped, nnapiOpts).also {
-                    activeAccelerator = "NNAPI ($optimalThreads threads)"
-                }
-            }
-
+            val interp = createInterpreterForBackend(mapped, selectedBackend)
             val inShape = interp.getInputTensor(0).shape() // [1, H, W, 3]
             if (inShape.size >= 4) {
                 inputHeight = inShape[1].coerceAtLeast(128)
@@ -132,6 +147,201 @@ class LiteRtYoloSignDetector @Inject constructor(
             modelVersion = "yolo11n-gtsrb-litert-320"
             interpreter = interp
         }
+    }
+
+    private fun resolveThreads(backend: LiteRtAcceleratorBackend): Int {
+        return if (backend.requestedThreads > 0) {
+            backend.requestedThreads
+        } else {
+            (Runtime.getRuntime().availableProcessors() / 2).coerceIn(2, 4)
+        }
+    }
+
+    private fun createInterpreterForBackend(
+        mapped: MappedByteBuffer,
+        backend: LiteRtAcceleratorBackend,
+    ): Interpreter {
+        val threads = resolveThreads(backend)
+        return if (backend.useNnapi) {
+            val nnapiOpts = Interpreter.Options().apply {
+                setUseNNAPI(true)
+                setNumThreads(threads)
+            }
+            Interpreter(mapped, nnapiOpts).also {
+                activeAccelerator = "NNAPI Delegate ($threads threads)"
+            }
+        } else {
+            try {
+                val cpuOpts = Interpreter.Options().apply {
+                    setUseXNNPACK(true)
+                    setNumThreads(threads)
+                }
+                Interpreter(mapped, cpuOpts).also {
+                    activeAccelerator = "XNNPACK CPU ($threads threads)"
+                }
+            } catch (_: Throwable) {
+                val fallbackOpts = Interpreter.Options().apply {
+                    setNumThreads(threads)
+                }
+                Interpreter(mapped, fallbackOpts).also {
+                    activeAccelerator = "LiteRT CPU ($threads threads)"
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    fun setPreferredBackend(backend: LiteRtAcceleratorBackend): Boolean {
+        ensureInitialized()
+        val mapped = mappedModelBuffer ?: return false
+        return runCatching {
+            val newInterp = createInterpreterForBackend(mapped, backend)
+            val oldInterp = interpreter
+            interpreter = newInterp
+            selectedBackend = backend
+            runCatching { oldInterp?.close() }
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Runs an on-device hardware acceleration benchmark across XNNPACK (2 threads, 4 threads)
+     * and Android NNAPI, verifying numerical output consistency against XNNPACK before selecting
+     * the fastest valid execution backend on the actual physical device.
+     */
+    @Synchronized
+    fun runOnDeviceBenchmark(iterations: Int = 6): List<AcceleratorBenchmarkResult> {
+        ensureInitialized()
+        val mapped = mappedModelBuffer ?: return emptyList()
+        val d1 = outputShape.getOrElse(1) { 18 }
+        val d2 = outputShape.getOrElse(2) { 2100 }
+
+        // Deterministic synthetic road-sign pattern buffer for repeatable latency & numerical comparison
+        val testBuffer: ByteBuffer = if (inputDataType == DataType.UINT8) {
+            ByteBuffer.allocateDirect(inputWidth * inputHeight * 3).order(ByteOrder.nativeOrder()).apply {
+                for (i in 0 until inputWidth * inputHeight) {
+                    put(((i * 31) and 0xFF).toByte())
+                    put(((i * 17) and 0xFF).toByte())
+                    put(((i * 13) and 0xFF).toByte())
+                }
+                rewind()
+            }
+        } else {
+            ByteBuffer.allocateDirect(4 * inputWidth * inputHeight * 3).order(ByteOrder.nativeOrder()).apply {
+                val inv255 = 1f / 255f
+                for (i in 0 until inputWidth * inputHeight) {
+                    putFloat(((i * 31) and 0xFF) * inv255)
+                    putFloat(((i * 17) and 0xFF) * inv255)
+                    putFloat(((i * 13) and 0xFF) * inv255)
+                }
+                rewind()
+            }
+        }
+
+        val candidates = listOf(
+            LiteRtAcceleratorBackend.XNNPACK_2_THREADS,
+            LiteRtAcceleratorBackend.XNNPACK_4_THREADS,
+            LiteRtAcceleratorBackend.NNAPI,
+        )
+
+        var referenceOutput: Array<Array<FloatArray>>? = null
+        val rawResults = mutableListOf<AcceleratorBenchmarkResult>()
+
+        for (candidate in candidates) {
+            val threads = resolveThreads(candidate)
+            val result = runCatching {
+                val opts = Interpreter.Options().apply {
+                    if (candidate.useNnapi) {
+                        setUseNNAPI(true)
+                    } else {
+                        setUseXNNPACK(true)
+                    }
+                    setNumThreads(threads)
+                }
+                val tempInterp = Interpreter(mapped, opts)
+                try {
+                    val outTensor = Array(1) { Array(d1) { FloatArray(d2) } }
+                    // Warm-up pass
+                    testBuffer.rewind()
+                    tempInterp.run(testBuffer, outTensor)
+
+                    val timings = ArrayList<Long>(iterations)
+                    val runs = iterations.coerceIn(3, 12)
+                    for (r in 0 until runs) {
+                        testBuffer.rewind()
+                        val t0 = System.nanoTime()
+                        tempInterp.run(testBuffer, outTensor)
+                        val elapsedMs = ((System.nanoTime() - t0) / 1_000_000L).coerceAtLeast(1L)
+                        timings.add(elapsedMs)
+                    }
+
+                    var maxDiff = 0f
+                    if (referenceOutput == null) {
+                        referenceOutput = outTensor
+                    } else {
+                        val ref = referenceOutput!!
+                        for (c in 0 until d1) {
+                            for (b in 0 until min(d2, 400)) {
+                                val diff = abs(ref[0][c][b] - outTensor[0][c][b])
+                                if (diff > maxDiff) maxDiff = diff
+                            }
+                        }
+                    }
+
+                    val numericallyValid = maxDiff <= 0.05f
+                    val avg = VisionTaskScheduler.averageOf(timings)
+                    val p50 = VisionTaskScheduler.percentileOf(timings, 50)
+                    val p95 = VisionTaskScheduler.percentileOf(timings, 95)
+                    val p99 = VisionTaskScheduler.percentileOf(timings, 99)
+
+                    AcceleratorBenchmarkResult(
+                        backend = candidate,
+                        available = true,
+                        avgLatencyMs = avg,
+                        p50LatencyMs = p50,
+                        p95LatencyMs = p95,
+                        p99LatencyMs = p99,
+                        maxOutputDeviation = ((maxDiff * 10000f).roundToInt() / 10000f),
+                        numericallyConsistent = numericallyValid,
+                        selectedAsBest = false,
+                        statusNote = if (numericallyValid) {
+                            "Verified (Max tensor diff ${((maxDiff * 1000f).roundToInt() / 1000f)})"
+                        } else {
+                            "Rejected: Output tensor deviation $maxDiff exceeds 0.05 threshold"
+                        },
+                    )
+                } finally {
+                    runCatching { tempInterp.close() }
+                }
+            }.getOrElse { err ->
+                AcceleratorBenchmarkResult(
+                    backend = candidate,
+                    available = false,
+                    avgLatencyMs = 0f,
+                    p50LatencyMs = 0f,
+                    p95LatencyMs = 0f,
+                    p99LatencyMs = 0f,
+                    maxOutputDeviation = 0f,
+                    numericallyConsistent = false,
+                    selectedAsBest = false,
+                    statusNote = "Unsupported or failed: ${err.localizedMessage ?: "delegate error"}",
+                )
+            }
+            rawResults.add(result)
+        }
+
+        val bestCandidate = rawResults
+            .filter { it.available && it.numericallyConsistent && it.avgLatencyMs > 0f }
+            .minByOrNull { it.avgLatencyMs }
+            ?.backend ?: LiteRtAcceleratorBackend.AUTO_XNNPACK
+
+        setPreferredBackend(bestCandidate)
+
+        val finalized = rawResults.map { res ->
+            res.copy(selectedAsBest = (res.backend == bestCandidate))
+        }
+        lastBenchmarkResults = finalized
+        return finalized
     }
 
     private fun allocateReusableBuffers() {

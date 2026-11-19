@@ -1547,6 +1547,18 @@ class DashboardViewModel @Inject constructor(
         DetectionQuality.HIGH -> 180L
     }
 
+    fun selectAcceleratorBackend(backend: ke.co.kopilot.feature.vision.LiteRtAcceleratorBackend) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            visionPipeline.selectAcceleratorBackend(backend)
+        }
+    }
+
+    fun runAcceleratorBenchmark() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            visionPipeline.runAcceleratorBenchmark()
+        }
+    }
+
     val kenyanCityPresets get() = navigationRepo.kenyanCities
 
     private data class CoreBundle(

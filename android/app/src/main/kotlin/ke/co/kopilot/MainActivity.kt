@@ -77,6 +77,7 @@ import ke.co.kopilot.core.designsystem.theme.KoPilotTheme
 import ke.co.kopilot.feature.dashboard.DashboardScreen
 import ke.co.kopilot.feature.dashboard.DashboardViewModel
 import ke.co.kopilot.feature.dashboard.NavigationScreen
+import ke.co.kopilot.feature.dashboard.PerformanceThermalScreen
 import ke.co.kopilot.feature.diagnostics.ObdScreen
 import ke.co.kopilot.feature.sensors.DrivingIntelligenceScreen
 import ke.co.kopilot.feature.sensors.SensorsScreen
@@ -392,9 +393,16 @@ class MainActivity : ComponentActivity() {
                                         onOpenSoundStudio = { navController.navigate("sound_studio") },
                                         onOpenSafetySettings = { navController.navigate("safety_settings") },
                                         onOpenLiveMap = { navController.navigate("live_map") },
+                                        onOpenPerformanceThermal = { navController.navigate("performance_thermal") },
                                         onCallEmergency = { phone ->
                                             startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
                                         },
+                                        viewModel = dashboardViewModel,
+                                    )
+                                }
+                                composable("performance_thermal") {
+                                    PerformanceThermalScreen(
+                                        onBack = { navController.popBackStack() },
                                         viewModel = dashboardViewModel,
                                     )
                                 }
@@ -467,6 +475,7 @@ class MainActivity : ComponentActivity() {
                                         onOpenObd = { navigateTopLevel("obd") },
                                         onOpenSafetySettings = { navController.navigate("safety_settings") },
                                         onOpenEmergencyContacts = { navController.navigate("emergency_contacts") },
+                                        onOpenPerformanceThermal = { navController.navigate("performance_thermal") },
                                         bluetoothPermissionGranted = btGranted,
                                         onExportJson = { json ->
                                             val share = Intent(Intent.ACTION_SEND).apply {

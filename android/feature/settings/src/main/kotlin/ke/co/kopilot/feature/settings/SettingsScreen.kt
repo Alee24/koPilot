@@ -66,6 +66,7 @@ fun SettingsScreen(
     onOpenObd: () -> Unit = {},
     onOpenSafetySettings: () -> Unit = {},
     onOpenEmergencyContacts: () -> Unit = {},
+    onOpenPerformanceThermal: () -> Unit = {},
     bluetoothPermissionGranted: Boolean,
     onExportJson: (String) -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -462,6 +463,17 @@ fun SettingsScreen(
             // 5. Camera & Offline Road Sign Vision
             SettingsCard {
                 SectionTitle("Camera & Offline AI Vision", "Kenya left-hand carriageway aware; filters billboards.")
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = onOpenPerformanceThermal,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = KoPilotClusterTokens.PrimaryAccent,
+                        contentColor = KoPilotClusterTokens.Background,
+                    ),
+                ) {
+                    Text("Open Performance & Thermal Management", fontWeight = FontWeight.Bold)
+                }
                 Spacer(Modifier.height(6.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     DetectionQuality.entries.forEach { q ->

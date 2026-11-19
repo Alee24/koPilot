@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.Rect
 import androidx.camera.core.ImageProxy
 import com.google.android.gms.tasks.Task
@@ -43,6 +44,9 @@ data class VisionPipelineState(
     val modelLoaded: Boolean = false,
     val modelVersion: String = "mlkit-offline-1.0",
     val activeAccelerator: String = "CPU",
+    val selectedBackend: LiteRtAcceleratorBackend = LiteRtAcceleratorBackend.AUTO_XNNPACK,
+    val benchmarkResults: List<AcceleratorBenchmarkResult> = emptyList(),
+    val performanceMetrics: VisionPerformanceMetrics = VisionPerformanceMetrics(),
     val validationStatus: String = "100% On-Device Offline",
     val supportedSignClasses: List<String> = emptyList(),
     val detectedClassCounts: Map<String, Int> = emptyMap(),
@@ -66,12 +70,15 @@ data class VisionPipelineState(
 )
 
 /**
- * 100% Offline On-Device Road Vision Pipeline.
+ * 100% Offline On-Device Road Vision Pipeline with Intelligent Thermal & Latency Task Scheduling
+ * and Zero-Allocation Reusable Frame/ROI Bitmap Buffers.
+ *
  * Priority execution order:
  *   1. Road signs & speed limits (LiteRT YOLO11n + High-Density Sign ROI OCR + Shape/Symbol CV)
  *   2. Traffic-light housing & state detection (Vertical/Horizontal 3-aspect housing validation)
- *   3. Vehicle number-plate detection & offline OCR (White & Yellow plate locator, deskew, contrast stretch)
- *   4. Auxiliary road object tracking & lane detection
+ *   3. Road object tracking & lane detection
+ *   4. Vehicle number-plate detection & offline OCR (White & Yellow plate locator, deskew, contrast stretch)
+ *
  * Zero cloud or internet dependencies.
  */
 @Singleton
@@ -88,6 +95,8 @@ class RoadVisionPipeline @Inject constructor(
     private val _state = MutableStateFlow(VisionPipelineState())
     val state: StateFlow<VisionPipelineState> = _state.asStateFlow()
 
+    val taskScheduler = VisionTaskScheduler()
+
     private var objectDetector: ObjectDetector? = null
     private var textRecognizer: TextRecognizer? = null
     private var brakeLightStreak = 0
@@ -96,6 +105,17 @@ class RoadVisionPipeline @Inject constructor(
     private var trafficSignalStreak = 0
     private var frameCounter = 0
     private val plateOcrBusy = AtomicBoolean(false)
+
+    // Reusable preallocated frame rotation buffer to eliminate ~3.7 MB per-frame allocation
+    private var reusableRotatedBitmap: Bitmap? = null
+    private var reusableRotatedCanvas: Canvas? = null
+    private val reusableRotateMatrix = Matrix()
+    private val bitmapFilterPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+
+    // Reusable preallocated 3-slot Sign ROI composite strip (576 x 192 ARGB_8888)
+    private var reusableRoiCompositeBitmap: Bitmap? = null
+    private var reusableRoiCompositeCanvas: Canvas? = null
+    private val reusableRoiDstRect = Rect()
 
     fun initializeIfNeeded() {
         if (objectDetector != null && textRecognizer != null) return
@@ -119,6 +139,8 @@ class RoadVisionPipeline @Inject constructor(
                 modelLoaded = true,
                 modelVersion = if (liteRtYoloSignDetector.isAvailable) liteRtYoloSignDetector.modelVersion else "mlkit-cv-offline-2.0",
                 activeAccelerator = liteRtYoloSignDetector.activeAccelerator,
+                selectedBackend = liteRtYoloSignDetector.selectedBackend,
+                benchmarkResults = liteRtYoloSignDetector.lastBenchmarkResults,
                 supportedSignClasses = liteRtYoloSignDetector.supportedLabels,
                 validationStatus = "100% On-Device Offline • $modeLabel",
                 statusMessage = "$modeLabel ready",
@@ -131,10 +153,38 @@ class RoadVisionPipeline @Inject constructor(
         }
     }
 
+    fun selectAcceleratorBackend(backend: LiteRtAcceleratorBackend): Boolean {
+        val ok = liteRtYoloSignDetector.setPreferredBackend(backend)
+        if (ok) {
+            val modeLabel = "Offline LiteRT YOLO11n (${liteRtYoloSignDetector.activeAccelerator})"
+            _state.value = _state.value.copy(
+                activeAccelerator = liteRtYoloSignDetector.activeAccelerator,
+                selectedBackend = liteRtYoloSignDetector.selectedBackend,
+                validationStatus = "100% On-Device Offline • $modeLabel",
+                statusMessage = "$modeLabel active",
+            )
+        }
+        return ok
+    }
+
+    fun runAcceleratorBenchmark(): List<AcceleratorBenchmarkResult> {
+        val results = liteRtYoloSignDetector.runOnDeviceBenchmark(iterations = 6)
+        val modeLabel = "Offline LiteRT YOLO11n (${liteRtYoloSignDetector.activeAccelerator})"
+        _state.value = _state.value.copy(
+            activeAccelerator = liteRtYoloSignDetector.activeAccelerator,
+            selectedBackend = liteRtYoloSignDetector.selectedBackend,
+            benchmarkResults = results,
+            validationStatus = "100% On-Device Offline • $modeLabel",
+            statusMessage = "Benchmark complete: ${liteRtYoloSignDetector.activeAccelerator} selected",
+        )
+        return results
+    }
+
     fun analyzeFrame(
         imageProxy: ImageProxy,
         rotationDegrees: Int,
         timestampMillis: Long,
+        thermalModeName: String = "NORMAL",
         onConfirmedSign: (TrafficSignObservation) -> Unit,
     ) {
         try {
@@ -144,13 +194,12 @@ class RoadVisionPipeline @Inject constructor(
             if (detector == null || recognizer == null) return
 
             val startNs = System.nanoTime()
+            val nowMillis = System.currentTimeMillis()
+            val frameAgeMs = (nowMillis - timestampMillis).coerceAtLeast(0L)
+            val thermalMode = VisionThermalMode.fromNameOrDefault(thermalModeName)
+
             val rawBitmap = imageProxy.toBitmap()
-            val bitmap = if (rotationDegrees != 0) {
-                val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-                Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
-            } else {
-                rawBitmap
-            }
+            val bitmap = obtainRotatedBitmapInPlace(rawBitmap, rotationDegrees)
 
             val w = bitmap.width.toFloat().coerceAtLeast(1f)
             val h = bitmap.height.toFloat().coerceAtLeast(1f)
@@ -159,67 +208,111 @@ class RoadVisionPipeline @Inject constructor(
             // =========================================================================
             // PRIORITY 1: ROAD SIGNS & SPEED LIMITS (Every Frame, Full Camera View)
             // =========================================================================
+            val roiStartNs = System.nanoTime()
             val signRois = SignRoiExtractor.extractSignRois(bitmap, maxRois = 3)
-            val roiComposite = buildSignRoiComposite(signRois)
-            val roiOcrTask: Task<Text>? = roiComposite?.let { comp ->
-                recognizer.process(InputImage.fromBitmap(comp.bitmap, 0))
+            val roiComposite = buildSignRoiCompositeReusable(signRois)
+
+            // Ask Intelligent AI Task Scheduler for this frame's execution plan
+            val schedule = taskScheduler.decideSchedule(
+                frameIndex = frameCounter,
+                frameAgeMs = frameAgeMs,
+                lastFrameLatencyMs = _state.value.lastInferenceLatencyMs,
+                thermalMode = thermalMode,
+                hasSignRois = signRois.isNotEmpty(),
+            )
+
+            val roiOcrTask: Task<Text>? = if (schedule.runSignRoiExtractionAndOcr && roiComposite != null) {
+                recognizer.process(InputImage.fromBitmap(roiComposite.bitmap, 0))
+            } else {
+                null
             }
 
-            // Schedule full-frame OCR & object detection so Priority 1 sign recognition is never starved
-            val runFullOcrThisFrame = (frameCounter % 2 == 1) || signRois.isEmpty()
-            val inputImage = InputImage.fromBitmap(bitmap, 0)
-            val objTask: Task<List<DetectedObject>> = detector.process(inputImage)
-            val fullOcrTask: Task<Text>? = if (runFullOcrThisFrame) recognizer.process(inputImage) else null
+            // Submit scheduled ML Kit tasks asynchronously so LiteRT YOLO11n runs concurrently
+            val needFullInputImage = schedule.runObjectDetection || schedule.runFullFrameOcr
+            val inputImage: InputImage? = if (needFullInputImage) InputImage.fromBitmap(bitmap, 0) else null
+            val objTask: Task<List<DetectedObject>>? = if (schedule.runObjectDetection && inputImage != null) {
+                detector.process(inputImage)
+            } else {
+                null
+            }
+            val fullOcrTask: Task<Text>? = if (schedule.runFullFrameOcr && inputImage != null) {
+                recognizer.process(inputImage)
+            } else {
+                null
+            }
 
-            // Run LiteRT YOLO11n Sign Detector on the CPU/XNNPACK while ML Kit tasks execute in parallel
-            val yoloSignDetections = if (liteRtYoloSignDetector.isAvailable) {
-                liteRtYoloSignDetector.detect(bitmap, includeHorizonZoomPass = true)
+            // Run LiteRT YOLO11n Sign Detector on XNNPACK/NNAPI while ML Kit tasks execute in parallel
+            var yoloElapsedMs: Long? = null
+            val yoloSignDetections = if (schedule.runRoadSignYolo && liteRtYoloSignDetector.isAvailable) {
+                val y0 = System.nanoTime()
+                val dets = liteRtYoloSignDetector.detect(
+                    bitmap = bitmap,
+                    includeHorizonZoomPass = schedule.runYoloHorizonZoomPass,
+                )
+                yoloElapsedMs = ((System.nanoTime() - y0) / 1_000_000L).coerceAtLeast(1L)
+                dets
             } else {
                 emptyList()
             }
 
+            val parallelAwaitStartNs = System.nanoTime()
             val criticalTasks = buildList<Task<*>> {
-                add(objTask)
+                if (objTask != null) add(objTask)
                 if (roiOcrTask != null) add(roiOcrTask)
                 if (fullOcrTask != null) add(fullOcrTask)
             }
-            runCatching { Tasks.await(Tasks.whenAllComplete(criticalTasks), 450, TimeUnit.MILLISECONDS) }
-
-            val detectedObjects = if (objTask.isSuccessful) objTask.result.orEmpty() else emptyList()
-            val rawObjects = if (liteRtObjectDetector.isAvailable) {
-                liteRtObjectDetector.detect(bitmap)
-            } else {
-                detectedObjects.mapNotNull { obj ->
-                    val box = obj.boundingBox
-                    val bestLabel = obj.labels.maxByOrNull { it.confidence }
-                    val rawLabel = bestLabel?.text?.takeIf { it.isNotBlank() } ?: "Object"
-                    val nLeft = (box.left / w).coerceIn(0f, 1f)
-                    val nTop = (box.top / h).coerceIn(0f, 1f)
-                    val nRight = (box.right / w).coerceIn(0f, 1f)
-                    val nBottom = (box.bottom / h).coerceIn(0f, 1f)
-                    val roadLabel = FrontRoadAnalyzer.classifyObjectByGeometry(
-                        normLeft = nLeft,
-                        normTop = nTop,
-                        normRight = nRight,
-                        normBottom = nBottom,
-                        mlKitLabel = rawLabel,
-                    )
-                    RawObjectDetection(
-                        label = roadLabel,
-                        confidence = bestLabel?.confidence ?: 0.7f,
-                        normalizedLeft = nLeft,
-                        normalizedTop = nTop,
-                        normalizedRight = nRight,
-                        normalizedBottom = nBottom,
-                    )
-                }
+            if (criticalTasks.isNotEmpty()) {
+                runCatching { Tasks.await(Tasks.whenAllComplete(criticalTasks), 420, TimeUnit.MILLISECONDS) }
             }
-            val tracked = multiObjectTracker.update(rawObjects, timestampMillis)
+            val parallelAwaitElapsedMs = ((System.nanoTime() - parallelAwaitStartNs) / 1_000_000L).coerceAtLeast(1L)
+
+            var objectElapsedMs: Long? = null
+            val tracked = if (schedule.runObjectDetection) {
+                val o0 = System.nanoTime()
+                val detectedObjects = if (objTask != null && objTask.isSuccessful) objTask.result.orEmpty() else emptyList()
+                val rawObjects = if (liteRtObjectDetector.isAvailable) {
+                    liteRtObjectDetector.detect(bitmap)
+                } else {
+                    detectedObjects.mapNotNull { obj ->
+                        val box = obj.boundingBox
+                        val bestLabel = obj.labels.maxByOrNull { it.confidence }
+                        val rawLabel = bestLabel?.text?.takeIf { it.isNotBlank() } ?: "Object"
+                        val nLeft = (box.left / w).coerceIn(0f, 1f)
+                        val nTop = (box.top / h).coerceIn(0f, 1f)
+                        val nRight = (box.right / w).coerceIn(0f, 1f)
+                        val nBottom = (box.bottom / h).coerceIn(0f, 1f)
+                        val roadLabel = FrontRoadAnalyzer.classifyObjectByGeometry(
+                            normLeft = nLeft,
+                            normTop = nTop,
+                            normRight = nRight,
+                            normBottom = nBottom,
+                            mlKitLabel = rawLabel,
+                        )
+                        RawObjectDetection(
+                            label = roadLabel,
+                            confidence = bestLabel?.confidence ?: 0.7f,
+                            normalizedLeft = nLeft,
+                            normalizedTop = nTop,
+                            normalizedRight = nRight,
+                            normalizedBottom = nBottom,
+                        )
+                    }
+                }
+                val updatedTracked = multiObjectTracker.update(rawObjects, timestampMillis)
+                objectElapsedMs = (((System.nanoTime() - o0) / 1_000_000L) + (parallelAwaitElapsedMs / 2)).coerceAtLeast(1L)
+                updatedTracked
+            } else {
+                // Keep recently tracked objects when Tier 3 is paced on intermediate frames, expiring stale boxes
+                _state.value.trackedObjects.filter { (timestampMillis - it.timestampMillis) <= 3_500L }
+            }
 
             // =========================================================================
             // PRIORITY 2: TRAFFIC-LIGHT DETECTION & SIGNAL STATE (Every Frame)
             // =========================================================================
+            val tlStartNs = System.nanoTime()
             val lighting = FrontRoadAnalyzer.analyzeLightingAndLights(bitmap, tracked)
+            val trafficLightElapsedMs = ((System.nanoTime() - tlStartNs) / 1_000_000L).coerceAtLeast(1L)
+
             brakeLightStreak = if (lighting.redBrakeLightsAhead) brakeLightStreak + 1 else 0
             darkStreak = if (lighting.isDark) darkStreak + 1 else 0
             if (lighting.trafficLightSignal != TrafficLightSignal.NONE &&
@@ -264,6 +357,7 @@ class RoadVisionPipeline @Inject constructor(
             }
 
             // Parse Multi-ROI Composite OCR with actual ROI perimeter border & white interior verification
+            val roiParseStartNs = System.nanoTime()
             if (roiComposite != null && roiOcrTask != null && roiOcrTask.isSuccessful) {
                 for (block in roiOcrTask.result.textBlocks) {
                     val bBox = block.boundingBox ?: continue
@@ -294,7 +388,9 @@ class RoadVisionPipeline @Inject constructor(
             var confirmedPlateObs: PlateObservation? = null
 
             // Parse Full-Frame OCR for Road Signs & Registration Plates
+            var fullOcrElapsedMs: Long? = null
             if (fullOcrTask != null && fullOcrTask.isSuccessful) {
+                val f0 = System.nanoTime()
                 for (block in fullOcrTask.result.textBlocks) {
                     val box = block.boundingBox ?: continue
                     val nLeft = (box.left / w).coerceIn(0f, 1f)
@@ -321,6 +417,7 @@ class RoadVisionPipeline @Inject constructor(
                         }
                     }
                 }
+                fullOcrElapsedMs = (((System.nanoTime() - f0) / 1_000_000L) + (parallelAwaitElapsedMs / 2)).coerceAtLeast(1L)
             }
 
             // Option 2: Two-stage LiteRT TFLite crop classification (when bundled)
@@ -332,36 +429,44 @@ class RoadVisionPipeline @Inject constructor(
             }
 
             // Option 3: Pure-CV geometric shape + interior symbol analyzer on all extracted Sign ROIs
-            for (roi in signRois) {
-                val onVehicle = SignCandidateParser.isBoxInsideDetectedVehicle(
-                    roi.normLeft,
-                    roi.normTop,
-                    roi.normRight,
-                    roi.normBottom,
-                    tracked,
-                )
-                if (!onVehicle) {
-                    OfflineSymbolSignDetector.classifyCrop(roi)?.let { sym ->
-                        if (signCandidates.none { it.category == sym.category }) {
-                            signCandidates.add(sym)
+            if (schedule.runSignSymbolCv) {
+                for (roi in signRois) {
+                    val onVehicle = SignCandidateParser.isBoxInsideDetectedVehicle(
+                        roi.normLeft,
+                        roi.normTop,
+                        roi.normRight,
+                        roi.normBottom,
+                        tracked,
+                    )
+                    if (!onVehicle) {
+                        OfflineSymbolSignDetector.classifyCrop(roi)?.let { sym ->
+                            if (signCandidates.none { it.category == sym.category }) {
+                                signCandidates.add(sym)
+                            }
                         }
                     }
                 }
             }
+            val roiOcrElapsedMs = (((System.nanoTime() - roiStartNs - (parallelAwaitStartNs - roiStartNs).coerceAtLeast(0L)) +
+                (System.nanoTime() - roiParseStartNs)) / 1_000_000L + (parallelAwaitElapsedMs / 3)).coerceAtLeast(1L)
 
             // =========================================================================
-            // PRIORITY 3: DEDICATED WHITE & YELLOW NUMBER-PLATE REGION OCR (Scheduled)
+            // PRIORITY 4: DEDICATED WHITE & YELLOW NUMBER-PLATE REGION OCR (Scheduled)
             // =========================================================================
-            // When full-frame OCR did not already confirm a plate on this frame and the frame budget allows,
-            // locate rectangular white/yellow plate regions, deskew & contrast-stretch them, and run offline OCR.
+            var plateOcrElapsedMs: Long? = null
             val elapsedSoFarMs = (System.nanoTime() - startNs) / 1_000_000L
-            if (confirmedPlateObs == null && (frameCounter % 2 == 0) && elapsedSoFarMs < 180L && plateOcrBusy.compareAndSet(false, true)) {
+            if (schedule.runDedicatedPlateOcr &&
+                confirmedPlateObs == null &&
+                elapsedSoFarMs < 180L &&
+                plateOcrBusy.compareAndSet(false, true)
+            ) {
+                val p0 = System.nanoTime()
                 try {
                     val plateRegions = platePipeline.locateAndPreparePlateCandidates(bitmap, tracked, maxCandidates = 1)
                     val topPlateCandidate = plateRegions.firstOrNull()
                     if (topPlateCandidate != null) {
                         val plateTask = recognizer.process(InputImage.fromBitmap(topPlateCandidate.crop, 0))
-                        runCatching { Tasks.await(plateTask, 180, TimeUnit.MILLISECONDS) }
+                        runCatching { Tasks.await(plateTask, 170, TimeUnit.MILLISECONDS) }
                         if (plateTask.isSuccessful) {
                             for (block in plateTask.result.textBlocks) {
                                 val validated = KenyanPlateValidator.validateFormat(block.text)
@@ -383,6 +488,7 @@ class RoadVisionPipeline @Inject constructor(
                 } finally {
                     plateOcrBusy.set(false)
                 }
+                plateOcrElapsedMs = ((System.nanoTime() - p0) / 1_000_000L).coerceAtLeast(1L)
             }
 
             val yoloOverlayBoxes = yoloSignDetections.mapIndexed { idx, d ->
@@ -416,17 +522,49 @@ class RoadVisionPipeline @Inject constructor(
             )
 
             // =========================================================================
-            // PRIORITY 4: AUXILIARY LANE DETECTION & TELEMETRY STATE PUBLISH
+            // AUXILIARY LANE DETECTION & TELEMETRY STATE PUBLISH
             // =========================================================================
-            val laneState = LaneDetector.detectLanes(bitmap)
-            val latencyMs = (System.nanoTime() - startNs) / 1_000_000L
-            val nextSpeedLimit = if (confirmed != null && !confirmed.isUncertain && confirmed.category.speedLimitKmh != null) {
-                confirmed.category.speedLimitKmh
+            var laneElapsedMs: Long? = null
+            val laneState = if (schedule.runLaneDetection) {
+                val l0 = System.nanoTime()
+                val ls = LaneDetector.detectLanes(bitmap)
+                laneElapsedMs = ((System.nanoTime() - l0) / 1_000_000L).coerceAtLeast(1L)
+                ls
             } else {
-                _state.value.lastSpeedLimitKmh
+                _state.value.laneOverlay
+            }
+
+            val latencyMs = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(1L)
+            val perfMetrics = taskScheduler.recordFrameTimings(
+                nowMillis = timestampMillis,
+                thermalMode = thermalMode,
+                totalFrameMs = latencyMs,
+                yoloMs = yoloElapsedMs,
+                roiOcrMs = roiOcrElapsedMs,
+                fullOcrMs = fullOcrElapsedMs,
+                plateOcrMs = plateOcrElapsedMs,
+                objectDetectMs = objectElapsedMs,
+                trafficLightMs = trafficLightElapsedMs,
+                laneMs = laneElapsedMs,
+                schedule = schedule,
+            )
+
+            // Expire stale detections when past thermal-state validity window so outdated signs are never shown as current
+            val nonStalePrevObservation = _state.value.lastObservation?.takeIf { prev ->
+                (timestampMillis - prev.timestampMillis) <= schedule.maxDetectionValidityMs
+            }
+            val activeObservation = confirmed ?: nonStalePrevObservation
+
+            val nextSpeedLimit = when {
+                confirmed != null && !confirmed.isUncertain && confirmed.category.speedLimitKmh != null ->
+                    confirmed.category.speedLimitKmh
+                thermalMode == VisionThermalMode.CRITICAL && activeObservation == null -> null
+                else -> _state.value.lastSpeedLimitKmh
             }
             val prevPlateObs = _state.value.lastPlateObservation
-            val activePlateObs = confirmedPlateObs ?: prevPlateObs?.takeIf { (timestampMillis - it.timestampMillis) <= 30_000L }
+            val activePlateObs = confirmedPlateObs ?: prevPlateObs?.takeIf {
+                (timestampMillis - it.timestampMillis) <= schedule.maxDetectionValidityMs
+            }
             val updatedCounts = _state.value.detectedClassCounts.toMutableMap()
             for (d in yoloSignDetections) {
                 val key = d.label
@@ -442,6 +580,10 @@ class RoadVisionPipeline @Inject constructor(
                 _state.value.recentSignHistory
             }
             _state.value = _state.value.copy(
+                activeAccelerator = liteRtYoloSignDetector.activeAccelerator,
+                selectedBackend = liteRtYoloSignDetector.selectedBackend,
+                benchmarkResults = liteRtYoloSignDetector.lastBenchmarkResults,
+                performanceMetrics = perfMetrics,
                 trackedObjects = tracked,
                 signRoiBoxes = roiOverlayBoxes,
                 brakeLightBoxes = lighting.brakeLightBoxes,
@@ -449,7 +591,7 @@ class RoadVisionPipeline @Inject constructor(
                 lastInferenceLatencyMs = latencyMs,
                 detectedClassCounts = updatedCounts,
                 recentSignHistory = updatedHistory,
-                lastObservation = confirmed ?: _state.value.lastObservation,
+                lastObservation = activeObservation,
                 lastSpeedLimitKmh = nextSpeedLimit,
                 lastDetectedPlate = activePlateObs?.maskedPlate,
                 lastPlateObservation = activePlateObs,
@@ -457,7 +599,7 @@ class RoadVisionPipeline @Inject constructor(
                 trafficLightSignal = confirmedTrafficLight,
                 isDarkScene = darkStreak >= 3,
                 averageLuminance = lighting.averageLuminance,
-                statusMessage = "Offline Vision • ${tracked.size} obj • ${signRois.size} Sign ROI • ${latencyMs}ms",
+                statusMessage = "Offline Vision (${thermalMode.displayName}) • ${tracked.size} obj • ${signRois.size} Sign ROI • ${latencyMs}ms",
             )
 
             if (confirmed != null) {
@@ -468,6 +610,36 @@ class RoadVisionPipeline @Inject constructor(
         }
     }
 
+    /**
+     * Rotates [rawBitmap] into a preallocated reusable [Bitmap] via [Canvas] + [Matrix]
+     * to avoid allocating a new ~3.7 MB full-frame bitmap on every camera frame.
+     */
+    private fun obtainRotatedBitmapInPlace(rawBitmap: Bitmap, rotationDegrees: Int): Bitmap {
+        val normRot = ((rotationDegrees % 360) + 360) % 360
+        if (normRot == 0) return rawBitmap
+
+        val swapDims = (normRot == 90 || normRot == 270)
+        val outW = if (swapDims) rawBitmap.height else rawBitmap.width
+        val outH = if (swapDims) rawBitmap.width else rawBitmap.height
+
+        var targetBmp = reusableRotatedBitmap
+        var targetCanvas = reusableRotatedCanvas
+        if (targetBmp == null || targetCanvas == null || targetBmp.width != outW || targetBmp.height != outH) {
+            targetBmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+            targetCanvas = Canvas(targetBmp)
+            reusableRotatedBitmap = targetBmp
+            reusableRotatedCanvas = targetCanvas
+        }
+
+        reusableRotateMatrix.reset()
+        reusableRotateMatrix.postTranslate(-rawBitmap.width * 0.5f, -rawBitmap.height * 0.5f)
+        reusableRotateMatrix.postRotate(normRot.toFloat())
+        reusableRotateMatrix.postTranslate(outW * 0.5f, outH * 0.5f)
+
+        targetCanvas.drawBitmap(rawBitmap, reusableRotateMatrix, bitmapFilterPaint)
+        return targetBmp
+    }
+
     private data class SignRoiComposite(
         val bitmap: Bitmap,
         val rois: List<SignRoiCrop>,
@@ -475,16 +647,26 @@ class RoadVisionPipeline @Inject constructor(
     )
 
     /**
-     * Composites up to 3 candidate Sign ROIs side-by-side into a single padded strip
-     * so ML Kit TextRecognizer inspects all top sign candidates in one fast offline pass.
+     * Composites up to 3 candidate Sign ROIs side-by-side into a single preallocated 576x192 strip
+     * so ML Kit TextRecognizer inspects all top sign candidates in one fast offline pass with zero GC churn.
      */
-    private fun buildSignRoiComposite(rois: List<SignRoiCrop>): SignRoiComposite? {
+    private fun buildSignRoiCompositeReusable(rois: List<SignRoiCrop>): SignRoiComposite? {
         if (rois.isEmpty()) return null
         val slotSize = 192
-        val count = rois.size.coerceAtMost(3)
+        val maxSlots = 3
+        val stripWidth = slotSize * maxSlots
+        val count = rois.size.coerceAtMost(maxSlots)
         val subset = rois.take(count)
-        val outBmp = Bitmap.createBitmap(slotSize * count, slotSize, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(outBmp)
+
+        var outBmp = reusableRoiCompositeBitmap
+        var canvas = reusableRoiCompositeCanvas
+        if (outBmp == null || canvas == null || outBmp.width != stripWidth || outBmp.height != slotSize) {
+            outBmp = Bitmap.createBitmap(stripWidth, slotSize, Bitmap.Config.ARGB_8888)
+            canvas = Canvas(outBmp)
+            reusableRoiCompositeBitmap = outBmp
+            reusableRoiCompositeCanvas = canvas
+        }
+
         canvas.drawColor(Color.BLACK)
 
         subset.forEachIndexed { index, roi ->
@@ -497,8 +679,8 @@ class RoadVisionPipeline @Inject constructor(
             val dh = (src.height * scale).toInt().coerceAtLeast(16)
             val left = index * slotSize + (slotSize - dw) / 2
             val top = (slotSize - dh) / 2
-            val dstRect = Rect(left, top, left + dw, top + dh)
-            canvas.drawBitmap(src, null, dstRect, null)
+            reusableRoiDstRect.set(left, top, left + dw, top + dh)
+            canvas.drawBitmap(src, null, reusableRoiDstRect, bitmapFilterPaint)
         }
         return SignRoiComposite(outBmp, subset, slotSize)
     }
