@@ -67,6 +67,7 @@ fun SettingsScreen(
     onOpenSafetySettings: () -> Unit = {},
     onOpenEmergencyContacts: () -> Unit = {},
     onOpenPerformanceThermal: () -> Unit = {},
+    onOpenSmartwatchHealth: () -> Unit = {},
     bluetoothPermissionGranted: Boolean,
     onExportJson: (String) -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -276,6 +277,20 @@ fun SettingsScreen(
                             }
                         }
                     }
+                }
+            }
+
+            SettingsCard {
+                SectionTitle("Smartwatch, Heart Rate & Sleep", "Connect a BLE smartwatch (0x180D) for live BPM and sync sleep sessions via Health Connect.")
+                Button(
+                    onClick = onOpenSmartwatchHealth,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = KoPilotClusterTokens.PrimaryAccent,
+                        contentColor = KoPilotClusterTokens.Background,
+                    ),
+                ) {
+                    Text("Open Smartwatch & Health", fontWeight = FontWeight.Bold)
                 }
             }
 

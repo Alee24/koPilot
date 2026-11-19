@@ -78,6 +78,7 @@ dependencies {
     implementation(project(":feature:soundstudio"))
 
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.health.connect.client)
     implementation(libs.osmdroid.android)
     implementation(libs.play.services.maps)
     implementation(libs.androidx.lifecycle.runtime.ktx)

@@ -81,6 +81,7 @@ import ke.co.kopilot.feature.dashboard.PerformanceThermalScreen
 import ke.co.kopilot.feature.diagnostics.ObdScreen
 import ke.co.kopilot.feature.sensors.DrivingIntelligenceScreen
 import ke.co.kopilot.feature.sensors.SensorsScreen
+import ke.co.kopilot.feature.sensors.wearable.SmartwatchHealthScreen
 import ke.co.kopilot.feature.settings.SettingsScreen
 import ke.co.kopilot.feature.soundstudio.AudioSettingsScreen
 import ke.co.kopilot.feature.soundstudio.ImportSoundPackScreen
@@ -394,6 +395,7 @@ class MainActivity : ComponentActivity() {
                                         onOpenSafetySettings = { navController.navigate("safety_settings") },
                                         onOpenLiveMap = { navController.navigate("live_map") },
                                         onOpenPerformanceThermal = { navController.navigate("performance_thermal") },
+                                        onOpenSmartwatchHealth = { navController.navigate("smartwatch_health") },
                                         onCallEmergency = { phone ->
                                             startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
                                         },
@@ -404,6 +406,21 @@ class MainActivity : ComponentActivity() {
                                     PerformanceThermalScreen(
                                         onBack = { navController.popBackStack() },
                                         viewModel = dashboardViewModel,
+                                    )
+                                }
+                                composable("smartwatch_health") {
+                                    val btGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                        hasPermission(Manifest.permission.BLUETOOTH_CONNECT) &&
+                                            hasPermission(Manifest.permission.BLUETOOTH_SCAN)
+                                    } else {
+                                        hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                                    }
+                                    SmartwatchHealthScreen(
+                                        onBack = { navController.popBackStack() },
+                                        bluetoothPermissionGranted = btGranted,
+                                        onRequestBluetoothPermissions = {
+                                            permissionLauncher.launch(requiredPermissions)
+                                        },
                                     )
                                 }
                                 composable("trips") {
@@ -476,6 +493,7 @@ class MainActivity : ComponentActivity() {
                                         onOpenSafetySettings = { navController.navigate("safety_settings") },
                                         onOpenEmergencyContacts = { navController.navigate("emergency_contacts") },
                                         onOpenPerformanceThermal = { navController.navigate("performance_thermal") },
+                                        onOpenSmartwatchHealth = { navController.navigate("smartwatch_health") },
                                         bluetoothPermissionGranted = btGranted,
                                         onExportJson = { json ->
                                             val share = Intent(Intent.ACTION_SEND).apply {

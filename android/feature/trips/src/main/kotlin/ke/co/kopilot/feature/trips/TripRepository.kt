@@ -22,6 +22,7 @@ class TripRepository @Inject constructor(
     val trips: Flow<List<TripEntity>> = tripDao.observeTrips()
 
     suspend fun saveCompletedTrip(
+        tripId: String = UUID.randomUUID().toString(),
         originLabel: String?,
         destinationLabel: String?,
         startedAtMillis: Long,
@@ -31,9 +32,15 @@ class TripRepository @Inject constructor(
         avgSpeedKmh: Float,
         signsDetectedCount: Int,
         alertsTriggeredCount: Int,
+        avgHeartRateBpm: Int? = null,
+        minHeartRateBpm: Int? = null,
+        maxHeartRateBpm: Int? = null,
+        heartRateSamplesCount: Int = 0,
+        watchDisconnectedGapsCount: Int = 0,
+        preDriveSleepMinutes: Int? = null,
     ) {
         val durationSec = ((endedAtMillis - startedAtMillis) / 1000L).coerceAtLeast(0L)
-        val id = UUID.randomUUID().toString()
+        val id = tripId
         var synced = false
 
         if (connectivityObserver.isCurrentlyOnline()) {
@@ -71,6 +78,12 @@ class TripRepository @Inject constructor(
                 signsDetectedCount = signsDetectedCount,
                 alertsTriggeredCount = alertsTriggeredCount,
                 syncedToBackend = synced,
+                avgHeartRateBpm = avgHeartRateBpm,
+                minHeartRateBpm = minHeartRateBpm,
+                maxHeartRateBpm = maxHeartRateBpm,
+                heartRateSamplesCount = heartRateSamplesCount,
+                watchDisconnectedGapsCount = watchDisconnectedGapsCount,
+                preDriveSleepMinutes = preDriveSleepMinutes,
             ),
         )
     }

@@ -74,6 +74,10 @@ data class KoPilotSettings(
     // Saved OBD-II Adapter for Auto-Reconnect
     val lastObdDeviceAddress: String = "",
     val lastObdDeviceName: String = "",
+    // Saved BLE Smartwatch for Auto-Reconnect
+    val lastSmartwatchAddress: String = "",
+    val lastSmartwatchName: String = "",
+    val smartwatchAutoConnectEnabled: Boolean = true,
     // Accident & Emergency Safety Settings
     val accidentMonitoringEnabled: Boolean = true,
     val emergencySmsEnabled: Boolean = false,
@@ -150,6 +154,9 @@ class PreferencesRepository @Inject constructor(
             telemetryOptIn = prefs[KEY_TELEMETRY_OPT_IN] ?: false,
             lastObdDeviceAddress = prefs[KEY_LAST_OBD_ADDRESS] ?: "",
             lastObdDeviceName = prefs[KEY_LAST_OBD_NAME] ?: "",
+            lastSmartwatchAddress = prefs[KEY_LAST_SMARTWATCH_ADDRESS] ?: "",
+            lastSmartwatchName = prefs[KEY_LAST_SMARTWATCH_NAME] ?: "",
+            smartwatchAutoConnectEnabled = prefs[KEY_SMARTWATCH_AUTO_CONNECT] ?: true,
             accidentMonitoringEnabled = prefs[KEY_ACCIDENT_MONITORING] ?: true,
             emergencySmsEnabled = prefs[KEY_EMERGENCY_SMS] ?: false,
             emergencyCountdownSeconds = prefs[KEY_EMERGENCY_COUNTDOWN_SEC] ?: 10,
@@ -233,6 +240,17 @@ class PreferencesRepository @Inject constructor(
         it[KEY_LAST_OBD_ADDRESS] = address.trim()
         it[KEY_LAST_OBD_NAME] = name.trim()
     }
+    suspend fun setLastSmartwatchDevice(address: String, name: String) = edit {
+        it[KEY_LAST_SMARTWATCH_ADDRESS] = address.trim()
+        it[KEY_LAST_SMARTWATCH_NAME] = name.trim()
+    }
+    suspend fun clearLastSmartwatchDevice() = edit {
+        it.remove(KEY_LAST_SMARTWATCH_ADDRESS)
+        it.remove(KEY_LAST_SMARTWATCH_NAME)
+    }
+    suspend fun setSmartwatchAutoConnectEnabled(enabled: Boolean) = edit {
+        it[KEY_SMARTWATCH_AUTO_CONNECT] = enabled
+    }
     suspend fun setAccidentMonitoringEnabled(enabled: Boolean) = edit { it[KEY_ACCIDENT_MONITORING] = enabled }
     suspend fun setEmergencySmsEnabled(enabled: Boolean) = edit { it[KEY_EMERGENCY_SMS] = enabled }
     suspend fun setEmergencyCountdownSeconds(seconds: Int) = edit { it[KEY_EMERGENCY_COUNTDOWN_SEC] = seconds.coerceIn(5, 30) }
@@ -299,6 +317,9 @@ class PreferencesRepository @Inject constructor(
         val KEY_TELEMETRY_OPT_IN = booleanPreferencesKey("telemetry_opt_in")
         val KEY_LAST_OBD_ADDRESS = stringPreferencesKey("last_obd_address")
         val KEY_LAST_OBD_NAME = stringPreferencesKey("last_obd_name")
+        val KEY_LAST_SMARTWATCH_ADDRESS = stringPreferencesKey("last_smartwatch_address")
+        val KEY_LAST_SMARTWATCH_NAME = stringPreferencesKey("last_smartwatch_name")
+        val KEY_SMARTWATCH_AUTO_CONNECT = booleanPreferencesKey("smartwatch_auto_connect")
         val KEY_ACCIDENT_MONITORING = booleanPreferencesKey("accident_monitoring")
         val KEY_EMERGENCY_SMS = booleanPreferencesKey("emergency_sms")
         val KEY_EMERGENCY_COUNTDOWN_SEC = intPreferencesKey("emergency_countdown_sec")

@@ -162,6 +162,7 @@ fun DashboardScreen(
     onOpenSafetySettings: () -> Unit = {},
     onOpenLiveMap: () -> Unit = {},
     onOpenPerformanceThermal: () -> Unit = {},
+    onOpenSmartwatchHealth: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -341,6 +342,10 @@ fun DashboardScreen(
                 showToolsDialog = false
                 onOpenPerformanceThermal()
             },
+            onOpenSmartwatchHealth = {
+                showToolsDialog = false
+                onOpenSmartwatchHealth()
+            },
             onToggleMuteAlerts = viewModel::toggleAlertsMute,
             onCallEmergency = {
                 showToolsDialog = false
@@ -389,6 +394,7 @@ fun DashboardScreen(
                 onOpenRoadQuality = onOpenRoadQuality,
                 onOpenDrivingIntelligence = onOpenDrivingIntelligence,
                 onOpenNavigation = onOpenNavigation,
+                onOpenSmartwatchHealth = onOpenSmartwatchHealth,
                 onToggleFullscreenCamera = { isCameraFullscreen = true },
             )
         } else {
@@ -412,6 +418,7 @@ fun DashboardScreen(
                 onOpenNavigation = onOpenNavigation,
                 onOpenSafetySettings = onOpenSafetySettings,
                 onOpenLiveMap = onOpenLiveMap,
+                onOpenSmartwatchHealth = onOpenSmartwatchHealth,
                 onToggleFullscreenCamera = { isCameraFullscreen = true },
             )
         }
@@ -1509,6 +1516,7 @@ private fun KoPilotCockpitLanding(
     onOpenNavigation: () -> Unit,
     onOpenSafetySettings: () -> Unit,
     onOpenLiveMap: () -> Unit,
+    onOpenSmartwatchHealth: () -> Unit = {},
     onToggleFullscreenCamera: () -> Unit,
 ) {
     val intel = state.intelligenceState
@@ -1669,6 +1677,57 @@ private fun KoPilotCockpitLanding(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+        }
+
+        // 2b. Compact Smartwatch Heart Rate & Optional Pre-Drive Sleep Context Row
+        val hrState = state.heartRateState
+        val sleepContext = state.sleepAnalyticsState.trendAnalysis.preDriveContextText
+        Surface(
+            onClick = onOpenSmartwatchHealth,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            color = KoPilotClusterTokens.GlassCardSurface,
+            border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (hrState.isLiveReading && !hrState.isStale && hrState.currentBpm != null) {
+                            "Smartwatch Live: ${hrState.currentBpm} BPM"
+                        } else {
+                            "Smartwatch & Health: ${state.smartwatchDiagnostics.connectionState.displayName}"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (hrState.isLiveReading && !hrState.isStale) {
+                            KoPilotClusterTokens.SmoothRoad
+                        } else {
+                            KoPilotClusterTokens.PrimaryText
+                        },
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = sleepContext ?: "Tap to connect BLE smartwatch or sync Health Connect sleep records",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = KoPilotClusterTokens.SecondaryText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    text = if (hrState.isLiveReading && !hrState.isStale) "${hrState.displayBpmText} BPM" else "Open >",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = KoPilotClusterTokens.PrimaryAccent,
+                    fontWeight = FontWeight.Bold,
+                )
             }
         }
 
@@ -2137,6 +2196,7 @@ private fun FullBleedArHudLanding(
     onOpenRoadQuality: () -> Unit,
     onOpenDrivingIntelligence: () -> Unit,
     onOpenNavigation: () -> Unit,
+    onOpenSmartwatchHealth: () -> Unit = {},
     onToggleFullscreenCamera: () -> Unit,
 ) {
     val hudGlassBg = Color(0xCC071019)
@@ -2404,6 +2464,26 @@ private fun FullBleedArHudLanding(
                 }
 
                 Spacer(Modifier.weight(1f))
+
+                // Compact live Heart-Rate pill on AR HUD when smartwatch is connected
+                val hudHr = state.heartRateState
+                if (hudHr.isLiveReading && !hudHr.isStale && hudHr.currentBpm != null) {
+                    Surface(
+                        onClick = onOpenSmartwatchHealth,
+                        color = hudGlassBg,
+                        shape = RoundedCornerShape(50),
+                        border = BorderStroke(1.dp, KoPilotClusterTokens.SmoothRoad.copy(alpha = 0.7f)),
+                    ) {
+                        Text(
+                            text = "HR ${hudHr.currentBpm}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = KoPilotClusterTokens.SmoothRoad,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                }
 
                 Surface(
                     onClick = onOpenObdLive,
@@ -3934,6 +4014,7 @@ private fun DashboardToolsDialog(
     onOpenSignsDb: () -> Unit,
     onOpenVisionDiag: () -> Unit,
     onOpenPerformanceThermal: () -> Unit = {},
+    onOpenSmartwatchHealth: () -> Unit = {},
     onToggleMuteAlerts: () -> Unit,
     onCallEmergency: () -> Unit,
 ) {
@@ -3977,6 +4058,7 @@ private fun DashboardToolsDialog(
                     OutlinedButton(onClick = onOpenSignsDb) { Text("Road Signs DB") }
                     OutlinedButton(onClick = onOpenVisionDiag) { Text("Offline AI Diag") }
                     OutlinedButton(onClick = onOpenPerformanceThermal) { Text("Performance & Thermal") }
+                    OutlinedButton(onClick = onOpenSmartwatchHealth) { Text("Smartwatch & Health") }
                     OutlinedButton(onClick = onToggleMuteAlerts) {
                         Text(if (state.settings.alertsMuted) "Unmute Alerts" else "Mute Alerts")
                     }

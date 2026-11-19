@@ -423,6 +423,24 @@ fun TripsContent(
                             TripStatChip("Duration", "${trip.durationSeconds / 60}m ${trip.durationSeconds % 60}s")
                             TripStatChip("Fuel", details.fuelConsumption)
                             TripStatChip("Battery", details.batteryVoltage)
+                            if (trip.heartRateSamplesCount > 0 && trip.avgHeartRateBpm != null) {
+                                TripStatChip(
+                                    label = "Heart Rate",
+                                    value = "${trip.avgHeartRateBpm} BPM (${trip.minHeartRateBpm ?: "--"}-${trip.maxHeartRateBpm ?: "--"})",
+                                )
+                            }
+                            trip.preDriveSleepMinutes?.let { sleepMins ->
+                                val h = sleepMins / 60
+                                val m = sleepMins % 60
+                                TripStatChip("Pre-Drive Sleep", if (h > 0) "${h}h ${m}m" else "${m}m")
+                            }
+                        }
+                        if (trip.watchDisconnectedGapsCount > 0) {
+                            Text(
+                                text = "Smartwatch data gaps during trip: ${trip.watchDisconnectedGapsCount} disconnection interval(s) preserved.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
 
                         Surface(

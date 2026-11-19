@@ -46,6 +46,13 @@ import ke.co.kopilot.feature.sensors.RealTimeIntelligenceInput
 import ke.co.kopilot.feature.sensors.SensorFrame
 import ke.co.kopilot.feature.sensors.SensorManagerRepository
 import ke.co.kopilot.feature.sensors.SensorSamplingProfile
+import ke.co.kopilot.feature.sensors.wearable.HeartRateRepository
+import ke.co.kopilot.feature.sensors.wearable.HeartRateTelemetryState
+import ke.co.kopilot.feature.sensors.wearable.SleepAnalyticsCalculator
+import ke.co.kopilot.feature.sensors.wearable.SleepAnalyticsRepository
+import ke.co.kopilot.feature.sensors.wearable.SleepAnalyticsUiState
+import ke.co.kopilot.feature.sensors.wearable.SmartwatchConnectionManager
+import ke.co.kopilot.feature.sensors.wearable.SmartwatchDiagnosticsState
 import ke.co.kopilot.feature.navigation.NavigationRepository
 import ke.co.kopilot.feature.navigation.NavigationUiState
 import ke.co.kopilot.feature.traffic.TrafficAdvisor
@@ -107,6 +114,9 @@ data class DashboardUiState(
     val accidentCountdownRemainingSec: Int = 0,
     val postImpactMonitoringActive: Boolean = false,
     val emergencyDispatchTriggerId: String? = null,
+    val smartwatchDiagnostics: SmartwatchDiagnosticsState = SmartwatchDiagnosticsState(),
+    val heartRateState: HeartRateTelemetryState = HeartRateTelemetryState(),
+    val sleepAnalyticsState: SleepAnalyticsUiState = SleepAnalyticsUiState(),
 )
 
 @HiltViewModel
@@ -128,6 +138,9 @@ class DashboardViewModel @Inject constructor(
     val tripActivityLogger: TripActivityLogger,
     private val sensorManagerRepo: SensorManagerRepository,
     private val realTimeIntelligence: RealTimeDrivingIntelligence,
+    val smartwatchConnectionManager: SmartwatchConnectionManager,
+    val heartRateRepository: HeartRateRepository,
+    val sleepAnalyticsRepository: SleepAnalyticsRepository,
     connectivityObserver: ConnectivityObserver,
 ) : ViewModel() {
 
@@ -218,14 +231,26 @@ class DashboardViewModel @Inject constructor(
         SensorBundle(vision, loc, nav, weather, voice)
     }
 
+    private var currentActiveTripId: String? = null
+    private var lastLoggedHeartRateMs: Long = 0L
+
+    private val wearableFlows = combine(
+        smartwatchConnectionManager.diagnostics,
+        heartRateRepository.state,
+        sleepAnalyticsRepository.state,
+    ) { diag, hr, sleep ->
+        Triple(diag, hr, sleep)
+    }
+
     val uiState: StateFlow<DashboardUiState> = combine(
         coreFlows,
         sensorFlows,
-        combine(alertCoordinator.state, realTimeIntelligence.state) { a, i -> a to i },
+        combine(alertCoordinator.state, realTimeIntelligence.state, wearableFlows) { a, i, w -> Triple(a, i, w) },
         obdManager.state,
         tripRepo.trips,
-    ) { core, sensor, alertsAndIntel, obd, trips ->
-        val (alerts, intel) = alertsAndIntel
+    ) { core, sensor, alertsIntelWearable, obd, trips ->
+        val (alerts, intel, wearable) = alertsIntelWearable
+        val (watchDiag, hrState, sleepState) = wearable
         val speedEval = speedAlertEngine.evaluate(
             fix = sensor.location.currentFix,
             latestSign = sensor.vision.lastObservation,
@@ -262,6 +287,9 @@ class DashboardViewModel @Inject constructor(
             accidentCountdownRemainingSec = countdownRemainingState.value,
             postImpactMonitoringActive = postImpactState.value,
             emergencyDispatchTriggerId = emergencyDispatchTrigger.value,
+            smartwatchDiagnostics = watchDiag,
+            heartRateState = hrState,
+            sleepAnalyticsState = sleepState,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -1126,6 +1154,7 @@ class DashboardViewModel @Inject constructor(
         locationTracker.setPermissionGranted(locationGranted)
         voiceClient.setMicPermissionGranted(micGranted)
         tryAutoConnectObd(uiState.value.settings)
+        smartwatchConnectionManager.tryRestoreSavedWatch(bluetoothGranted)
         if (locationGranted && isDriving.value) {
             locationTracker.startTracking(highAccuracy = true)
         }
@@ -1212,6 +1241,9 @@ class DashboardViewModel @Inject constructor(
 
     fun startDriving() {
         val started = System.currentTimeMillis()
+        val tripId = UUID.randomUUID().toString()
+        currentActiveTripId = tripId
+        lastLoggedHeartRateMs = 0L
         isDriving.value = true
         tripStartedAt.value = started
         maxSpeedObservedKmh = 0f
@@ -1253,6 +1285,11 @@ class DashboardViewModel @Inject constructor(
         realTimeIntelligence.resetForNewJourney(started)
         (speechSink as? AndroidTtsSpeechSink)?.playConnectionBeep()
 
+        // Phase 6: Check smartwatch connection, attach active tripId, and avoid unnecessary BLE scans
+        smartwatchConnectionManager.setActiveTripId(tripId)
+        heartRateRepository.startTripMonitoring(tripId, started)
+        smartwatchConnectionManager.tryRestoreSavedWatch(bluetoothGranted)
+
         val fix = locationTracker.state.value.currentFix
         val dest = navigationRepo.state.value.destinationName
         tripActivityLogger.startTripLog(
@@ -1272,9 +1309,20 @@ class DashboardViewModel @Inject constructor(
             sensorManagerRepo.startMonitoring(SensorSamplingProfile.DRIVING)
         }
         if (isDriving.value) {
+            val watchDiag = smartwatchConnectionManager.diagnostics.value
+            val latestSleep = sleepAnalyticsRepository.state.value.latestSession
+            val sleepContext = latestSleep?.let {
+                "Last recorded sleep: ${SleepAnalyticsCalculator.formatDurationHoursMinutes(it.totalSleepDurationMinutes)} (${it.sourceAppName})"
+            } ?: "No synchronized sleep record"
+
             tripActivityLogger.logActivity(
                 type = "SENSORS_ACTIVE",
-                details = "Camera=${s.sensorCameraEnabled}, GPS=${s.sensorGpsEnabled}, Motion=${s.sensorMotionEnabled}, Mic=${s.sensorMicEnabled}, OBD=${s.sensorObdEnabled}",
+                details = "Camera=${s.sensorCameraEnabled}, GPS=${s.sensorGpsEnabled}, Motion=${s.sensorMotionEnabled}, Mic=${s.sensorMicEnabled}, OBD=${s.sensorObdEnabled}, Smartwatch=${watchDiag.connectionState.name}",
+                timestampMillis = started,
+            )
+            tripActivityLogger.logActivity(
+                type = "PRE_DRIVE_WELLNESS",
+                details = "Smartwatch=${watchDiag.connectedName ?: "Not connected"} (${watchDiag.connectionState.displayName}) | $sleepContext",
                 timestampMillis = started,
             )
         }
@@ -1283,10 +1331,17 @@ class DashboardViewModel @Inject constructor(
     fun endTrip() {
         val started = tripStartedAt.value
         val ended = System.currentTimeMillis()
+        val tripId = currentActiveTripId ?: UUID.randomUUID().toString()
+        currentActiveTripId = null
         val distanceKm = locationTracker.state.value.distanceTraveledMeters / 1000.0
         val avgKmh = if (speedSampleCount > 0) speedSampleSum / speedSampleCount else 0f
         val destLabel = navigationRepo.state.value.destinationName
         val alertsCount = alertCoordinator.state.value.alertsTriggeredCount
+
+        // Finalize Smartwatch Heart-Rate summary for this trip
+        val hrSummary = heartRateRepository.finalizeTripMonitoring(ended)
+        smartwatchConnectionManager.setActiveTripId(null)
+        val latestSleepMins = sleepAnalyticsRepository.state.value.latestSession?.totalSleepDurationMinutes
 
         val hubState = sensorManagerRepo.state.value
         val motion = hubState.motionAnalysis
@@ -1299,6 +1354,19 @@ class DashboardViewModel @Inject constructor(
         tripActivityLogger.logActivity(
             type = "DRIVING_BEHAVIOUR",
             details = "Driver Score=${motionStats.driverBehaviourScore}/100 | Braking=${motionStats.brakingCount} (Harsh=${motionStats.harshBrakingCount}) | Accel=${motionStats.accelerationCount} (Hard=${motionStats.hardAccelerationCount}) | Sharp Turns=${motionStats.sharpCornerCount}",
+            timestampMillis = ended,
+        )
+        val hrSummaryLine = if (hrSummary.sampleCount > 0) {
+            "Avg=${hrSummary.avgBpm ?: "--"} BPM | Min=${hrSummary.minBpm ?: "--"} BPM | Max=${hrSummary.maxBpm ?: "--"} BPM | Samples=${hrSummary.sampleCount} | DisconnectGaps=${hrSummary.disconnectedGapsCount}"
+        } else {
+            "No live heart-rate samples recorded during trip (DisconnectGaps=${hrSummary.disconnectedGapsCount})"
+        }
+        val sleepSummaryLine = latestSleepMins?.let {
+            "Pre-Drive Sleep=${SleepAnalyticsCalculator.formatDurationHoursMinutes(it)}"
+        } ?: "Pre-Drive Sleep=Not available"
+        tripActivityLogger.logActivity(
+            type = "SMARTWATCH_HEALTH",
+            details = "$hrSummaryLine | $sleepSummaryLine",
             timestampMillis = ended,
         )
         val allSensorsLine = hubState.physicalSensors.filter { it.isAvailable }.joinToString("; ") { s ->
@@ -1330,7 +1398,8 @@ class DashboardViewModel @Inject constructor(
             motionStats.averageRoadScore >= 65 -> "Fair"
             else -> "Rough"
         }
-        val overallSummary = "Safety ${motionStats.driverBehaviourScore}/100 • Road $roadLabel (${motionStats.averageRoadScore}/100)"
+        val hrTag = hrSummary.avgBpm?.let { " • HR ${it} BPM (${hrSummary.minBpm}-${hrSummary.maxBpm})" } ?: ""
+        val overallSummary = "Safety ${motionStats.driverBehaviourScore}/100 • Road $roadLabel (${motionStats.averageRoadScore}/100)$hrTag"
         tripActivityLogger.logActivity(
             type = "TRIP_SUMMARY",
             details = "Fuel=$fuelSummary | Battery=$voltSummary | Summary=$overallSummary",
@@ -1365,6 +1434,7 @@ class DashboardViewModel @Inject constructor(
         if (started != null && uiState.value.settings.tripHistoryEnabled) {
             viewModelScope.launch {
                 tripRepo.saveCompletedTrip(
+                    tripId = tripId,
                     originLabel = "Current Location",
                     destinationLabel = destLabel,
                     startedAtMillis = started,
@@ -1374,6 +1444,12 @@ class DashboardViewModel @Inject constructor(
                     avgSpeedKmh = avgKmh,
                     signsDetectedCount = signsDetectedInTrip,
                     alertsTriggeredCount = alertsCount,
+                    avgHeartRateBpm = hrSummary.avgBpm,
+                    minHeartRateBpm = hrSummary.minBpm,
+                    maxHeartRateBpm = hrSummary.maxBpm,
+                    heartRateSamplesCount = hrSummary.sampleCount,
+                    watchDisconnectedGapsCount = hrSummary.disconnectedGapsCount,
+                    preDriveSleepMinutes = latestSleepMins,
                 )
             }
         }
