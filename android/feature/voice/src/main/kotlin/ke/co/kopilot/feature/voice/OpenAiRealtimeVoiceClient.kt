@@ -103,7 +103,7 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
         )
     }
 
-    fun connect(language: String = "en", voice: String? = null) {
+    fun connect(language: String = "en", voice: String? = null, preferOffline: Boolean = true) {
         if (!_state.value.micPermissionGranted) {
             _state.value = _state.value.copy(
                 connectionState = VoiceConnectionState.ERROR,
@@ -111,8 +111,8 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
             )
             return
         }
-        if (!connectivityObserver.isCurrentlyOnline()) {
-            startLocalVoiceFallback(language, "Offline: using local voice")
+        if (preferOffline || !connectivityObserver.isCurrentlyOnline()) {
+            startLocalVoiceFallback(language, "Offline Voice AI listening")
             return
         }
         if (_state.value.connectionState == VoiceConnectionState.CONNECTING ||
@@ -192,15 +192,19 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
         )
         localVoiceEngine.startListening(
             language = language,
+            continuous = true,
             onListeningChanged = { listening ->
-                _state.value = _state.value.copy(isListening = listening)
+                _state.value = _state.value.copy(
+                    isListening = listening,
+                    statusMessage = if (listening) "Listening (Offline Voice AI)..." else _state.value.statusMessage,
+                )
             },
             onResultSpoken = { spoken, reply ->
                 _state.value = _state.value.copy(
                     connectionState = VoiceConnectionState.LOCAL_FALLBACK,
                     isSpeaking = true,
                     lastTranscript = "\"$spoken\" -> $reply",
-                    statusMessage = "Local voice ready",
+                    statusMessage = "Answering: $spoken",
                 )
                 speechSink.speak(reply, flushQueue = true, speechRate = 1.0f, languageTag = language)
                 _state.value = _state.value.copy(isSpeaking = false)

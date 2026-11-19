@@ -1308,6 +1308,10 @@ class DashboardViewModel @Inject constructor(
         if (s.sensorMotionEnabled) {
             sensorManagerRepo.startMonitoring(SensorSamplingProfile.DRIVING)
         }
+        // Automatically start 100% offline hands-free Voice AI when driving begins
+        if (s.sensorMicEnabled && voiceClient.state.value.micPermissionGranted) {
+            voiceClient.connect(language = s.language, voice = s.aiVoiceName, preferOffline = true)
+        }
         if (isDriving.value) {
             val watchDiag = smartwatchConnectionManager.diagnostics.value
             val latestSleep = sleepAnalyticsRepository.state.value.latestSession
@@ -1548,15 +1552,15 @@ class DashboardViewModel @Inject constructor(
         val voiceState = uiState.value.voiceState
         val isActive = voiceState.connectionState == ke.co.kopilot.feature.voice.VoiceConnectionState.CONNECTED ||
             voiceState.connectionState == ke.co.kopilot.feature.voice.VoiceConnectionState.CONNECTING ||
-            (voiceState.connectionState == ke.co.kopilot.feature.voice.VoiceConnectionState.LOCAL_FALLBACK && voiceState.isListening)
+            voiceState.connectionState == ke.co.kopilot.feature.voice.VoiceConnectionState.LOCAL_FALLBACK
         if (isActive) {
             if (isDriving.value) tripActivityLogger.logActivity("VOICE_ASSISTANT", "Voice assistant disconnected")
             voiceClient.disconnect()
         } else {
             val s = uiState.value.settings
             if (!s.sensorMicEnabled) return
-            if (isDriving.value) tripActivityLogger.logActivity("VOICE_ASSISTANT", "Voice assistant connected (${s.language}, voice=${s.aiVoiceName})")
-            voiceClient.connect(language = s.language, voice = s.aiVoiceName)
+            if (isDriving.value) tripActivityLogger.logActivity("VOICE_ASSISTANT", "Offline Voice AI started (${s.language}, voice=${s.aiVoiceName})")
+            voiceClient.connect(language = s.language, voice = s.aiVoiceName, preferOffline = true)
         }
     }
 

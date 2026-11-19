@@ -3043,6 +3043,46 @@ private fun FullBleedArHudLanding(
                     }
                 }
 
+                // Live Offline Voice AI Transcript & Status Strip (when Voice AI is active or answered)
+                val vState = state.voiceState
+                val voiceIsActive = vState.connectionState == VoiceConnectionState.LOCAL_FALLBACK ||
+                    vState.connectionState == VoiceConnectionState.CONNECTED ||
+                    vState.connectionState == VoiceConnectionState.CONNECTING
+                if (voiceIsActive || vState.lastTranscript.isNotBlank()) {
+                    Surface(
+                        color = hudGlassBg,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (vState.isListening) KoPilotClusterTokens.SmoothRoad.copy(alpha = 0.75f) else hudGlassBorder,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = null,
+                                tint = if (vState.isListening) KoPilotClusterTokens.SmoothRoad else KoPilotClusterTokens.PrimaryAccent,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Text(
+                                text = vState.lastTranscript.ifBlank { vState.statusMessage },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = KoPilotClusterTokens.PrimaryText,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+
                 // Bottom Action Buttons — All Clearly Labeled (Stop Drive, Voice, Navigate)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -3080,18 +3120,28 @@ private fun FullBleedArHudLanding(
                             .weight(1f)
                             .height(48.dp),
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(containerColor = hudGlassBg),
-                        border = BorderStroke(1.dp, hudGlassBorder),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (voiceIsActive) KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.2f) else hudGlassBg,
+                        ),
+                        border = BorderStroke(
+                            1.dp,
+                            if (voiceIsActive) KoPilotClusterTokens.PrimaryAccent else hudGlassBorder,
+                        ),
                     ) {
                         Icon(
                             imageVector = Icons.Default.Mic,
                             contentDescription = "Voice",
-                            tint = KoPilotClusterTokens.PrimaryAccent,
+                            tint = if (vState.isListening) KoPilotClusterTokens.SmoothRoad else KoPilotClusterTokens.PrimaryAccent,
                             modifier = Modifier.size(17.dp),
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            text = if (state.voiceState.isListening) "Listening" else "Voice AI",
+                            text = when {
+                                vState.isSpeaking -> "Speaking"
+                                vState.isListening -> "Listening"
+                                voiceIsActive -> "Voice On"
+                                else -> "Voice AI"
+                            },
                             color = KoPilotClusterTokens.PrimaryText,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,

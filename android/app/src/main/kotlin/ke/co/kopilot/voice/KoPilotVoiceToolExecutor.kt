@@ -2,10 +2,17 @@ package ke.co.kopilot.voice
 
 import ke.co.kopilot.core.database.preferences.PreferencesRepository
 import ke.co.kopilot.core.database.preferences.VoiceMode
+import ke.co.kopilot.feature.camera.CameraPerformanceController
 import ke.co.kopilot.feature.diagnostics.ObdBluetoothManager
 import ke.co.kopilot.feature.location.LocationTracker
 import ke.co.kopilot.feature.location.SpeedAlertEngine
 import ke.co.kopilot.feature.navigation.NavigationRepository
+import ke.co.kopilot.feature.sensors.RealTimeDrivingIntelligence
+import ke.co.kopilot.feature.sensors.SensorManagerRepository
+import ke.co.kopilot.feature.sensors.wearable.HeartRateRepository
+import ke.co.kopilot.feature.sensors.wearable.SleepAnalyticsCalculator
+import ke.co.kopilot.feature.sensors.wearable.SleepAnalyticsRepository
+import ke.co.kopilot.feature.sensors.wearable.SmartwatchConnectionManager
 import ke.co.kopilot.feature.traffic.TrafficAdvisor
 import ke.co.kopilot.feature.trips.TripRepository
 import ke.co.kopilot.feature.vision.RoadVisionPipeline
@@ -17,6 +24,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,15 +40,28 @@ class KoPilotVoiceToolExecutor @Inject constructor(
     private val tripRepo: TripRepository,
     private val prefsRepo: PreferencesRepository,
     private val vehicleIntelligence: VehicleIntelligenceEngine,
+    private val sensorManagerRepo: SensorManagerRepository,
+    private val realTimeIntelligence: RealTimeDrivingIntelligence,
+    private val cameraController: CameraPerformanceController,
+    private val smartwatchConnectionManager: SmartwatchConnectionManager,
+    private val heartRateRepository: HeartRateRepository,
+    private val sleepAnalyticsRepository: SleepAnalyticsRepository,
 ) : VoiceToolExecutor {
 
     override suspend fun executeTool(name: String, arguments: JsonObject): String = when (name) {
         "get_current_location" -> {
-            val fix = locationTracker.state.value.currentFix
+            val locState = locationTracker.state.value
+            val fix = locState.currentFix
             if (fix == null) {
                 """{"status":"unavailable","reason":"GPS fix not available"}"""
             } else {
-                """{"status":"ok","latitude":${fix.latitude},"longitude":${fix.longitude},"accuracy_m":${fix.horizontalAccuracyMeters ?: -1}}"""
+                buildJsonObject {
+                    put("status", "ok")
+                    put("latitude", "%.5f".format(Locale.US, fix.latitude))
+                    put("longitude", "%.5f".format(Locale.US, fix.longitude))
+                    put("accuracy_m", fix.horizontalAccuracyMeters?.toInt() ?: -1)
+                    put("satellites", locState.satellitesUsedInFix)
+                }.toString()
             }
         }
         "get_current_speed" -> {
@@ -50,8 +71,16 @@ class KoPilotVoiceToolExecutor @Inject constructor(
                 latestSign = vision.lastObservation,
                 thresholdKmh = 5,
             )
+            val obdSpeed = obdManager.liveTelemetry.value.vehicleSpeedKmh
+            val effectiveSpeed = eval.currentSpeedKmh ?: obdSpeed?.toFloat()
             val observedLimit = vision.lastSpeedLimitKmh ?: eval.applicableSpeedLimitKmh
-            """{"status":"${eval.signalState.name}","speed_kmh":${eval.currentSpeedKmh ?: "null"},"observed_limit_kmh":${observedLimit ?: "null"},"last_sign":"${vision.lastObservation?.category?.displayName ?: "none"}","decision":"${eval.decision.name}"}"""
+            buildJsonObject {
+                put("status", eval.signalState.name)
+                if (effectiveSpeed != null) put("speed_kmh", effectiveSpeed.toInt())
+                if (observedLimit != null) put("observed_limit_kmh", observedLimit)
+                put("last_sign", vision.lastObservation?.category?.displayName ?: "none")
+                put("decision", eval.decision.name)
+            }.toString()
         }
         "get_active_route" -> {
             val nav = navigationRepo.state.value
@@ -59,13 +88,23 @@ class KoPilotVoiceToolExecutor @Inject constructor(
             if (r == null) {
                 """{"status":"unavailable","reason":"No active navigation route"}"""
             } else {
-                """{"status":"ok","destination":"${nav.destinationName}","eta_minutes":${r.durationSeconds / 60},"distance_km":${"%.1f".format(r.distanceMeters / 1000.0)},"next_instruction":"${r.steps.firstOrNull()?.instruction ?: "Continue"}"}"""
+                buildJsonObject {
+                    put("status", "ok")
+                    put("destination", nav.destinationName ?: "Destination")
+                    put("eta_minutes", r.durationSeconds / 60)
+                    put("distance_km", "%.1f".format(Locale.US, r.distanceMeters / 1000.0))
+                    put("next_instruction", r.steps.firstOrNull()?.instruction ?: "Continue")
+                }.toString()
             }
         }
         "get_traffic_conditions" -> {
             val nav = navigationRepo.state.value
             val eval = trafficAdvisor.evaluate(nav.activeRoute, nav.alternativeRoutes)
-            """{"status":"${if (nav.activeRoute != null) "ok" else "unavailable"}","traffic_status":"${eval.statusLabel}","delay_minutes":${eval.delayMinutes}}"""
+            buildJsonObject {
+                put("status", if (nav.activeRoute != null) "ok" else "unavailable")
+                put("traffic_status", eval.statusLabel)
+                put("delay_minutes", eval.delayMinutes)
+            }.toString()
         }
         "find_alternative_routes" -> {
             val nav = navigationRepo.state.value
@@ -73,7 +112,12 @@ class KoPilotVoiceToolExecutor @Inject constructor(
             if (eval.recommendedAlternative == null) {
                 """{"status":"ok","alternative_available":false,"reason":"No alternative route saves meaningful time"}"""
             } else {
-                """{"status":"ok","alternative_available":true,"summary":"${eval.recommendedAlternative?.summary}","minutes_saved":${eval.estimatedMinutesSaved}}"""
+                buildJsonObject {
+                    put("status", "ok")
+                    put("alternative_available", true)
+                    put("summary", eval.recommendedAlternative?.summary ?: "Alternative route")
+                    put("minutes_saved", eval.estimatedMinutesSaved)
+                }.toString()
             }
         }
         "get_weather_forecast" -> {
@@ -81,7 +125,13 @@ class KoPilotVoiceToolExecutor @Inject constructor(
             if (!w.available) {
                 """{"status":"unavailable"}"""
             } else {
-                """{"status":"ok","condition":"${w.conditionSummary}","temperature_c":${w.temperatureC ?: "null"},"rain_probability_percent":${w.rainProbabilityPercent ?: "null"},"cached_offline":${w.isStaleOfflineCache}}"""
+                buildJsonObject {
+                    put("status", "ok")
+                    put("condition", w.conditionSummary)
+                    w.temperatureC?.let { put("temperature_c", "%.0f".format(Locale.US, it)) }
+                    w.rainProbabilityPercent?.let { put("rain_probability_percent", it) }
+                    put("cached_offline", w.isStaleOfflineCache)
+                }.toString()
             }
         }
         "search_nearby_places" -> {
@@ -92,17 +142,123 @@ class KoPilotVoiceToolExecutor @Inject constructor(
                 """{"status":"unavailable","query":"$query"}"""
             } else {
                 val top = results.first()
-                """{"status":"ok","nearest_name":"${top.name}","address":"${top.formattedAddress}","count":${results.size}}"""
+                buildJsonObject {
+                    put("status", "ok")
+                    put("nearest_name", top.name)
+                    put("address", top.formattedAddress)
+                    put("count", results.size)
+                }.toString()
             }
         }
         "get_recent_road_observations" -> {
             val v = visionPipeline.state.value
             val obs = v.lastObservation
-            if (obs == null) {
-                """{"status":"unavailable","last_sign":"none","last_speed_limit_kmh":${v.lastSpeedLimitKmh ?: "null"}}"""
-            } else {
-                """{"status":"ok","last_sign":"${obs.category.displayName}","last_speed_limit_kmh":${v.lastSpeedLimitKmh ?: "null"},"confidence":${obs.confidence}}"""
+            buildJsonObject {
+                put("status", if (obs != null || v.lastSpeedLimitKmh != null) "ok" else "unavailable")
+                put("last_sign", obs?.customLabel ?: obs?.category?.displayName ?: "none")
+                put("sign", obs?.customLabel ?: obs?.category?.displayName ?: "none")
+                v.lastSpeedLimitKmh?.let { put("last_speed_limit_kmh", it) }
+                put("traffic_light", v.trafficLightSignal.name)
+                v.lastDetectedPlate?.let { put("last_plate", it) }
+                put("tracked_objects", v.trackedObjects.size)
+            }.toString()
+        }
+        "get_smartwatch_health" -> {
+            val diag = smartwatchConnectionManager.diagnostics.value
+            val hr = heartRateRepository.state.value
+            val summary = buildString {
+                if (hr.isLiveReading && !hr.isStale && hr.currentBpm != null) {
+                    append("Your current heart rate is ${hr.currentBpm} beats per minute")
+                    if (hr.minBpm != null && hr.maxBpm != null && hr.avgBpm != null) {
+                        append(", averaging ${hr.avgBpm}, with a range from ${hr.minBpm} to ${hr.maxBpm} BPM")
+                    }
+                    append(".")
+                } else if (diag.connectedName != null) {
+                    append("Your smartwatch ${diag.connectedName} status is ${diag.connectionState.displayName}, with no live heart rate reading right now.")
+                } else {
+                    append("No smartwatch is currently connected. Open Smartwatch and Health to connect your BLE watch.")
+                }
+                diag.batteryPercent?.let { append(" Watch battery is $it percent.") }
             }
+            buildJsonObject {
+                put("status", if (hr.isLiveReading && !hr.isStale) "ok" else "unavailable")
+                put("summary", summary)
+                hr.currentBpm?.let { put("current_bpm", it) }
+                hr.avgBpm?.let { put("avg_bpm", it) }
+                hr.minBpm?.let { put("min_bpm", it) }
+                hr.maxBpm?.let { put("max_bpm", it) }
+                diag.batteryPercent?.let { put("watch_battery_percent", it) }
+                put("connection_state", diag.connectionState.displayName)
+            }.toString()
+        }
+        "get_sleep_summary" -> {
+            val sleep = sleepAnalyticsRepository.state.value
+            val latest = sleep.latestSession
+            val summary = if (latest == null) {
+                "No synchronized sleep records are available yet. Open Smartwatch and Health to authorize Health Connect and sync your sleep."
+            } else {
+                val dur = SleepAnalyticsCalculator.formatDurationHoursMinutes(latest.totalSleepDurationMinutes)
+                buildString {
+                    append("Your last recorded sleep was $dur with ${latest.sleepEfficiencyPercent} percent efficiency from ${latest.sourceAppName}.")
+                    if (latest.stagesAvailable) {
+                        val deep = latest.deepSleepMinutes?.let { SleepAnalyticsCalculator.formatDurationHoursMinutes(it) } ?: "0m"
+                        val rem = latest.remSleepMinutes?.let { SleepAnalyticsCalculator.formatDurationHoursMinutes(it) } ?: "0m"
+                        val light = latest.lightSleepMinutes?.let { SleepAnalyticsCalculator.formatDurationHoursMinutes(it) } ?: "0m"
+                        append(" Deep sleep $deep, light sleep $light, REM sleep $rem.")
+                    }
+                }
+            }
+            buildJsonObject {
+                put("status", if (latest != null) "ok" else "unavailable")
+                put("summary", summary)
+            }.toString()
+        }
+        "get_all_sensors_summary" -> {
+            val hub = sensorManagerRepo.state.value
+            val motion = hub.motionAnalysis
+            val stats = motion.behaviourStats
+            val compass = hub.compassReading
+            val intel = realTimeIntelligence.state.value
+            val cam = cameraController.status.value
+            val fix = locationTracker.state.value.currentFix
+            val obd = obdManager.state.value
+            val tel = obdManager.liveTelemetry.value
+            val hr = heartRateRepository.state.value
+
+            val summary = buildString {
+                val speedKmh = fix?.speedKmh?.toInt() ?: tel.vehicleSpeedKmh
+                append("Heading ${compass.cardinal} at ${compass.degrees} degrees. ")
+                if (speedKmh != null) append("Speed $speedKmh kilometres per hour. ")
+                append("Road surface score is ${stats.averageRoadScore} out of 100 with ${stats.potholeBumpCount} bumps detected. ")
+                append("Driving safety score is ${intel.safetyScore}, fuel efficiency score is ${intel.fuelEfficiencyScore}. ")
+                if (obd.obdConnected) {
+                    tel.engineRpm?.let { append("Engine at $it RPM. ") }
+                    tel.coolantTempC?.let { append("Coolant $it degrees Celsius. ") }
+                    (tel.controlModuleVoltageV ?: tel.adapterVoltageV)?.let {
+                        append("Battery voltage ${"%.1f".format(Locale.US, it)} volts. ")
+                    }
+                } else {
+                    append("OBD adapter is offline. ")
+                }
+                if (hr.isLiveReading && !hr.isStale && hr.currentBpm != null) {
+                    append("Heart rate ${hr.currentBpm} BPM. ")
+                }
+                append("Phone thermal state is ${cam.thermalState.label}")
+                cam.batteryTemperatureC?.let { append(" at ${"%.1f".format(Locale.US, it)} degrees Celsius") }
+                append(".")
+            }
+            buildJsonObject {
+                put("status", "ok")
+                put("summary", summary)
+                put("compass_cardinal", compass.cardinal)
+                put("compass_degrees", compass.degrees)
+                put("road_score", stats.averageRoadScore)
+                put("bumps_count", stats.potholeBumpCount)
+                put("safety_score", intel.safetyScore)
+                put("fuel_score", intel.fuelEfficiencyScore)
+                put("thermal_state", cam.thermalState.label)
+                put("satellites", locationTracker.state.value.satellitesUsedInFix)
+            }.toString()
         }
         "set_voice_mode" -> {
             val raw = arguments["mode"]?.jsonPrimitive?.content?.uppercase() ?: "SMART_CO_DRIVER"
@@ -152,13 +308,34 @@ class KoPilotVoiceToolExecutor @Inject constructor(
             if (!obd.obdConnected) {
                 """{"status":"unavailable","connection_state":"${conn.name}","reason":"${obd.statusMessage}"}"""
             } else {
-                """{"status":"ok","connection_state":"${conn.name}","adapter":"${tel.adapterInfo ?: obd.adapterName ?: "OBD-II"}","protocol":"${tel.protocolName ?: obd.protocolName ?: "Auto"}","rpm":${tel.engineRpm ?: "null"},"obd_speed_kmh":${tel.vehicleSpeedKmh ?: "null"},"coolant_c":${tel.coolantTempC ?: "null"},"engine_load_pct":${tel.engineLoadPct ?: "null"},"throttle_pct":${tel.throttlePositionPct ?: "null"},"voltage_v":${tel.controlModuleVoltageV ?: "null"},"dtc_count":${obd.dtcCodes.size},"transmission_dtc_count":${tel.transmissionDtcCodes.size},"transmission_note":"${tel.transmissionStatusNote}"}"""
+                buildJsonObject {
+                    put("status", "ok")
+                    put("connection_state", conn.name)
+                    put("adapter", tel.adapterInfo ?: obd.adapterName ?: "OBD-II")
+                    put("protocol", tel.protocolName ?: obd.protocolName ?: "Auto")
+                    tel.engineRpm?.let { put("rpm", it) }
+                    tel.vehicleSpeedKmh?.let { put("obd_speed_kmh", it) }
+                    tel.coolantTempC?.let { put("coolant_c", it) }
+                    tel.engineLoadPct?.let { put("engine_load_pct", it) }
+                    tel.throttlePositionPct?.let { put("throttle_pct", it) }
+                    (tel.controlModuleVoltageV ?: tel.adapterVoltageV)?.let { put("voltage_v", it) }
+                    tel.mafGramsPerSec?.let { put("maf_gps", it) }
+                    tel.intakeAirTempC?.let { put("intake_c", it) }
+                    tel.fuelLevelPct?.let { put("fuel_level_pct", it) }
+                    put("dtc_count", obd.dtcCodes.size)
+                    put("transmission_dtc_count", tel.transmissionDtcCodes.size)
+                    put("transmission_note", tel.transmissionStatusNote)
+                }.toString()
             }
         }
         "get_trip_summary" -> {
             val distKm = locationTracker.state.value.distanceTraveledMeters / 1000.0
             val savedCount = tripRepo.trips.firstOrNull()?.size ?: 0
-            """{"status":"ok","current_trip_distance_km":${"%.2f".format(distKm)},"saved_trips_count":$savedCount}"""
+            buildJsonObject {
+                put("status", "ok")
+                put("current_trip_distance_km", "%.2f".format(Locale.US, distKm))
+                put("saved_trips_count", savedCount)
+            }.toString()
         }
         "ask_vehicle_intelligence" -> {
             val question = arguments["question"]?.jsonPrimitive?.content ?: "How is my car performing right now?"
