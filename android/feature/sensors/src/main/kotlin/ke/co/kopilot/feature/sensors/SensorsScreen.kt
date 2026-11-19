@@ -166,6 +166,40 @@ private fun OverviewTab(
     viewModel: SensorsViewModel,
 ) {
     ClusterCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Phone Mount Calibration", style = MaterialTheme.typography.titleMedium, color = KoPilotClusterTokens.PrimaryText)
+                val mountColor = when (hub.mountCalibrationStatus) {
+                    MountCalibrationStatus.CALIBRATED -> KoPilotClusterTokens.SmoothRoad
+                    MountCalibrationStatus.CALIBRATION_REQUIRED -> KoPilotClusterTokens.ModerateRoad
+                    MountCalibrationStatus.MOUNT_MOVEMENT_SUSPECTED -> KoPilotClusterTokens.RoughRoad
+                    MountCalibrationStatus.SENSOR_UNAVAILABLE -> Color(0xFFEF4444)
+                }
+                Text(
+                    text = hub.mountCalibrationStatus.label,
+                    color = mountColor,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                )
+            }
+            OutlinedButton(onClick = viewModel::recalibrateMount) {
+                Text("Recalibrate", color = KoPilotClusterTokens.PrimaryAccent)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "Compass: ${hub.compassReading.formatted} (${hub.compassReading.source})" +
+                if (hub.compassReading.interferenceSuspected) " • Interference" else "",
+            color = KoPilotClusterTokens.SecondaryText,
+            fontSize = 12.sp,
+        )
+    }
+
+    ClusterCard {
         Text("Live Sensor Monitoring", style = MaterialTheme.typography.titleMedium, color = KoPilotClusterTokens.PrimaryText)
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

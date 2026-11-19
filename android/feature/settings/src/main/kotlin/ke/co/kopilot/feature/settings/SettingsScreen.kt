@@ -64,6 +64,8 @@ import ke.co.kopilot.core.designsystem.theme.KoPilotClusterTokens
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenObd: () -> Unit = {},
+    onOpenSafetySettings: () -> Unit = {},
+    onOpenEmergencyContacts: () -> Unit = {},
     bluetoothPermissionGranted: Boolean,
     onExportJson: (String) -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -124,6 +126,28 @@ fun SettingsScreen(
             if (statusBanner != null) {
                 SettingsCard {
                     Text(statusBanner!!, color = KoPilotClusterTokens.PrimaryAccent, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            SettingsCard {
+                SectionTitle("Safety & Emergency", "Accident monitoring, 10s countdown, SMS contacts, and mount calibration.")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(
+                        onClick = onOpenSafetySettings,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = KoPilotClusterTokens.PrimaryAccent, contentColor = KoPilotClusterTokens.Background),
+                    ) {
+                        Text("Safety & Emergency", fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = onOpenEmergencyContacts,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Contacts", color = KoPilotClusterTokens.PrimaryText)
+                    }
                 }
             }
 

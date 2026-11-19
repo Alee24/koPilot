@@ -31,6 +31,10 @@ data class SensorHubState(
     val connectivity: ConnectivityCapabilities? = null,
     val motionAnalysis: DrivingMotionAnalysis = DrivingMotionAnalysis(),
     val lastSignificantMotionMillis: Long? = null,
+    val mountCalibrationStatus: MountCalibrationStatus = MountCalibrationStatus.CALIBRATION_REQUIRED,
+    val mountCalibratedAtMillis: Long = 0L,
+    val vehicleAxesSample: VehicleAxesSample = VehicleAxesSample(0f, 0f, 0f, 0f, 0f, 0f, 1f, MountCalibrationStatus.CALIBRATION_REQUIRED),
+    val compassReading: CompassReading = CompassReading(),
 )
 
 @Singleton
@@ -52,12 +56,24 @@ class SensorManagerRepository @Inject constructor(
     private var sensorThread: HandlerThread? = null
     private var sensorHandler: Handler? = null
 
+    private var latestRawAccel = floatArrayOf(0f, 9.81f, 0f)
     private var latestLinearAccel = floatArrayOf(0f, 0f, 0f)
     private var latestGyro = floatArrayOf(0f, 0f, 0f)
     private var latestOrientationDeg = floatArrayOf(0f, 0f, 0f)
+    private var latestMagneticUt: Float? = null
+    private val mountCalibrator = PhoneMountCalibrator()
+    private val compassEstimator = CompassHeadingEstimator()
     private val rotationMatrix = FloatArray(9)
     private val orientationAngles = FloatArray(3)
     private var lastUiPublishMs = 0L
+
+    fun recalibrateMount() {
+        mountCalibrator.requestRecalibration()
+        _state.value = _state.value.copy(
+            mountCalibrationStatus = MountCalibrationStatus.CALIBRATION_REQUIRED,
+            mountCalibratedAtMillis = 0L,
+        )
+    }
 
     private val expectedCoreSensorTypes = listOf(
         Sensor.TYPE_ACCELEROMETER,
@@ -226,6 +242,11 @@ class SensorManagerRepository @Inject constructor(
         val unit = unitFor(type)
 
         when (type) {
+            Sensor.TYPE_ACCELEROMETER -> {
+                if (event.values.size >= 3) {
+                    latestRawAccel = floatArrayOf(event.values[0], event.values[1], event.values[2])
+                }
+            }
             Sensor.TYPE_LINEAR_ACCELERATION -> {
                 if (event.values.size >= 3) {
                     latestLinearAccel = floatArrayOf(event.values[0], event.values[1], event.values[2])
@@ -234,6 +255,14 @@ class SensorManagerRepository @Inject constructor(
             Sensor.TYPE_GYROSCOPE -> {
                 if (event.values.size >= 3) {
                     latestGyro = floatArrayOf(event.values[0], event.values[1], event.values[2])
+                }
+            }
+            Sensor.TYPE_MAGNETIC_FIELD -> {
+                if (event.values.size >= 3) {
+                    val mx = event.values[0]
+                    val my = event.values[1]
+                    val mz = event.values[2]
+                    latestMagneticUt = kotlin.math.sqrt(mx * mx + my * my + mz * mz)
                 }
             }
             Sensor.TYPE_ROTATION_VECTOR -> {
@@ -258,7 +287,31 @@ class SensorManagerRepository @Inject constructor(
 
         if (nowMs - lastUiPublishMs >= UI_PUBLISH_INTERVAL_MS) {
             lastUiPublishMs = nowMs
-            val gpsSpeedKmh = locationTracker.state.value.currentFix?.speedKmh
+            val fix = locationTracker.state.value.currentFix
+            val gpsSpeedKmh = fix?.speedKmh
+            val accelAvailable = readingsByType[Sensor.TYPE_ACCELEROMETER]?.isAvailable == true
+            val gyroAvailable = readingsByType[Sensor.TYPE_GYROSCOPE]?.isAvailable == true
+            val axesSample = mountCalibrator.update(
+                nowMillis = nowMs,
+                accelAvailable = accelAvailable,
+                gyroAvailable = gyroAvailable,
+                rawAx = latestRawAccel[0],
+                rawAy = latestRawAccel[1],
+                rawAz = latestRawAccel[2],
+                linearAx = latestLinearAccel[0],
+                linearAy = latestLinearAccel[1],
+                linearAz = latestLinearAccel[2],
+                pitchDeg = latestOrientationDeg[1],
+                rollDeg = latestOrientationDeg[2],
+                yawDeg = latestOrientationDeg[0],
+                gpsSpeedKmh = gpsSpeedKmh,
+            )
+            val compass = compassEstimator.update(
+                gpsSpeedKmh = gpsSpeedKmh,
+                gpsBearingDeg = fix?.bearingDegrees,
+                sensorAzimuthDeg = latestOrientationDeg[0],
+                magneticFieldUt = latestMagneticUt,
+            )
             val motion = motionAnalyzer.analyze(
                 linearAccelX = latestLinearAccel[0],
                 linearAccelY = latestLinearAccel[1],
@@ -276,6 +329,10 @@ class SensorManagerRepository @Inject constructor(
                 _state.value = _state.value.copy(
                     physicalSensors = readingsByType.values.toList(),
                     motionAnalysis = motion,
+                    mountCalibrationStatus = axesSample.calibrationStatus,
+                    mountCalibratedAtMillis = mountCalibrator.getCalibratedAtMillis(),
+                    vehicleAxesSample = axesSample,
+                    compassReading = compass,
                 )
             }
         }

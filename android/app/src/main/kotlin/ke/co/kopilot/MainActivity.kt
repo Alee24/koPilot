@@ -89,6 +89,14 @@ import ke.co.kopilot.feature.soundstudio.SoundStudioScreen
 import ke.co.kopilot.feature.soundstudio.SoundStudioViewModel
 import ke.co.kopilot.feature.trips.TripsScreen
 import ke.co.kopilot.intelligence.VehicleIntelligenceScreen
+import ke.co.kopilot.safety.DrivingSafetyMonitoringService
+import ke.co.kopilot.safety.EmergencyContactsScreen
+import ke.co.kopilot.safety.EmergencyCountdownScreen
+import ke.co.kopilot.safety.EmergencyNotificationRecord
+import ke.co.kopilot.safety.EmergencySmsManager
+import ke.co.kopilot.safety.LiveMapScreen
+import ke.co.kopilot.safety.SafetyAndEmergencyScreen
+import java.util.UUID
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -146,6 +154,50 @@ class MainActivity : ComponentActivity() {
 
                 val navController = rememberNavController()
                 val dashboardViewModel: DashboardViewModel = hiltViewModel()
+                val dashState by dashboardViewModel.uiState.collectAsStateWithLifecycle()
+
+                LaunchedEffect(dashState.isDrivingSessionActive, settings.accidentMonitoringEnabled) {
+                    if (dashState.isDrivingSessionActive && settings.accidentMonitoringEnabled) {
+                        DrivingSafetyMonitoringService.start(this@MainActivity)
+                    } else {
+                        DrivingSafetyMonitoringService.stop(this@MainActivity)
+                    }
+                }
+
+                LaunchedEffect(dashState.emergencyDispatchTriggerId) {
+                    val triggerId = dashState.emergencyDispatchTriggerId ?: return@LaunchedEffect
+                    val assessment = dashState.pendingAccident
+                    if (assessment != null) {
+                        val contacts = EmergencySmsManager.parseContacts(settings.emergencyContactsJson)
+                        val fix = dashState.locationState.currentFix
+                        val msg = EmergencySmsManager.buildEmergencyMessage(
+                            assessment = assessment,
+                            latitude = fix?.latitude,
+                            longitude = fix?.longitude,
+                        )
+                        val res = EmergencySmsManager.sendEmergencySms(
+                            context = this@MainActivity,
+                            incidentId = triggerId,
+                            contacts = contacts,
+                            message = msg,
+                            autoSmsOptedIn = settings.emergencySmsEnabled,
+                        )
+                        val existingHistory = EmergencySmsManager.parseHistory(settings.emergencyHistoryJson)
+                        val record = EmergencyNotificationRecord(
+                            id = UUID.randomUUID().toString(),
+                            timestampMillis = System.currentTimeMillis(),
+                            eventLabel = assessment.eventClass.label,
+                            confidencePercent = assessment.confidencePercent,
+                            status = res.statusLabel,
+                            recipients = contacts.joinToString(", ") { it.name }.ifBlank { "None" },
+                            detail = assessment.triggeringMeasurements.joinToString(" • "),
+                        )
+                        prefsRepo.setEmergencyHistoryJson(
+                            EmergencySmsManager.encodeHistory(listOf(record) + existingHistory),
+                        )
+                    }
+                    dashboardViewModel.acknowledgeEmergencyDispatch()
+                }
 
                 val requiredPermissions = buildList {
                     add(Manifest.permission.CAMERA)
@@ -390,6 +442,8 @@ class MainActivity : ComponentActivity() {
                                     SettingsScreen(
                                         onBack = { navController.popBackStack() },
                                         onOpenObd = { navigateTopLevel("obd") },
+                                        onOpenSafetySettings = { navController.navigate("safety_settings") },
+                                        onOpenEmergencyContacts = { navController.navigate("emergency_contacts") },
                                         bluetoothPermissionGranted = btGranted,
                                         onExportJson = { json ->
                                             val share = Intent(Intent.ACTION_SEND).apply {
@@ -399,6 +453,29 @@ class MainActivity : ComponentActivity() {
                                             }
                                             startActivity(Intent.createChooser(share, "Export KoPilot Trips"))
                                         },
+                                    )
+                                }
+                                composable("live_map") {
+                                    LiveMapScreen(
+                                        state = dashState,
+                                        onBack = { navController.popBackStack() },
+                                    )
+                                }
+                                composable("safety_settings") {
+                                    SafetyAndEmergencyScreen(
+                                        state = dashState,
+                                        prefsRepo = prefsRepo,
+                                        onRecalibrateMount = { dashboardViewModel.recalibratePhoneMount() },
+                                        onTestEmergencyWorkflow = { dashboardViewModel.triggerTestEmergencyWorkflow() },
+                                        onOpenContacts = { navController.navigate("emergency_contacts") },
+                                        onBack = { navController.popBackStack() },
+                                    )
+                                }
+                                composable("emergency_contacts") {
+                                    EmergencyContactsScreen(
+                                        state = dashState,
+                                        prefsRepo = prefsRepo,
+                                        onBack = { navController.popBackStack() },
                                     )
                                 }
                                 composable("sound_studio") {
@@ -477,6 +554,27 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+                    }
+
+                    dashState.pendingAccident?.let { pending ->
+                        val contacts = remember(settings.emergencyContactsJson) {
+                            EmergencySmsManager.parseContacts(settings.emergencyContactsJson)
+                        }
+                        EmergencyCountdownScreen(
+                            assessment = pending,
+                            remainingSeconds = dashState.accidentCountdownRemainingSec,
+                            totalSeconds = settings.emergencyCountdownSeconds,
+                            latitude = dashState.locationState.currentFix?.latitude,
+                            longitude = dashState.locationState.currentFix?.longitude,
+                            contactsCount = contacts.size,
+                            vibrationEnabled = settings.accidentVibrationEnabled,
+                            onCancelAlert = { dashboardViewModel.cancelEmergencyCountdown() },
+                            onSendAlertNow = { dashboardViewModel.sendEmergencyAlertNow() },
+                            onOpenContacts = {
+                                dashboardViewModel.cancelEmergencyCountdown()
+                                navController.navigate("emergency_contacts")
+                            },
+                        )
                     }
                 }
             }

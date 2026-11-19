@@ -29,11 +29,21 @@ import ke.co.kopilot.feature.location.SpeedAlertEngine
 import ke.co.kopilot.feature.location.SpeedEvaluation
 import ke.co.kopilot.feature.location.SpeedZone
 import ke.co.kopilot.feature.location.SpeedZoneMonitor
+import ke.co.kopilot.feature.sensors.AccidentAssessment
+import ke.co.kopilot.feature.sensors.AccidentDetectionEngine
+import ke.co.kopilot.feature.sensors.AccidentEventClass
+import ke.co.kopilot.feature.sensors.AccidentSensitivityProfile
+import ke.co.kopilot.feature.sensors.CompassReading
 import ke.co.kopilot.feature.sensors.DrivingMotionAnalysis
+import ke.co.kopilot.feature.sensors.EngineStopClassification
+import ke.co.kopilot.feature.sensors.EngineStopEvaluation
+import ke.co.kopilot.feature.sensors.EngineStopMonitor
 import ke.co.kopilot.feature.sensors.LateralMotionState
+import ke.co.kopilot.feature.sensors.MountCalibrationStatus
 import ke.co.kopilot.feature.sensors.RealTimeDrivingIntelligence
 import ke.co.kopilot.feature.sensors.RealTimeDrivingIntelligenceState
 import ke.co.kopilot.feature.sensors.RealTimeIntelligenceInput
+import ke.co.kopilot.feature.sensors.SensorFrame
 import ke.co.kopilot.feature.sensors.SensorManagerRepository
 import ke.co.kopilot.feature.sensors.SensorSamplingProfile
 import ke.co.kopilot.feature.navigation.NavigationRepository
@@ -86,6 +96,17 @@ data class DashboardUiState(
     val speedZone: SpeedZone = SpeedZone.NORMAL,
     val motionAnalysis: DrivingMotionAnalysis = DrivingMotionAnalysis(),
     val intelligenceState: RealTimeDrivingIntelligenceState = RealTimeDrivingIntelligenceState(),
+    val compassReading: CompassReading = CompassReading(),
+    val mountCalibrationStatus: MountCalibrationStatus = MountCalibrationStatus.CALIBRATION_REQUIRED,
+    val engineStopEvaluation: EngineStopEvaluation = EngineStopEvaluation(
+        EngineStopClassification.PARKED,
+        "Standby",
+        0L,
+    ),
+    val pendingAccident: AccidentAssessment? = null,
+    val accidentCountdownRemainingSec: Int = 0,
+    val postImpactMonitoringActive: Boolean = false,
+    val emergencyDispatchTriggerId: String? = null,
 )
 
 @HiltViewModel
@@ -159,6 +180,17 @@ class DashboardViewModel @Inject constructor(
     private var voltMin = Float.MAX_VALUE
     private var voltMax = 0f
     private val explainedSignsInTrip = mutableSetOf<TrafficSignCategory>()
+    private val accidentEngine = AccidentDetectionEngine()
+    private val engineStopMonitor = EngineStopMonitor()
+    private val pendingAccidentState = MutableStateFlow<AccidentAssessment?>(null)
+    private val countdownRemainingState = MutableStateFlow(0)
+    private val postImpactState = MutableStateFlow(false)
+    private val emergencyDispatchTrigger = MutableStateFlow<String?>(null)
+    private val engineStopState = MutableStateFlow(
+        EngineStopEvaluation(EngineStopClassification.PARKED, "Standby", 0L),
+    )
+    private var countdownJob: kotlinx.coroutines.Job? = null
+    private var lastWeatherRefreshMs = 0L
 
     private val coreFlows = combine(
         isDriving,
@@ -217,6 +249,13 @@ class DashboardViewModel @Inject constructor(
             speedZone = currentSpeedZone.value,
             motionAnalysis = sensorManagerRepo.state.value.motionAnalysis,
             intelligenceState = intel,
+            compassReading = sensorManagerRepo.state.value.compassReading,
+            mountCalibrationStatus = sensorManagerRepo.state.value.mountCalibrationStatus,
+            engineStopEvaluation = engineStopState.value,
+            pendingAccident = pendingAccidentState.value,
+            accidentCountdownRemainingSec = countdownRemainingState.value,
+            postImpactMonitoringActive = postImpactState.value,
+            emergencyDispatchTriggerId = emergencyDispatchTrigger.value,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -337,6 +376,71 @@ class DashboardViewModel @Inject constructor(
                 if (fix != null && !gpsBeepPlayed) {
                     gpsBeepPlayed = true
                     (speechSink as? AndroidTtsSpeechSink)?.playConnectionBeep()
+                }
+                if (fix != null && (now - lastWeatherRefreshMs) >= 600_000L) {
+                    lastWeatherRefreshMs = now
+                    viewModelScope.launch {
+                        weatherRepo.refreshWeather(fix.latitude, fix.longitude)
+                    }
+                }
+
+                // Multi-sensor accident & unexpected engine stop monitoring during active trip
+                val sSafety = uiState.value.settings
+                if (isDriving.value && sSafety.accidentMonitoringEnabled) {
+                    val sensitivity = runCatching {
+                        AccidentSensitivityProfile.valueOf(sSafety.accidentSensitivity)
+                    }.getOrDefault(AccidentSensitivityProfile.STANDARD)
+                    val axes = hub.vehicleAxesSample
+                    val linearMag = kotlin.math.sqrt(
+                        axes.forwardMps2 * axes.forwardMps2 +
+                            axes.lateralMps2 * axes.lateralMps2 +
+                            axes.verticalMps2 * axes.verticalMps2,
+                    )
+                    val accelAvail = hub.physicalSensors.any { it.typeName == "Accelerometer" && it.isAvailable }
+                    val gyroAvail = hub.physicalSensors.any { it.typeName == "Gyroscope" && it.isAvailable }
+                    val safetyOut = accidentEngine.processFrame(
+                        frame = SensorFrame(
+                            timestampMillis = now,
+                            forwardAccelMps2 = axes.forwardMps2,
+                            lateralAccelMps2 = axes.lateralMps2,
+                            verticalAccelMps2 = axes.verticalMps2,
+                            linearMagMps2 = linearMag,
+                            angularVelDegPerSec = kotlin.math.abs(Math.toDegrees(hub.motionAnalysis.yawRateRadPerSec.toDouble()).toFloat()),
+                            pitchDeltaDeg = axes.pitchDeltaDeg,
+                            rollDeltaDeg = axes.rollDeltaDeg,
+                            speedKmh = effectiveSpeedKmh,
+                            gpsAccuracyMeters = fix?.horizontalAccuracyMeters,
+                            obdRpm = tel.engineRpm,
+                        ),
+                        mountStatus = hub.mountCalibrationStatus,
+                        accelAvailable = accelAvail,
+                        gyroAvailable = gyroAvail,
+                        obdConnected = obdConnected,
+                        sensitivity = sensitivity,
+                        impactEnabled = sSafety.impactDetectionEnabled,
+                        rolloverEnabled = sSafety.rolloverDetectionEnabled,
+                        swerveEnabled = sSafety.swerveDetectionEnabled,
+                    )
+                    postImpactState.value = safetyOut.postImpactMonitoringActive
+                    if (sSafety.engineStopDetectionEnabled) {
+                        engineStopState.value = engineStopMonitor.evaluate(
+                            nowMillis = now,
+                            obdConnected = obdConnected,
+                            rpm = tel.engineRpm,
+                            speedKmh = effectiveSpeedKmh,
+                            recentPeakImpactMps2 = safetyOut.assessment.impactIntensityMps2,
+                            impactThresholdMps2 = sensitivity.impactThresholdMps2,
+                            mountStatus = hub.mountCalibrationStatus,
+                        )
+                    }
+                    if (safetyOut.assessment.eventClass.triggersCountdown && pendingAccidentState.value == null) {
+                        tripActivityLogger.logActivity(
+                            type = "ACCIDENT_DETECTED",
+                            details = "${safetyOut.assessment.eventClass.label} (${safetyOut.assessment.confidencePercent}%): ${safetyOut.assessment.triggeringMeasurements.joinToString("; ")}",
+                            timestampMillis = now,
+                        )
+                        startEmergencyCountdown(safetyOut.assessment)
+                    }
                 }
 
                 // Auto Mode: automatically start trip when sustained vehicle motion is detected
@@ -968,6 +1072,81 @@ class DashboardViewModel @Inject constructor(
 
     fun acceptSafetyDisclosure() = viewModelScope.launch {
         prefsRepo.setSafetyDisclosureAccepted(true)
+    }
+
+    fun recalibratePhoneMount() {
+        sensorManagerRepo.recalibrateMount()
+    }
+
+    fun startEmergencyCountdown(assessment: AccidentAssessment) {
+        if (pendingAccidentState.value != null) return
+        val totalSec = uiState.value.settings.emergencyCountdownSeconds.coerceIn(5, 30)
+        pendingAccidentState.value = assessment
+        countdownRemainingState.value = totalSec
+        countdownJob?.cancel()
+        countdownJob = viewModelScope.launch {
+            var remaining = totalSec
+            while (remaining > 0 && pendingAccidentState.value != null) {
+                countdownRemainingState.value = remaining
+                if (uiState.value.settings.accidentVoiceWarningsEnabled) {
+                    (speechSink as? AndroidTtsSpeechSink)?.playConnectionBeep()
+                }
+                kotlinx.coroutines.delay(1_000L)
+                remaining--
+            }
+            if (pendingAccidentState.value != null) {
+                countdownRemainingState.value = 0
+                emergencyDispatchTrigger.value = UUID.randomUUID().toString()
+            }
+        }
+    }
+
+    fun cancelEmergencyCountdown() {
+        countdownJob?.cancel()
+        countdownJob = null
+        val cancelled = pendingAccidentState.value
+        pendingAccidentState.value = null
+        countdownRemainingState.value = 0
+        if (cancelled != null && isDriving.value) {
+            tripActivityLogger.logActivity(
+                type = "ACCIDENT_CANCELLED",
+                details = "Driver cancelled ${cancelled.eventClass.label} (${cancelled.confidencePercent}%)",
+                timestampMillis = System.currentTimeMillis(),
+            )
+        }
+    }
+
+    fun sendEmergencyAlertNow() {
+        countdownJob?.cancel()
+        countdownJob = null
+        countdownRemainingState.value = 0
+        if (pendingAccidentState.value != null) {
+            emergencyDispatchTrigger.value = UUID.randomUUID().toString()
+        }
+    }
+
+    fun acknowledgeEmergencyDispatch() {
+        pendingAccidentState.value = null
+        countdownRemainingState.value = 0
+        emergencyDispatchTrigger.value = null
+    }
+
+    fun triggerTestEmergencyWorkflow() {
+        val fix = locationTracker.state.value.currentFix
+        val testAssessment = AccidentAssessment(
+            eventClass = AccidentEventClass.SUSPECTED_COLLISION,
+            confidencePercent = 82,
+            timestampMillis = System.currentTimeMillis(),
+            preEventSpeedKmh = fix?.speedKmh ?: 45f,
+            postEventSpeedKmh = 0f,
+            impactIntensityMps2 = 23.4f,
+            orientationChangeDeg = 18f,
+            gpsAccuracyMeters = fix?.horizontalAccuracyMeters,
+            sensorReliability = "Test Simulation",
+            triggeringMeasurements = listOf("Simulated test workflow (no real collision)"),
+            missingEvidence = emptyList(),
+        )
+        startEmergencyCountdown(testAssessment)
     }
 
     fun startDriving() {

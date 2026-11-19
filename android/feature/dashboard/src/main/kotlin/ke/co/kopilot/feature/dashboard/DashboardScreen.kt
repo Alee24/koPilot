@@ -2196,7 +2196,100 @@ private fun FullBleedArHudLanding(
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
+
+            // Compact Compass + Weather HUD Pills (without altering Camera HUD layout)
+            var showLargeCompass by remember { mutableStateOf(false) }
+            if (showLargeCompass) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { showLargeCompass = false },
+                    title = { Text("Compass Heading") },
+                    text = {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = state.compassReading.formatted,
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Black,
+                                color = KoPilotClusterTokens.PrimaryAccent,
+                            )
+                            Text(
+                                text = "Source: ${state.compassReading.source}" +
+                                    if (state.compassReading.interferenceSuspected) " • Magnetic interference suspected" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = KoPilotClusterTokens.SecondaryText,
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = { showLargeCompass = false }) {
+                            Text("Close")
+                        }
+                    },
+                )
+            }
+
+            if (state.settings.weatherHudEnabled || state.settings.compassHudEnabled) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (state.settings.weatherHudEnabled) {
+                        val w = state.weatherState
+                        val weatherText = when {
+                            w.available && w.temperatureC != null -> {
+                                val temp = "${w.temperatureC!!.toInt()}°C"
+                                val ageSuffix = if (w.isStaleOfflineCache && w.fetchedAtMillis != null) {
+                                    val mins = ((System.currentTimeMillis() - w.fetchedAtMillis!!) / 60_000L).coerceAtLeast(1L)
+                                    " (${mins}m ago)"
+                                } else ""
+                                "${w.conditionSummary} · $temp$ageSuffix"
+                            }
+                            else -> "Weather unavailable"
+                        }
+                        Surface(
+                            color = hudGlassBg,
+                            shape = CircleShape,
+                            border = BorderStroke(1.dp, hudGlassBorder),
+                        ) {
+                            Text(
+                                text = weatherText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (w.available && !w.isStaleOfflineCache) KoPilotClusterTokens.PrimaryText else KoPilotClusterTokens.SecondaryText,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            )
+                        }
+                    } else {
+                        Spacer(Modifier.width(1.dp))
+                    }
+
+                    if (state.settings.compassHudEnabled) {
+                        Surface(
+                            onClick = { showLargeCompass = true },
+                            color = hudGlassBg,
+                            shape = CircleShape,
+                            border = BorderStroke(1.dp, hudGlassBorder),
+                        ) {
+                            Text(
+                                text = state.compassReading.formatted,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = KoPilotClusterTokens.PrimaryAccent,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+            }
 
             // Speed Limit Sign + Road Surface Glass Row
             Row(

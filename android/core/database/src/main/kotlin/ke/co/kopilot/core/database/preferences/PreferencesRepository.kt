@@ -74,6 +74,21 @@ data class KoPilotSettings(
     // Saved OBD-II Adapter for Auto-Reconnect
     val lastObdDeviceAddress: String = "",
     val lastObdDeviceName: String = "",
+    // Accident & Emergency Safety Settings
+    val accidentMonitoringEnabled: Boolean = true,
+    val emergencySmsEnabled: Boolean = false,
+    val emergencyCountdownSeconds: Int = 10,
+    val accidentSensitivity: String = "STANDARD",
+    val rolloverDetectionEnabled: Boolean = true,
+    val impactDetectionEnabled: Boolean = true,
+    val swerveDetectionEnabled: Boolean = true,
+    val engineStopDetectionEnabled: Boolean = true,
+    val accidentVoiceWarningsEnabled: Boolean = true,
+    val accidentVibrationEnabled: Boolean = true,
+    val compassHudEnabled: Boolean = true,
+    val weatherHudEnabled: Boolean = true,
+    val emergencyContactsJson: String = "[]",
+    val emergencyHistoryJson: String = "[]",
 ) {
     fun watchedPlatesList(): List<String> =
         watchedPlatesCsv.split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }
@@ -135,6 +150,20 @@ class PreferencesRepository @Inject constructor(
             telemetryOptIn = prefs[KEY_TELEMETRY_OPT_IN] ?: false,
             lastObdDeviceAddress = prefs[KEY_LAST_OBD_ADDRESS] ?: "",
             lastObdDeviceName = prefs[KEY_LAST_OBD_NAME] ?: "",
+            accidentMonitoringEnabled = prefs[KEY_ACCIDENT_MONITORING] ?: true,
+            emergencySmsEnabled = prefs[KEY_EMERGENCY_SMS] ?: false,
+            emergencyCountdownSeconds = prefs[KEY_EMERGENCY_COUNTDOWN_SEC] ?: 10,
+            accidentSensitivity = prefs[KEY_ACCIDENT_SENSITIVITY] ?: "STANDARD",
+            rolloverDetectionEnabled = prefs[KEY_ROLLOVER_DETECTION] ?: true,
+            impactDetectionEnabled = prefs[KEY_IMPACT_DETECTION] ?: true,
+            swerveDetectionEnabled = prefs[KEY_SWERVE_DETECTION] ?: true,
+            engineStopDetectionEnabled = prefs[KEY_ENGINE_STOP_DETECTION] ?: true,
+            accidentVoiceWarningsEnabled = prefs[KEY_ACCIDENT_VOICE] ?: true,
+            accidentVibrationEnabled = prefs[KEY_ACCIDENT_VIBRATION] ?: true,
+            compassHudEnabled = prefs[KEY_COMPASS_HUD] ?: true,
+            weatherHudEnabled = prefs[KEY_WEATHER_HUD] ?: true,
+            emergencyContactsJson = prefs[KEY_EMERGENCY_CONTACTS] ?: "[]",
+            emergencyHistoryJson = prefs[KEY_EMERGENCY_HISTORY] ?: "[]",
         )
     }
 
@@ -204,6 +233,20 @@ class PreferencesRepository @Inject constructor(
         it[KEY_LAST_OBD_ADDRESS] = address.trim()
         it[KEY_LAST_OBD_NAME] = name.trim()
     }
+    suspend fun setAccidentMonitoringEnabled(enabled: Boolean) = edit { it[KEY_ACCIDENT_MONITORING] = enabled }
+    suspend fun setEmergencySmsEnabled(enabled: Boolean) = edit { it[KEY_EMERGENCY_SMS] = enabled }
+    suspend fun setEmergencyCountdownSeconds(seconds: Int) = edit { it[KEY_EMERGENCY_COUNTDOWN_SEC] = seconds.coerceIn(5, 30) }
+    suspend fun setAccidentSensitivity(level: String) = edit { it[KEY_ACCIDENT_SENSITIVITY] = level }
+    suspend fun setRolloverDetectionEnabled(enabled: Boolean) = edit { it[KEY_ROLLOVER_DETECTION] = enabled }
+    suspend fun setImpactDetectionEnabled(enabled: Boolean) = edit { it[KEY_IMPACT_DETECTION] = enabled }
+    suspend fun setSwerveDetectionEnabled(enabled: Boolean) = edit { it[KEY_SWERVE_DETECTION] = enabled }
+    suspend fun setEngineStopDetectionEnabled(enabled: Boolean) = edit { it[KEY_ENGINE_STOP_DETECTION] = enabled }
+    suspend fun setAccidentVoiceWarningsEnabled(enabled: Boolean) = edit { it[KEY_ACCIDENT_VOICE] = enabled }
+    suspend fun setAccidentVibrationEnabled(enabled: Boolean) = edit { it[KEY_ACCIDENT_VIBRATION] = enabled }
+    suspend fun setCompassHudEnabled(enabled: Boolean) = edit { it[KEY_COMPASS_HUD] = enabled }
+    suspend fun setWeatherHudEnabled(enabled: Boolean) = edit { it[KEY_WEATHER_HUD] = enabled }
+    suspend fun setEmergencyContactsJson(json: String) = edit { it[KEY_EMERGENCY_CONTACTS] = json }
+    suspend fun setEmergencyHistoryJson(json: String) = edit { it[KEY_EMERGENCY_HISTORY] = json }
 
     suspend fun clearAll() {
         context.dataStore.edit { it.clear() }
@@ -256,5 +299,19 @@ class PreferencesRepository @Inject constructor(
         val KEY_TELEMETRY_OPT_IN = booleanPreferencesKey("telemetry_opt_in")
         val KEY_LAST_OBD_ADDRESS = stringPreferencesKey("last_obd_address")
         val KEY_LAST_OBD_NAME = stringPreferencesKey("last_obd_name")
+        val KEY_ACCIDENT_MONITORING = booleanPreferencesKey("accident_monitoring")
+        val KEY_EMERGENCY_SMS = booleanPreferencesKey("emergency_sms")
+        val KEY_EMERGENCY_COUNTDOWN_SEC = intPreferencesKey("emergency_countdown_sec")
+        val KEY_ACCIDENT_SENSITIVITY = stringPreferencesKey("accident_sensitivity")
+        val KEY_ROLLOVER_DETECTION = booleanPreferencesKey("rollover_detection")
+        val KEY_IMPACT_DETECTION = booleanPreferencesKey("impact_detection")
+        val KEY_SWERVE_DETECTION = booleanPreferencesKey("swerve_detection")
+        val KEY_ENGINE_STOP_DETECTION = booleanPreferencesKey("engine_stop_detection")
+        val KEY_ACCIDENT_VOICE = booleanPreferencesKey("accident_voice")
+        val KEY_ACCIDENT_VIBRATION = booleanPreferencesKey("accident_vibration")
+        val KEY_COMPASS_HUD = booleanPreferencesKey("compass_hud")
+        val KEY_WEATHER_HUD = booleanPreferencesKey("weather_hud")
+        val KEY_EMERGENCY_CONTACTS = stringPreferencesKey("emergency_contacts_json")
+        val KEY_EMERGENCY_HISTORY = stringPreferencesKey("emergency_history_json")
     }
 }

@@ -31,4 +31,8 @@ class SensorsViewModel @Inject constructor(
     fun refreshCapabilities() {
         sensorRepo.discoverAllCapabilities()
     }
+
+    fun recalibrateMount() {
+        sensorRepo.recalibrateMount()
+    }
 }
