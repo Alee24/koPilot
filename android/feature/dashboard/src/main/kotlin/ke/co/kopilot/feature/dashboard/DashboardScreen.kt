@@ -10,9 +10,12 @@ import androidx.compose.animation.animateColorAsState
 import ke.co.kopilot.core.database.preferences.VoiceMode
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -356,6 +359,20 @@ fun DashboardScreen(
                     onToggleFullscreen = { isCameraFullscreen = false },
                 )
             }
+        } else if (state.isDrivingSessionActive) {
+            FullBleedArHudLanding(
+                state = state,
+                viewModel = viewModel,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                onOpenMenu = { showToolsDialog = true },
+                onOpenObdLive = { showObdLiveDialog = true },
+                onOpenRoadQuality = onOpenRoadQuality,
+                onOpenDrivingIntelligence = onOpenDrivingIntelligence,
+                onOpenNavigation = onOpenNavigation,
+                onToggleFullscreenCamera = { isCameraFullscreen = true },
+            )
         } else {
             KoPilotCockpitLanding(
                 state = state,
@@ -1609,19 +1626,80 @@ private fun KoPilotCockpitLanding(
             }
         }
 
-        // 3. Camera Preview Card
-        Box(
+        // 3. Road Preview Card (replaces live camera on standby landing page; tapping Start Driving launches Full-Bleed AR HUD)
+        Surface(
+            onClick = { viewModel.startDriving() },
+            shape = RoundedCornerShape(16.dp),
+            color = KoPilotClusterTokens.CardSurface,
+            border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
                 .heightIn(min = 160.dp, max = 210.dp),
         ) {
-            ViewportCard(
-                state = state,
-                viewModel = viewModel,
-                isFullscreen = false,
-                onToggleFullscreen = onToggleFullscreenCamera,
-            )
+            Box(modifier = Modifier.fillMaxSize()) {
+                Image(
+                    painter = painterResource(id = R.drawable.kopilot_landing_road),
+                    contentDescription = "KoPilot Road Preview",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0.0f to Color(0x66071019),
+                                0.5f to Color(0x22071019),
+                                1.0f to Color(0xB3071019),
+                            ),
+                        ),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(
+                        color = Color(0xBF071019),
+                        shape = CircleShape,
+                        border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .background(KoPilotClusterTokens.PrimaryAccent, CircleShape),
+                            )
+                            Text(
+                                text = "Front Camera • Auto Ready",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = KoPilotClusterTokens.PrimaryText,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    Surface(
+                        color = KoPilotClusterTokens.PrimaryAccent,
+                        shape = CircleShape,
+                    ) {
+                        Text(
+                            text = "Tap Start",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = KoPilotClusterTokens.Background,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        )
+                    }
+                }
+            }
         }
 
         // 4. Speedometer + Vehicle Health / Fuel Row
