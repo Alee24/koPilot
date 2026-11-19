@@ -141,6 +141,9 @@ class DashboardViewModel @Inject constructor(
     private var lastEcuAlertMs = 0L
     private var lastIntelVoiceAlertMs = 0L
     private var lastIntelVoiceType: String? = null
+    private var motionDetectedSinceMs = 0L
+    private var lastVehicleMovingMs = 0L
+    private var autoModeArmed = true
     private val explainedSignsInTrip = mutableSetOf<TrafficSignCategory>()
 
     private val coreFlows = combine(
@@ -218,6 +221,38 @@ class DashboardViewModel @Inject constructor(
                 val obdConnected = obdManager.state.value.obdConnected
                 val tel = obdManager.liveTelemetry.value
                 val signLimit = visionPipeline.state.value.lastObservation?.category?.speedLimitKmh
+                val effectiveSpeedKmh = fix?.speedKmh ?: tel.vehicleSpeedKmh?.toFloat() ?: 0f
+                val isSensorMotion = !hub.motionAnalysis.phoneMovementDetected &&
+                    kotlin.math.abs(hub.motionAnalysis.longitudinalAccelMps2) >= 1.2f
+
+                // Auto Mode: automatically start trip when sustained vehicle motion is detected
+                if (autoModeArmed && !isDriving.value) {
+                    if (effectiveSpeedKmh >= 10.0f || (isSensorMotion && effectiveSpeedKmh >= 4.0f)) {
+                        if (motionDetectedSinceMs == 0L) motionDetectedSinceMs = now
+                        if ((now - motionDetectedSinceMs) >= 2_000L) {
+                            motionDetectedSinceMs = 0L
+                            lastVehicleMovingMs = now
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                startDriving()
+                            }
+                        }
+                    } else {
+                        motionDetectedSinceMs = 0L
+                    }
+                }
+
+                // Auto-stop trip and sensors when car stays stopped for 90s
+                if (isDriving.value) {
+                    if (effectiveSpeedKmh >= 3.0f || isSensorMotion) {
+                        lastVehicleMovingMs = now
+                    } else if (lastVehicleMovingMs > 0L && (now - lastVehicleMovingMs) >= 90_000L) {
+                        lastVehicleMovingMs = 0L
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            endTrip()
+                        }
+                    }
+                }
+
                 val evt = realTimeIntelligence.update(
                     RealTimeIntelligenceInput(
                         nowMillis = now,
@@ -744,7 +779,13 @@ class DashboardViewModel @Inject constructor(
         cameraController.setPermissionGranted(cameraGranted)
         locationTracker.setPermissionGranted(locationGranted)
         voiceClient.setMicPermissionGranted(micGranted)
-        // Sensors remain idle until the user explicitly taps Start Driving.
+        // App starts in Auto Mode: keep lightweight motion & GPS watch active to auto-start trips on motion
+        if (autoModeArmed && !isDriving.value) {
+            if (locationGranted) {
+                locationTracker.startTracking(highAccuracy = false)
+            }
+            sensorManagerRepo.startMonitoring(SensorSamplingProfile.IDLE)
+        }
     }
 
     fun acceptSafetyDisclosure() = viewModelScope.launch {
@@ -779,6 +820,8 @@ class DashboardViewModel @Inject constructor(
         clearRoadSinceMs = 0L
         lastIntelVoiceAlertMs = 0L
         lastIntelVoiceType = null
+        lastVehicleMovingMs = started
+        motionDetectedSinceMs = 0L
         explainedSignsInTrip.clear()
         realTimeIntelligence.resetForNewJourney(started)
 
@@ -858,6 +901,13 @@ class DashboardViewModel @Inject constructor(
         tripStartedAt.value = null
         locationTracker.stopTracking()
         sensorManagerRepo.stopMonitoring()
+        if (autoModeArmed && uiState.value.settings.sensorMotionEnabled) {
+            // Re-arm lightweight IDLE watch so the next drive auto-starts on motion
+            sensorManagerRepo.startMonitoring(SensorSamplingProfile.IDLE)
+            if (uiState.value.settings.sensorGpsEnabled) {
+                locationTracker.startTracking(highAccuracy = false)
+            }
+        }
         voiceClient.disconnect()
         speedAlertEngine.reset()
         speedZoneMonitor.reset()

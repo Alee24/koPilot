@@ -603,16 +603,16 @@ private fun ViewportCard(
                             val alertRed = Color(0xFFFF5252)
                             val isShifting = lane.shiftEvent != LaneShiftEvent.NONE
 
-                            // Color the segmented drivable road polygon
+                            // Color the segmented drivable road polygon (clamped to lower half of screen)
                             if (lane.roadLeftPoints.size >= 2 && lane.roadRightPoints.size >= 2) {
                                 val roadPath = Path().apply {
                                     val firstL = lane.roadLeftPoints.first()
-                                    moveTo(firstL.first * size.width, firstL.second * size.height)
+                                    moveTo(firstL.first * size.width, firstL.second.coerceAtLeast(0.50f) * size.height)
                                     for (pt in lane.roadLeftPoints.drop(1)) {
-                                        lineTo(pt.first * size.width, pt.second * size.height)
+                                        lineTo(pt.first * size.width, pt.second.coerceAtLeast(0.50f) * size.height)
                                     }
                                     for (pt in lane.roadRightPoints.reversed()) {
-                                        lineTo(pt.first * size.width, pt.second * size.height)
+                                        lineTo(pt.first * size.width, pt.second.coerceAtLeast(0.50f) * size.height)
                                     }
                                     close()
                                 }
@@ -622,9 +622,9 @@ private fun ViewportCard(
                                 )
                             }
 
-                            val lTop = Offset(lane.leftTopX * size.width, lane.leftTopY * size.height)
+                            val lTop = Offset(lane.leftTopX * size.width, lane.leftTopY.coerceAtLeast(0.50f) * size.height)
                             val lBot = Offset(lane.leftBottomX * size.width, lane.leftBottomY * size.height)
-                            val rTop = Offset(lane.rightTopX * size.width, lane.rightTopY * size.height)
+                            val rTop = Offset(lane.rightTopX * size.width, lane.rightTopY.coerceAtLeast(0.50f) * size.height)
                             val rBot = Offset(lane.rightBottomX * size.width, lane.rightBottomY * size.height)
                             val leftColor = if (lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_LEFT || lane.shiftEvent == LaneShiftEvent.SHIFTING_LEFT) alertRed else yellowLane
                             val rightColor = if (lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_RIGHT || lane.shiftEvent == LaneShiftEvent.SHIFTING_RIGHT) alertRed else yellowLane
@@ -2044,7 +2044,7 @@ private fun FullBleedArHudLanding(
                     1.0f to Color(0xEB071019),
                 ),
             )
-            val horizonY = (size.height * 0.40f + horizonShiftDp.dp.toPx()).coerceIn(size.height * 0.25f, size.height * 0.55f)
+            val horizonY = (size.height * 0.52f + horizonShiftDp.dp.toPx()).coerceIn(size.height * 0.50f, size.height * 0.65f)
             val bottomY = size.height * 0.84f
             val cx = size.width * 0.5f
             val targetX = cx + curveOffsetDp.dp.toPx()
