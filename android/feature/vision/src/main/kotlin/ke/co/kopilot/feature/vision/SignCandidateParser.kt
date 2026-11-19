@@ -12,21 +12,33 @@ object SignCandidateParser {
         hasSignBorderColor: Boolean,
         normalizedCenterX: Float,
         hasWhiteInterior: Boolean = true,
+        isOnVehicleBody: Boolean = false,
     ): RawSignDetection? {
         val rawUpper = rawText.uppercase().replace(Regex("\\s+"), " ").trim()
         if (rawUpper.isEmpty()) return null
 
-        // Filter out roadside billboards / commercial advertisements
+        // Filter out roadside billboards, commercial advertisements, phone numbers, and distances
         val wordCount = rawUpper.split(" ").count { it.isNotBlank() }
         if (wordCount > 5 || rawUpper.length > 36 || BILLBOARD_KEYWORDS.any { rawUpper.contains(it) }) {
             return null
         }
 
-        // Never treat Kenyan vehicle registration plates (e.g. "KDM", "KDM 632A", "KCA456B", "GK A123") as road signs
-        val compact = rawUpper.replace(" ", "")
+        // Never treat vehicle registration plates (Kenyan or international formats) as road signs
+        val compact = rawUpper.replace(" ", "").replace("-", "")
         if (Regex("^K[A-Z]{2}(\\d{3}[A-Z]?)?$").matches(compact) ||
             Regex("^(GK|CD|UN)[A-Z]?\\d{2,4}[A-Z]?$").matches(compact) ||
-            FrontRoadAnalyzer.extractKenyanPlate(rawUpper) != null
+            Regex("^[A-Z]{2,3}\\d{2,4}[A-Z]{0,2}$").matches(compact) ||
+            Regex("^\\d{2,4}[A-Z]{2,3}$").matches(compact) ||
+            FrontRoadAnalyzer.extractKenyanPlate(rawUpper) != null ||
+            PlateRecognitionPipeline.extractRegistrationPlate(rawUpper) != null
+        ) {
+            return null
+        }
+
+        // Reject distance markers (e.g. "50M", "100M", "200 M"), highway route numbers ("A104", "B50"), and percentages ("10%")
+        if (Regex("\\b\\d{1,3}\\s?(M|METRES|METERS)\\b").containsMatchIn(rawUpper) ||
+            Regex("\\b\\d{1,3}\\s?%").containsMatchIn(rawUpper) ||
+            Regex("\\b[ABCDE]\\s?\\d{1,3}\\b").containsMatchIn(rawUpper)
         ) {
             return null
         }
@@ -36,6 +48,7 @@ object SignCandidateParser {
             .replace(Regex("\\b([1-9])O\\b"), "$10")
             .replace(Regex("\\b1OO\\b"), "100")
             .replace(Regex("\\b11O\\b"), "110")
+            .replace(Regex("\\b12O\\b"), "120")
             .replace(Regex("\\bB0\\b"), "80")
 
         val explicitSpeedText = rawUpper.contains("KM") ||
@@ -54,17 +67,26 @@ object SignCandidateParser {
             Regex("(?<!\\d)60(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_60
             Regex("(?<!\\d)70(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_70
             Regex("(?<!\\d)80(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_80
+            Regex("(?<!\\d)90(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_90
             Regex("(?<!\\d)100(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_100
             Regex("(?<!\\d)110(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_110
+            Regex("(?<!\\d)120(?!\\d)").containsMatchIn(speedNormalized) -> TrafficSignCategory.SPEED_LIMIT_120
             else -> null
         }
 
         if (speedCategory != null) {
+            // Reject speed stickers painted on the rear of buses, matatus, and commercial trucks
+            if (isOnVehicleBody) return null
+
+            // Dedicated speed-limit sign verification:
+            // Must have either a verified sign border color (red circle/ring) or explicit speed-limit text ("50 KM/H") on a white sign face.
+            // Bare numbers on a plain white surface without a red sign border are marked uncertain (< 0.60f) so white trucks/walls never trigger false speed limits.
             val confidence = when {
                 hasSignBorderColor && hasWhiteInterior -> 0.92f
-                hasSignBorderColor || explicitSpeedText -> 0.86f
-                hasWhiteInterior -> 0.72f
-                else -> 0.54f // < 60% unsure: still reports the sign, triggers auto-zoom & "unsure" advisory
+                hasSignBorderColor && explicitSpeedText -> 0.88f
+                explicitSpeedText && hasWhiteInterior -> 0.84f
+                hasSignBorderColor -> 0.78f
+                else -> 0.54f // < 60% uncertain: requires border color or explicit speed text to confirm
             }
             return RawSignDetection(
                 category = speedCategory,
@@ -72,6 +94,8 @@ object SignCandidateParser {
                 normalizedCenterX = normalizedCenterX.coerceIn(0f, 1f),
             )
         }
+
+        if (isOnVehicleBody) return null
 
         val categoryAndConfidence: Pair<TrafficSignCategory, Float>? = when {
             rawUpper == "STOP" || (Regex("\\bSTOP\\b").containsMatchIn(rawUpper) && !hasWhiteInterior) ->
@@ -85,7 +109,7 @@ object SignCandidateParser {
             rawUpper.contains("BUMP") || rawUpper.contains("HUMP") || rawUpper.contains("RUMBLE") ->
                 TrafficSignCategory.SPEED_BUMP to 0.84f
             rawUpper.contains("ROADWORK") || rawUpper.contains("MEN AT WORK") || rawUpper.contains("CONSTRUCTION") ->
-                TrafficSignCategory.ROADWORKS to 0.84f
+                TrafficSignCategory.ROADWORKS to if (hasSignBorderColor) 0.86f else 0.76f
             rawUpper.contains("PEDESTRIAN") || rawUpper.contains("CROSSING") || rawUpper.contains("ZEBRA") ->
                 TrafficSignCategory.PEDESTRIAN_CROSSING to 0.82f
             rawUpper.contains("NO OVERTAKING") || rawUpper.contains("NO PASSING") ->
@@ -122,7 +146,7 @@ object SignCandidateParser {
                 TrafficSignCategory.TRAFFIC_SIGNALS_AHEAD to 0.82f
             rawUpper.contains("END OF") && rawUpper.contains("LIMIT") ->
                 TrafficSignCategory.END_SPEED_LIMIT to 0.80f
-            hasSignBorderColor && rawUpper.length in 3..24 ->
+            hasSignBorderColor && rawUpper.length in 4..22 ->
                 TrafficSignCategory.GENERAL_WARNING to 0.55f
             else -> null
         }
@@ -134,6 +158,60 @@ object SignCandidateParser {
                 normalizedCenterX = normalizedCenterX.coerceIn(0f, 1f),
                 customLabel = if (cat == TrafficSignCategory.GENERAL_WARNING) rawUpper else null,
             )
+        }
+    }
+
+    /**
+     * Checks whether an extracted ROI crop actually has a red, yellow, or blue outer sign border ring
+     * surrounding its center (preventing large non-sign crops from bypassing border verification).
+     */
+    fun hasRoiPerimeterSignColor(roiBitmap: Bitmap): Boolean {
+        val w = roiBitmap.width
+        val h = roiBitmap.height
+        if (w < 12 || h < 12) return false
+        var borderColorHits = 0
+        var sampled = 0
+        val steps = 12
+        for (i in 0 until steps) {
+            val x = ((i + 0.5f) * w / steps).toInt().coerceIn(0, w - 1)
+            val y = ((i + 0.5f) * h / steps).toInt().coerceIn(0, h - 1)
+            val topY = (h * 0.14f).toInt().coerceIn(0, h - 1)
+            val botY = (h * 0.86f).toInt().coerceIn(0, h - 1)
+            val leftX = (w * 0.14f).toInt().coerceIn(0, w - 1)
+            val rightX = (w * 0.86f).toInt().coerceIn(0, w - 1)
+
+            if (SignRoiExtractor.classifySignPixel(roiBitmap.getPixel(x, topY)) != null) borderColorHits++
+            if (SignRoiExtractor.classifySignPixel(roiBitmap.getPixel(x, botY)) != null) borderColorHits++
+            if (SignRoiExtractor.classifySignPixel(roiBitmap.getPixel(leftX, y)) != null) borderColorHits++
+            if (SignRoiExtractor.classifySignPixel(roiBitmap.getPixel(rightX, y)) != null) borderColorHits++
+            sampled += 4
+        }
+        return sampled > 0 && (borderColorHits.toFloat() / sampled) >= 0.12f
+    }
+
+    /**
+     * Checks whether a text bounding box overlaps a detected vehicle body (bus, truck, car)
+     * so rear speed-limit stickers ("80 KPH") or commercial vehicle markings are rejected.
+     */
+    fun isBoxInsideDetectedVehicle(
+        normLeft: Float,
+        normTop: Float,
+        normRight: Float,
+        normBottom: Float,
+        trackedVehicles: List<TrackedRoadObject>,
+    ): Boolean {
+        val cx = (normLeft + normRight) * 0.5f
+        val cy = (normTop + normBottom) * 0.5f
+        return trackedVehicles.any { v ->
+            val isVehicle = v.label.contains("Car", ignoreCase = true) ||
+                v.label.contains("Bus", ignoreCase = true) ||
+                v.label.contains("Lorry", ignoreCase = true) ||
+                v.label.contains("Truck", ignoreCase = true) ||
+                v.label.contains("Vehicle", ignoreCase = true) ||
+                v.label.contains("Tractor", ignoreCase = true)
+            isVehicle &&
+                cx in (v.normalizedLeft + 0.02f)..(v.normalizedRight - 0.02f) &&
+                cy in (v.normalizedTop + 0.02f)..(v.normalizedBottom - 0.02f)
         }
     }
 

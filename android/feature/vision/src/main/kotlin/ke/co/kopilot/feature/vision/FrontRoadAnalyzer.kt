@@ -2,13 +2,31 @@ package ke.co.kopilot.feature.vision
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import kotlin.math.abs
 
 enum class TrafficLightSignal {
     NONE,
     RED,
     AMBER,
     GREEN,
+    UNCERTAIN,
 }
+
+enum class TrafficLightOrientation {
+    NONE,
+    VERTICAL,
+    HORIZONTAL,
+}
+
+data class TrafficLightObservation(
+    val signal: TrafficLightSignal = TrafficLightSignal.NONE,
+    val orientation: TrafficLightOrientation = TrafficLightOrientation.NONE,
+    val confidence: Float = 0f,
+    val normLeft: Float = 0f,
+    val normTop: Float = 0f,
+    val normRight: Float = 0f,
+    val normBottom: Float = 0f,
+)
 
 data class BrakeLightSpot(
     val normLeft: Float,
@@ -23,6 +41,7 @@ data class FrameLightingAndSignals(
     val redBrakeLightsAhead: Boolean,
     val trafficLightSignal: TrafficLightSignal,
     val brakeLightBoxes: List<BrakeLightSpot> = emptyList(),
+    val trafficLightObservation: TrafficLightObservation = TrafficLightObservation(trafficLightSignal),
 )
 
 object FrontRoadAnalyzer {
@@ -69,35 +88,36 @@ object FrontRoadAnalyzer {
         }
     }
 
-    fun analyzeLightingAndLights(bitmap: Bitmap): FrameLightingAndSignals {
+    fun analyzeLightingAndLights(
+        bitmap: Bitmap,
+        vehicleBoxes: List<TrackedRoadObject> = emptyList(),
+    ): FrameLightingAndSignals {
         val w = bitmap.width
         val h = bitmap.height
         if (w < 16 || h < 16) {
             return FrameLightingAndSignals(128f, isDark = false, redBrakeLightsAhead = false, TrafficLightSignal.NONE)
         }
 
-        val stepX = (w / 40).coerceAtLeast(1)
-        val stepY = (h / 30).coerceAtLeast(1)
+        val gridCols = 48
+        val gridRows = 36
+        val stepX = (w.toFloat() / gridCols).coerceAtLeast(1f)
+        val stepY = (h.toFloat() / gridRows).coerceAtLeast(1f)
 
         var lumSum = 0f
         var lumCount = 0
         var brakeRedHits = 0
         var brakeSampled = 0
-        val redGridCols = 40
-        val redGridRows = 30
-        val redGrid = Array(redGridRows) { BooleanArray(redGridCols) }
-        val tlRedGrid = Array(redGridRows) { BooleanArray(redGridCols) }
-        val tlAmberGrid = Array(redGridRows) { BooleanArray(redGridCols) }
-        val tlGreenGrid = Array(redGridRows) { BooleanArray(redGridCols) }
-        val darkGrid = Array(redGridRows) { BooleanArray(redGridCols) }
+        val redGrid = Array(gridRows) { BooleanArray(gridCols) }
+        val tlRedGrid = Array(gridRows) { BooleanArray(gridCols) }
+        val tlAmberGrid = Array(gridRows) { BooleanArray(gridCols) }
+        val tlGreenGrid = Array(gridRows) { BooleanArray(gridCols) }
+        val darkGrid = Array(gridRows) { BooleanArray(gridCols) }
 
-        var row = 0
-        var y = 0
-        while (y < h) {
+        for (row in 0 until gridRows) {
+            val y = ((row + 0.5f) * stepY).toInt().coerceIn(0, h - 1)
             val normY = y.toFloat() / h
-            var col = 0
-            var x = 0
-            while (x < w) {
+            for (col in 0 until gridCols) {
+                val x = ((col + 0.5f) * stepX).toInt().coerceIn(0, w - 1)
                 val normX = x.toFloat() / w
                 val px = bitmap.getPixel(x, y)
                 val r = Color.red(px)
@@ -107,59 +127,297 @@ object FrontRoadAnalyzer {
                 lumSum += lum
                 lumCount++
 
-                val isBrightRed = r >= 170 && g <= 115 && b <= 115 && (r - g) >= 80 && (r - b) >= 80
-                val isBrightAmber = r >= 200 && g in 125..210 && b <= 75 && (r - b) >= 120
-                val isBrightGreen = g >= 185 && r <= 100 && (g - r) >= 85 && g >= b
+                val isBrightRed = r >= 175 && g <= 110 && b <= 110 && (r - g) >= 82 && (r - b) >= 82
+                val isBrightAmber = r >= 200 && g in 125..215 && b <= 75 && (r - b) >= 120
+                val isBrightGreen = g >= 180 && r <= 105 && (g - r) >= 80 && g >= b
 
-                if (row < redGridRows && col < redGridCols && lum < 95f) {
+                if (lum < 88f && maxOf(r, g, b) - minOf(r, g, b) < 42) {
                     darkGrid[row][col] = true
                 }
 
-                // Middle road corridor: potential vehicle brake lights ahead
-                if (normY in 0.30f..0.85f && normX in 0.12f..0.88f) {
+                // Middle/lower road corridor: potential vehicle brake lights ahead
+                if (normY in 0.34f..0.86f && normX in 0.14f..0.86f) {
                     if (isBrightRed) {
                         brakeRedHits++
-                        if (row < redGridRows && col < redGridCols) {
-                            redGrid[row][col] = true
-                        }
+                        redGrid[row][col] = true
                     }
                     brakeSampled++
                 }
-                // Upper road corridor: potential traffic signals (clustered bulbs with dark housing)
-                if (normY in 0.04f..0.48f && normX in 0.10f..0.90f && row < redGridRows && col < redGridCols) {
-                    if (isBrightRed) tlRedGrid[row][col] = true
-                    if (isBrightAmber) tlAmberGrid[row][col] = true
-                    if (isBrightGreen) tlGreenGrid[row][col] = true
+
+                // Upper/mid signal corridor (excluding lower road surface & vehicle tail-light zone):
+                // Do not consider pixels inside a detected vehicle's lower body as traffic lights.
+                if (normY in 0.03f..0.52f && normX in 0.06f..0.94f) {
+                    val insideVehicleLowerBody = vehicleBoxes.any { v ->
+                        normX in v.normalizedLeft..v.normalizedRight &&
+                            normY in (v.normalizedTop + (v.normalizedBottom - v.normalizedTop) * 0.25f)..v.normalizedBottom
+                    }
+                    if (!insideVehicleLowerBody) {
+                        if (isBrightRed) tlRedGrid[row][col] = true
+                        if (isBrightAmber) tlAmberGrid[row][col] = true
+                        if (isBrightGreen) tlGreenGrid[row][col] = true
+                    }
                 }
-                col++
-                x += stepX
             }
-            row++
-            y += stepY
         }
 
-        val brakeBoxes = clusterRedSpots(redGrid, redGridRows, redGridCols)
-        val hasRedTl = hasTrafficLightBulbCluster(tlRedGrid, darkGrid, redGridRows, redGridCols)
-        val hasAmberTl = hasTrafficLightBulbCluster(tlAmberGrid, darkGrid, redGridRows, redGridCols)
-        val hasGreenTl = hasTrafficLightBulbCluster(tlGreenGrid, darkGrid, redGridRows, redGridCols)
+        val rawBrakeBoxes = clusterRedSpots(redGrid, gridRows, gridCols)
+        // Filter out single high-altitude spots from brake boxes; brake lights are in the road lane or paired
+        val brakeBoxes = rawBrakeBoxes.filter { spot ->
+            val cy = (spot.normTop + spot.normBottom) * 0.5f
+            cy >= 0.42f || rawBrakeBoxes.any { other ->
+                other !== spot &&
+                    abs(((other.normTop + other.normBottom) * 0.5f) - cy) <= 0.05f &&
+                    abs(((other.normLeft + other.normRight) * 0.5f) - ((spot.normLeft + spot.normRight) * 0.5f)) in 0.05f..0.42f
+            }
+        }
+
+        val tlObs = detectTrafficSignalWithHousing(
+            tlRedGrid = tlRedGrid,
+            tlAmberGrid = tlAmberGrid,
+            tlGreenGrid = tlGreenGrid,
+            darkGrid = darkGrid,
+            rows = gridRows,
+            cols = gridCols,
+            brakeBoxes = brakeBoxes,
+        )
 
         val avgLum = if (lumCount > 0) lumSum / lumCount else 128f
         val brakeRatio = if (brakeSampled > 0) brakeRedHits.toFloat() / brakeSampled else 0f
 
-        val tlSignal = when {
-            hasRedTl && !hasGreenTl -> TrafficLightSignal.RED
-            hasAmberTl && !hasRedTl -> TrafficLightSignal.AMBER
-            hasGreenTl && !hasRedTl -> TrafficLightSignal.GREEN
-            else -> TrafficLightSignal.NONE
-        }
-
         return FrameLightingAndSignals(
             averageLuminance = avgLum,
             isDark = avgLum < DARKNESS_LUMINANCE_THRESHOLD,
-            redBrakeLightsAhead = brakeRatio >= 0.008f || brakeBoxes.isNotEmpty(),
-            trafficLightSignal = tlSignal,
+            redBrakeLightsAhead = (brakeRatio >= 0.010f || brakeBoxes.isNotEmpty()) && tlObs.signal != TrafficLightSignal.RED,
+            trafficLightSignal = tlObs.signal,
             brakeLightBoxes = brakeBoxes,
+            trafficLightObservation = tlObs,
         )
+    }
+
+    private data class LampCandidate(
+        val signal: TrafficLightSignal,
+        val minR: Int,
+        val maxR: Int,
+        val minC: Int,
+        val maxC: Int,
+        val cellCount: Int,
+        val orientation: TrafficLightOrientation,
+        val confidence: Float,
+    )
+
+    /**
+     * Validates:
+     * 1. Compact circular/square illuminated lamp cluster (2..16 cells, aspect ~1:1).
+     * 2. Dark traffic-signal housing surrounding the lamp in EITHER a vertical 3-aspect housing
+     *    (dark cells extending below for RED, above & below for AMBER, above for GREEN) OR a
+     *    horizontal 3-aspect housing (dark cells extending beside the lamp).
+     * 3. Rejects horizontal symmetric pairs (vehicle brake lights / headlights).
+     * 4. Reports UNCERTAIN when conflicting lamps or partial housing ambiguity occurs.
+     */
+    private fun detectTrafficSignalWithHousing(
+        tlRedGrid: Array<BooleanArray>,
+        tlAmberGrid: Array<BooleanArray>,
+        tlGreenGrid: Array<BooleanArray>,
+        darkGrid: Array<BooleanArray>,
+        rows: Int,
+        cols: Int,
+        brakeBoxes: List<BrakeLightSpot>,
+    ): TrafficLightObservation {
+        val redLamps = findHousingValidatedLamps(tlRedGrid, darkGrid, rows, cols, TrafficLightSignal.RED, brakeBoxes)
+        val amberLamps = findHousingValidatedLamps(tlAmberGrid, darkGrid, rows, cols, TrafficLightSignal.AMBER, brakeBoxes)
+        val greenLamps = findHousingValidatedLamps(tlGreenGrid, darkGrid, rows, cols, TrafficLightSignal.GREEN, brakeBoxes)
+
+        val allLamps = redLamps + amberLamps + greenLamps
+        if (allLamps.isEmpty()) {
+            return TrafficLightObservation(TrafficLightSignal.NONE)
+        }
+
+        val activeColors = listOfNotNull(
+            redLamps.maxByOrNull { it.confidence },
+            amberLamps.maxByOrNull { it.confidence },
+            greenLamps.maxByOrNull { it.confidence },
+        )
+
+        // If Red and Green both appear valid simultaneously in the same housing vicinity, report UNCERTAIN rather than guessing
+        if (redLamps.isNotEmpty() && greenLamps.isNotEmpty()) {
+            val r = redLamps.first()
+            return TrafficLightObservation(
+                signal = TrafficLightSignal.UNCERTAIN,
+                orientation = r.orientation,
+                confidence = 0.45f,
+                normLeft = r.minC.toFloat() / cols,
+                normTop = r.minR.toFloat() / rows,
+                normRight = (r.maxC + 1).toFloat() / cols,
+                normBottom = (r.maxR + 1).toFloat() / rows,
+            )
+        }
+
+        val best = activeColors.maxByOrNull { it.confidence } ?: return TrafficLightObservation(TrafficLightSignal.NONE)
+        val finalSignal = if (best.confidence >= 0.62f) best.signal else TrafficLightSignal.UNCERTAIN
+
+        return TrafficLightObservation(
+            signal = finalSignal,
+            orientation = best.orientation,
+            confidence = best.confidence,
+            normLeft = (best.minC.toFloat() / cols).coerceIn(0f, 1f),
+            normTop = (best.minR.toFloat() / rows).coerceIn(0f, 1f),
+            normRight = ((best.maxC + 1).toFloat() / cols).coerceIn(0f, 1f),
+            normBottom = ((best.maxR + 1).toFloat() / rows).coerceIn(0f, 1f),
+        )
+    }
+
+    private fun findHousingValidatedLamps(
+        colorGrid: Array<BooleanArray>,
+        darkGrid: Array<BooleanArray>,
+        rows: Int,
+        cols: Int,
+        signalType: TrafficLightSignal,
+        brakeBoxes: List<BrakeLightSpot>,
+    ): List<LampCandidate> {
+        val visited = Array(rows) { BooleanArray(cols) }
+        val rawClusters = mutableListOf<IntArray>() // [minR, maxR, minC, maxC, count]
+
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                if (!colorGrid[r][c] || visited[r][c]) continue
+                var minR = r
+                var maxR = r
+                var minC = c
+                var maxC = c
+                var count = 0
+                val queue = ArrayDeque<Pair<Int, Int>>()
+                queue.addLast(r to c)
+                visited[r][c] = true
+                while (queue.isNotEmpty()) {
+                    val (cr, cc) = queue.removeFirst()
+                    count++
+                    minR = minOf(minR, cr)
+                    maxR = maxOf(maxR, cr)
+                    minC = minOf(minC, cc)
+                    maxC = maxOf(maxC, cc)
+                    for (dr in -1..1) {
+                        for (dc in -1..1) {
+                            val nr = cr + dr
+                            val nc = cc + dc
+                            if (nr in 0 until rows && nc in 0 until cols && colorGrid[nr][nc] && !visited[nr][nc]) {
+                                visited[nr][nc] = true
+                                queue.addLast(nr to nc)
+                            }
+                        }
+                    }
+                }
+                val lampH = maxR - minR + 1
+                val lampW = maxC - minC + 1
+                // Lamp must be compact and roughly circular/square (not a wide strip or huge blob)
+                if (count in 2..16 && lampH <= 5 && lampW <= 5 && abs(lampH - lampW) <= 2) {
+                    rawClusters.add(intArrayOf(minR, maxR, minC, maxC, count))
+                }
+            }
+        }
+
+        val candidates = mutableListOf<LampCandidate>()
+        for (cl in rawClusters) {
+            val minR = cl[0]
+            val maxR = cl[1]
+            val minC = cl[2]
+            val maxC = cl[3]
+            val count = cl[4]
+            val normCx = ((minC + maxC + 1) * 0.5f) / cols
+            val normCy = ((minR + maxR + 1) * 0.5f) / rows
+
+            // Reject if this cluster is part of a horizontal symmetric pair (e.g. twin vehicle tail/brake lights)
+            val hasHorizontalTwin = rawClusters.any { other ->
+                other !== cl &&
+                    abs(other[0] - minR) <= 1 &&
+                    abs(other[2] - minC) in 3..18
+            }
+            if (signalType == TrafficLightSignal.RED && hasHorizontalTwin && normCy >= 0.28f) {
+                continue
+            }
+            // Also reject if overlapping a known lower-corridor brake light spot
+            if (signalType == TrafficLightSignal.RED && brakeBoxes.any { b ->
+                    normCx in (b.normLeft - 0.02f)..(b.normRight + 0.02f) &&
+                        normCy in (b.normTop - 0.02f)..(b.normBottom + 0.02f) &&
+                        normCy >= 0.36f
+                }
+            ) {
+                continue
+            }
+
+            // Check dark housing cells above, below, left, and right of the illuminated lamp
+            val darkAbove = countDarkCells(darkGrid, rows, cols, minR - 4, minR - 1, minC - 1, maxC + 1)
+            val darkBelow = countDarkCells(darkGrid, rows, cols, maxR + 1, maxR + 4, minC - 1, maxC + 1)
+            val darkLeft = countDarkCells(darkGrid, rows, cols, minR - 1, maxR + 1, minC - 4, minC - 1)
+            val darkRight = countDarkCells(darkGrid, rows, cols, minR - 1, maxR + 1, maxC + 1, maxC + 4)
+            val darkRing = countDarkCells(darkGrid, rows, cols, minR - 2, maxR + 2, minC - 2, maxC + 2)
+
+            if (darkRing < 2) continue
+
+            // Vertical Traffic Light Housing validation:
+            // RED sits at top of housing (more dark housing below), AMBER sits in middle (dark above & below), GREEN sits at bottom (more dark housing above)
+            val verticalMatch = when (signalType) {
+                TrafficLightSignal.RED -> darkBelow >= 2 && (darkBelow + darkAbove) >= 3
+                TrafficLightSignal.AMBER -> darkAbove >= 1 && darkBelow >= 1 && (darkAbove + darkBelow) >= 3
+                TrafficLightSignal.GREEN -> darkAbove >= 2 && (darkAbove + darkBelow) >= 3
+                else -> false
+            }
+
+            // Horizontal Traffic Light Housing validation:
+            val horizontalMatch = when (signalType) {
+                TrafficLightSignal.RED -> (darkRight >= 2 || darkLeft >= 2) && (darkLeft + darkRight) >= 3
+                TrafficLightSignal.AMBER -> darkLeft >= 1 && darkRight >= 1 && (darkLeft + darkRight) >= 3
+                TrafficLightSignal.GREEN -> (darkLeft >= 2 || darkRight >= 2) && (darkLeft + darkRight) >= 3
+                else -> false
+            }
+
+            if (!verticalMatch && !horizontalMatch && darkRing < 4) continue
+
+            val orientation = when {
+                verticalMatch && (darkAbove + darkBelow) >= (darkLeft + darkRight) -> TrafficLightOrientation.VERTICAL
+                horizontalMatch -> TrafficLightOrientation.HORIZONTAL
+                else -> TrafficLightOrientation.VERTICAL
+            }
+            val housingStrength = maxOf(darkAbove + darkBelow, darkLeft + darkRight)
+            val conf = when {
+                (verticalMatch || horizontalMatch) && housingStrength >= 4 -> 0.86f
+                (verticalMatch || horizontalMatch) && housingStrength >= 3 -> 0.72f
+                darkRing >= 4 -> 0.52f // Ambiguous housing -> results in UNCERTAIN state
+                else -> 0f
+            }
+            if (conf > 0f) {
+                candidates.add(
+                    LampCandidate(
+                        signal = signalType,
+                        minR = minR,
+                        maxR = maxR,
+                        minC = minC,
+                        maxC = maxC,
+                        cellCount = count,
+                        orientation = orientation,
+                        confidence = conf,
+                    ),
+                )
+            }
+        }
+        return candidates
+    }
+
+    private fun countDarkCells(
+        darkGrid: Array<BooleanArray>,
+        rows: Int,
+        cols: Int,
+        r0: Int,
+        r1: Int,
+        c0: Int,
+        c1: Int,
+    ): Int {
+        var hits = 0
+        for (r in r0.coerceAtLeast(0)..r1.coerceAtMost(rows - 1)) {
+            for (c in c0.coerceAtLeast(0)..c1.coerceAtMost(cols - 1)) {
+                if (darkGrid[r][c]) hits++
+            }
+        }
+        return hits
     }
 
     private fun clusterRedSpots(

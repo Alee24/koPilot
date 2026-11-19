@@ -827,7 +827,7 @@ class DashboardViewModel @Inject constructor(
                         language = s.language,
                         globalMute = s.alertsMuted,
                     )
-                    TrafficLightSignal.NONE -> Unit
+                    TrafficLightSignal.UNCERTAIN, TrafficLightSignal.NONE -> Unit
                 }
                 if (vision.isDarkScene && moving && s.alertWeatherEnabled) {
                     if (isDriving.value && (now - lastLoggedDarkMs) >= 15_000L) {
@@ -1393,7 +1393,6 @@ class DashboardViewModel @Inject constructor(
         }
         val settings = uiState.value.settings
         if (!settings.alertRoadSignsEnabled) return
-        if (observation.category == TrafficSignCategory.ROADWORKS) return
         if (observation.isUncertain || observation.applicableToDriverLane == false) {
             return
         }

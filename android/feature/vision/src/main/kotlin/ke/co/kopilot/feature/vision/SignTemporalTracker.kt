@@ -13,79 +13,104 @@ data class RawSignDetection(
     val customLabel: String? = null,
 )
 
+/**
+ * Multi-sign temporal confirmation tracker.
+ * Tracks multiple sign categories concurrently across frames with a 1-frame motion-blur grace window,
+ * keeping the full camera view (0.0..1.0) available without left/right exclusion zones.
+ */
 @Singleton
 class SignTemporalTracker @Inject constructor() {
 
-    private var candidateCategory: TrafficSignCategory? = null
-    private var consecutiveHits = 0
-    private var missedFrames = 0
-    private var maxConfidence = 0f
+    private data class CategoryTrack(
+        var consecutiveHits: Int = 0,
+        var missedFrames: Int = 0,
+        var maxConfidence: Float = 0f,
+        var lastCenterX: Float = 0.5f,
+        var customLabel: String? = null,
+    )
+
+    private val activeTracks = LinkedHashMap<TrafficSignCategory, CategoryTrack>()
     private val lastAnnouncedMs = mutableMapOf<TrafficSignCategory, Long>()
 
+    @Synchronized
     fun processFrame(
         detections: List<RawSignDetection>,
         modelVersion: String,
         nowMillis: Long = System.currentTimeMillis(),
     ): TrafficSignObservation? {
-        val best = detections
+        val validByCategory = detections
             .filter { it.confidence >= MIN_CONFIDENCE }
-            .maxByOrNull { it.confidence }
+            .groupBy { it.category }
+            .mapValues { (_, list) -> list.maxBy { it.confidence } }
 
-        if (best == null) {
-            missedFrames += 1
-            if (missedFrames > 1) {
-                consecutiveHits = 0
-                candidateCategory = null
-                maxConfidence = 0f
+        // 1. Update existing tracks and age out categories not seen in this frame
+        val iterator = activeTracks.entries.iterator()
+        while (iterator.hasNext()) {
+            val (cat, track) = iterator.next()
+            val hit = validByCategory[cat]
+            if (hit != null) {
+                track.consecutiveHits += 1
+                track.missedFrames = 0
+                track.maxConfidence = maxOf(track.maxConfidence, hit.confidence)
+                track.lastCenterX = hit.normalizedCenterX
+                if (hit.customLabel != null) track.customLabel = hit.customLabel
+            } else {
+                track.missedFrames += 1
+                if (track.missedFrames > 1) {
+                    iterator.remove()
+                }
             }
-            return null
         }
 
-        missedFrames = 0
-        if (best.category == candidateCategory) {
-            consecutiveHits += 1
-            maxConfidence = maxOf(maxConfidence, best.confidence)
-        } else {
-            candidateCategory = best.category
-            consecutiveHits = 1
-            maxConfidence = best.confidence
+        // 2. Register newly observed categories in this frame
+        for ((cat, hit) in validByCategory) {
+            if (!activeTracks.containsKey(cat)) {
+                activeTracks[cat] = CategoryTrack(
+                    consecutiveHits = 1,
+                    missedFrames = 0,
+                    maxConfidence = hit.confidence,
+                    lastCenterX = hit.normalizedCenterX,
+                    customLabel = hit.customLabel,
+                )
+            }
         }
 
-        // High-confidence (>= 85%) clear sign confirms immediately in 1 frame for fast-moving cars;
-        // lower-confidence detections require 2 frames.
-        val requiredFrames = if (maxConfidence >= INSTANT_CONFIDENCE_THRESHOLD) 1 else REQUIRED_CONSECUTIVE_FRAMES
-        if (consecutiveHits < requiredFrames) {
-            return null
+        // 3. Select the highest-priority confirmed sign that was observed in the current frame
+        val confirmedCandidates = validByCategory.keys.mapNotNull { cat ->
+            val track = activeTracks[cat] ?: return@mapNotNull null
+            val requiredFrames = if (track.maxConfidence >= INSTANT_CONFIDENCE_THRESHOLD) 1 else REQUIRED_CONSECUTIVE_FRAMES
+            if (track.consecutiveHits < requiredFrames) return@mapNotNull null
+            val lastSeen = lastAnnouncedMs[cat]
+            if (lastSeen != null && (nowMillis - lastSeen) < DUPLICATE_SUPPRESSION_MS) return@mapNotNull null
+            cat to track
         }
 
-        val lastSeen = lastAnnouncedMs[best.category]
-        if (lastSeen != null && (nowMillis - lastSeen) < DUPLICATE_SUPPRESSION_MS) {
-            return null
-        }
+        val chosen = confirmedCandidates
+            .sortedWith(
+                compareByDescending<Pair<TrafficSignCategory, CategoryTrack>> { (cat, _) -> cat.speedLimitKmh != null }
+                    .thenByDescending { (_, track) -> track.maxConfidence },
+            )
+            .firstOrNull() ?: return null
 
-        lastAnnouncedMs[best.category] = nowMillis
-        // In Kenya (left-hand traffic), signs on the left/center corridor (x <= 0.72) are more likely
-        // applicable to the driver's carriageway, though monocular position alone remains advisory.
-        val likelyDriverSide = if (best.normalizedCenterX in 0.15f..0.75f) null else false
+        val (bestCategory, bestTrack) = chosen
+        lastAnnouncedMs[bestCategory] = nowMillis
 
         return TrafficSignObservation(
             id = UUID.randomUUID().toString(),
-            category = best.category,
-            confidence = maxConfidence,
-            consecutiveFrames = consecutiveHits,
-            applicableToDriverLane = likelyDriverSide,
+            category = bestCategory,
+            confidence = bestTrack.maxConfidence,
+            consecutiveFrames = bestTrack.consecutiveHits,
+            applicableToDriverLane = true,
             timestampMillis = nowMillis,
             modelVersion = modelVersion,
-            customLabel = best.customLabel,
-            isUncertain = maxConfidence < SURE_CONFIDENCE_THRESHOLD,
+            customLabel = bestTrack.customLabel,
+            isUncertain = bestTrack.maxConfidence < SURE_CONFIDENCE_THRESHOLD,
         )
     }
 
+    @Synchronized
     fun reset() {
-        candidateCategory = null
-        consecutiveHits = 0
-        missedFrames = 0
-        maxConfidence = 0f
+        activeTracks.clear()
         lastAnnouncedMs.clear()
     }
 

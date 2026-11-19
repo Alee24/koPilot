@@ -53,9 +53,12 @@ class SpeedAlertEngine @Inject constructor() {
         }
 
         val validLimit = latestSign
-            ?.takeIf { it.category.speedLimitKmh != null }
+            ?.takeIf { !it.isUncertain && it.category.speedLimitKmh != null }
             ?.takeIf { (nowMillis - it.timestampMillis) <= SIGN_VALIDITY_MS }
-            ?.takeIf { it.confidence >= MIN_SIGN_CONFIDENCE && it.consecutiveFrames >= MIN_CONSECUTIVE_FRAMES }
+            ?.takeIf {
+                (it.confidence >= MIN_SIGN_CONFIDENCE && it.consecutiveFrames >= MIN_CONSECUTIVE_FRAMES) ||
+                    (it.confidence >= INSTANT_SIGN_CONFIDENCE && it.consecutiveFrames >= 1)
+            }
 
         if (validLimit == null) {
             warningActive = false
@@ -137,6 +140,7 @@ class SpeedAlertEngine @Inject constructor() {
         const val STALE_FIX_MS = 6_000L
         const val SIGN_VALIDITY_MS = 180_000L
         const val MIN_SIGN_CONFIDENCE = 0.72f
+        const val INSTANT_SIGN_CONFIDENCE = 0.85f
         const val MIN_CONSECUTIVE_FRAMES = 2
         const val MAX_HORIZONTAL_ACCURACY_M = 35f
         const val MAX_SPEED_UNCERTAINTY_KMH = 12f

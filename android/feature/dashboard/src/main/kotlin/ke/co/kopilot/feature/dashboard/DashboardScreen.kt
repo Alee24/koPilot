@@ -528,7 +528,7 @@ private fun ViewportCard(
                     isDrivingSessionActive = state.isDrivingSessionActive,
                     cameraSensorEnabled = state.settings.sensorCameraEnabled,
                     analysisIntervalMs = viewModel.analysisIntervalFor(state.settings.detectionQuality),
-                    zoomRatio = state.visionState.recommendedZoomRatio,
+                    zoomRatio = state.settings.cameraZoomRatio,
                     performanceController = viewModel.cameraController,
                     onStartDrivingClick = viewModel::startDriving,
                     onFrameListener = { imageProxy, rotation, ts ->
@@ -808,7 +808,7 @@ private fun ViewportCard(
                             color = Color(0xCC0D141C),
                         ) {
                             Text(
-                                text = "Zoom ${"%.1f".format(state.visionState.recommendedZoomRatio)}x",
+                                text = "Zoom ${"%.1f".format(state.settings.cameraZoomRatio)}x",
                                 color = MintTeal,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
@@ -1083,6 +1083,7 @@ private fun SpeedCockpitRow(
                             TrafficLightSignal.RED -> "RED"
                             TrafficLightSignal.AMBER -> "AMBER"
                             TrafficLightSignal.GREEN -> "GREEN"
+                            TrafficLightSignal.UNCERTAIN -> "UNCERTAIN"
                             TrafficLightSignal.NONE -> "Lights"
                         },
                         color = Color.White,
@@ -2357,7 +2358,7 @@ private fun FullBleedArHudLanding(
                         border = BorderStroke(1.dp, hudGlassBorder),
                     ) {
                         Text(
-                            text = "Zoom ${"%.1f".format(state.visionState.recommendedZoomRatio)}x",
+                            text = "Zoom ${"%.1f".format(state.settings.cameraZoomRatio)}x",
                             style = MaterialTheme.typography.labelSmall,
                             color = KoPilotClusterTokens.PrimaryAccent,
                             fontWeight = FontWeight.Bold,

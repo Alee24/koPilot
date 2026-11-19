@@ -186,14 +186,14 @@ fun RoadCameraPreview(
                     val maxZoom = cam.cameraInfo.zoomState.value?.maxZoomRatio ?: 2.0f
                     val minZoom = cam.cameraInfo.zoomState.value?.minZoomRatio ?: 1.0f
                     cam.cameraControl.setZoomRatio(zoomRatio.coerceIn(minZoom, maxZoom))
-                    // Continuous road-corridor autofocus & auto-exposure metering
+                    // Continuous road-corridor autofocus & auto-exposure metering (locked without 3s expiry)
                     runCatching {
                         val factory = SurfaceOrientedMeteringPointFactory(1f, 1f)
                         val roadPoint = factory.createPoint(0.5f, 0.42f)
                         val action = FocusMeteringAction.Builder(
                             roadPoint,
                             FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE,
-                        ).setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS).build()
+                        ).disableAutoCancel().build()
                         cam.cameraControl.startFocusAndMetering(action)
                     }
                     performanceController.setCameraActive(true, "Rear camera active (HD)")

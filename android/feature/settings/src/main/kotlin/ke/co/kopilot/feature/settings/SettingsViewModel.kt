@@ -21,6 +21,7 @@ import ke.co.kopilot.feature.diagnostics.PairedBluetoothDevice
 import ke.co.kopilot.feature.trips.TripRepository
 import ke.co.kopilot.feature.vehicle.VehicleProfileRepository
 import ke.co.kopilot.feature.vision.LiteRtSignClassifier
+import ke.co.kopilot.feature.vision.LiteRtYoloSignDetector
 import ke.co.kopilot.feature.vision.LocalRoadSignCatalog
 import ke.co.kopilot.feature.vision.LocalRoadSignEntry
 import kotlinx.coroutines.Dispatchers
@@ -52,9 +53,10 @@ class SettingsViewModel @Inject constructor(
     private val speechSink: SpeechSink,
     private val signCatalog: LocalRoadSignCatalog,
     private val liteRtSignClassifier: LiteRtSignClassifier,
+    private val liteRtYoloSignDetector: LiteRtYoloSignDetector,
 ) : ViewModel() {
     val roadSignDatabase: List<LocalRoadSignEntry> get() = signCatalog.allEntries()
-    val isCustomSignModelLoaded: Boolean get() = liteRtSignClassifier.isAvailable
+    val isCustomSignModelLoaded: Boolean get() = liteRtYoloSignDetector.isAvailable || liteRtSignClassifier.isAvailable
 
     private val _backendUrl = MutableStateFlow(tokenStore.getBackendBaseUrl())
     val backendUrl: StateFlow<String> = _backendUrl.asStateFlow()

@@ -61,6 +61,32 @@ class SpeedAlertEngineTest {
     }
 
     @Test
+    fun `accepts instant 1-frame high-confidence speed limit sign and rejects uncertain sign`() {
+        engine.reset()
+        val now = 300_000L
+        val instantSign = TrafficSignObservation(
+            id = "s_instant",
+            category = TrafficSignCategory.SPEED_LIMIT_50,
+            confidence = 0.90f,
+            consecutiveFrames = 1, // Confirmed on 1st frame at >= 0.85 confidence
+            applicableToDriverLane = true,
+            timestampMillis = now - 500L,
+            modelVersion = "1.0.0",
+            isUncertain = false,
+        )
+        val fix = GpsFix(-1.2921, 36.8219, 12.0f, 0.5f, 5f, 90f, now)
+        val eval = engine.evaluate(fix, instantSign, thresholdKmh = 5, nowMillis = now)
+        assertEquals(50, eval.applicableSpeedLimitKmh)
+        assertEquals(SpeedAlertDecision.SPEED_LIMIT_OBSERVATION, eval.decision)
+
+        // Uncertain sign (< 0.60 confidence) must NOT set an applicable speed limit
+        val uncertainSign = instantSign.copy(confidence = 0.54f, isUncertain = true)
+        val uncertainEval = engine.evaluate(fix, uncertainSign, thresholdKmh = 5, nowMillis = now)
+        assertEquals(null, uncertainEval.applicableSpeedLimitKmh)
+        assertEquals(SpeedAlertDecision.NO_ALERT, uncertainEval.decision)
+    }
+
+    @Test
     fun `speed zone monitor classifies 60-80, 80-110, above 110, and above 120`() {
         val monitor = SpeedZoneMonitor()
         val baseTime = 500_000L

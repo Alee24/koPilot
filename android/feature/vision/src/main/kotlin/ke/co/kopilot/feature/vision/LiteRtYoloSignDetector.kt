@@ -2,7 +2,11 @@ package ke.co.kopilot.feature.vision
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.RectF
 import dagger.hilt.android.qualifiers.ApplicationContext
 import ke.co.kopilot.core.common.model.TrafficSignCategory
 import org.tensorflow.lite.DataType
@@ -29,8 +33,11 @@ data class YoloSignDetection(
 
 /**
  * Offline LiteRT YOLO11n Road-Sign Detector.
- * Loads `assets/models/kopilot_yolo11n_signs.tflite` and `assets/models/kopilot_yolo11n_labels.txt`,
- * attempts NNAPI hardware acceleration with automatic XNNPACK CPU fallback, and applies NMS.
+ * - Preserves 1:1 aspect ratio via letterbox padding across the full camera view.
+ * - Executes a second high-resolution forward-horizon square crop pass so small and distant signs
+ *   while driving retain ~2x pixel density without losing full-frame coverage.
+ * - Reuses preallocated native ByteBuffers and pixel arrays to eliminate GC churn.
+ * - Verifies detections against road-sign color & contrast geometry to reject indoor/clutter false positives.
  */
 @Singleton
 class LiteRtYoloSignDetector @Inject constructor(
@@ -43,6 +50,15 @@ class LiteRtYoloSignDetector @Inject constructor(
     private var inputDataType = DataType.FLOAT32
     private var outputShape = intArrayOf(1, 18, 2100)
     private var initialized = false
+
+    // Pre-allocated reusable buffers (allocated once per model input size)
+    private var letterboxBitmap: Bitmap? = null
+    private var letterboxCanvas: Canvas? = null
+    private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private var reusablePixels: IntArray = IntArray(0)
+    private var reusableFloatBuffer: ByteBuffer? = null
+    private var reusableUint8Buffer: ByteBuffer? = null
+    private var reusableOutArr: Array<Array<FloatArray>>? = null
 
     @Volatile
     var activeAccelerator: String = "Unavailable"
@@ -83,21 +99,25 @@ class LiteRtYoloSignDetector @Inject constructor(
                 fis.channel.map(FileChannel.MapMode.READ_ONLY, afd.startOffset, afd.declaredLength)
             }
 
+            val optimalThreads = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(2, 4)
+
+            // Prefer XNNPACK multi-threaded CPU execution for FP16/FP32 YOLO11n across heterogeneous Android SoCs,
+            // with NNAPI fallback if XNNPACK initialization fails.
             val interp = try {
-                val nnapiOpts = Interpreter.Options().apply {
-                    setUseNNAPI(true)
-                    setNumThreads(2)
-                }
-                Interpreter(mapped, nnapiOpts).also {
-                    activeAccelerator = "NNAPI (Hardware)"
-                }
-            } catch (_: Throwable) {
                 val cpuOpts = Interpreter.Options().apply {
                     setUseXNNPACK(true)
-                    setNumThreads(2)
+                    setNumThreads(optimalThreads)
                 }
                 Interpreter(mapped, cpuOpts).also {
-                    activeAccelerator = "XNNPACK CPU (2 threads)"
+                    activeAccelerator = "XNNPACK CPU ($optimalThreads threads)"
+                }
+            } catch (_: Throwable) {
+                val nnapiOpts = Interpreter.Options().apply {
+                    setUseNNAPI(true)
+                    setNumThreads(optimalThreads)
+                }
+                Interpreter(mapped, nnapiOpts).also {
+                    activeAccelerator = "NNAPI ($optimalThreads threads)"
                 }
             }
 
@@ -108,52 +128,130 @@ class LiteRtYoloSignDetector @Inject constructor(
             }
             inputDataType = interp.getInputTensor(0).dataType()
             outputShape = interp.getOutputTensor(0).shape()
+            allocateReusableBuffers()
             modelVersion = "yolo11n-gtsrb-litert-320"
             interpreter = interp
         }
     }
 
-    fun detect(bitmap: Bitmap): List<YoloSignDetection> {
+    private fun allocateReusableBuffers() {
+        val bmp = Bitmap.createBitmap(inputWidth, inputHeight, Bitmap.Config.ARGB_8888)
+        letterboxBitmap = bmp
+        letterboxCanvas = Canvas(bmp)
+        reusablePixels = IntArray(inputWidth * inputHeight)
+        if (inputDataType == DataType.UINT8) {
+            reusableUint8Buffer = ByteBuffer.allocateDirect(inputWidth * inputHeight * 3).order(ByteOrder.nativeOrder())
+        } else {
+            reusableFloatBuffer = ByteBuffer.allocateDirect(4 * inputWidth * inputHeight * 3).order(ByteOrder.nativeOrder())
+        }
+        if (outputShape.size >= 3) {
+            val d1 = outputShape[1]
+            val d2 = outputShape[2]
+            reusableOutArr = Array(1) { Array(d1) { FloatArray(d2) } }
+        }
+    }
+
+    @Synchronized
+    fun detect(bitmap: Bitmap, includeHorizonZoomPass: Boolean = true): List<YoloSignDetection> {
         ensureInitialized()
         val interp = interpreter ?: return emptyList()
+        val srcW = bitmap.width
+        val srcH = bitmap.height
+        if (srcW < 32 || srcH < 32) return emptyList()
 
-        val scaled = if (bitmap.width == inputWidth && bitmap.height == inputHeight) {
-            bitmap
-        } else {
-            Bitmap.createScaledBitmap(bitmap, inputWidth, inputHeight, true)
+        val allCandidates = ArrayList<YoloSignDetection>()
+
+        // Pass 1: Full-frame aspect-ratio preserving letterbox pass (keeps 100% of camera view active)
+        val fullFrameRect = Rect(0, 0, srcW, srcH)
+        allCandidates.addAll(runTileInference(interp, bitmap, fullFrameRect, srcW, srcH))
+
+        // Pass 2: High-resolution 1:1 horizon corridor pass for small & distant signs while driving
+        val hasHighConfAlready = allCandidates.any { it.confidence >= 0.78f }
+        if (includeHorizonZoomPass && !hasHighConfAlready && max(srcW, srcH) >= 480) {
+            val cropSide = (min(srcW, srcH) * 0.78f).toInt().coerceAtLeast(160)
+            val cropLeft = ((srcW - cropSide) / 2).coerceAtLeast(0)
+            // Center vertically around y = 0.40 (road sign horizon)
+            val cropTop = ((srcH * 0.40f) - (cropSide * 0.5f)).toInt().coerceIn(0, (srcH - cropSide).coerceAtLeast(0))
+            val horizonRect = Rect(
+                cropLeft,
+                cropTop,
+                (cropLeft + cropSide).coerceAtMost(srcW),
+                (cropTop + cropSide).coerceAtMost(srcH),
+            )
+            allCandidates.addAll(runTileInference(interp, bitmap, horizonRect, srcW, srcH))
         }
 
-        val pixels = IntArray(inputWidth * inputHeight)
-        scaled.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
+        // Verify candidate bounding boxes against sign color/contrast geometry to reject indoor/roadworks false positives
+        val verified = allCandidates.filter { det ->
+            SignRoiExtractor.verifyYoloDetectionBox(
+                bitmap = bitmap,
+                normLeft = det.normalizedLeft,
+                normTop = det.normalizedTop,
+                normRight = det.normalizedRight,
+                normBottom = det.normalizedBottom,
+                category = det.category,
+            )
+        }
 
-        val inputBuffer = if (inputDataType == DataType.UINT8) {
-            ByteBuffer.allocateDirect(inputWidth * inputHeight * 3).order(ByteOrder.nativeOrder()).apply {
-                for (px in pixels) {
-                    put(Color.red(px).toByte())
-                    put(Color.green(px).toByte())
-                    put(Color.blue(px).toByte())
-                }
-                rewind()
+        return applyNms(verified, NMS_IOU_THRESHOLD)
+    }
+
+    private fun runTileInference(
+        interp: Interpreter,
+        sourceBitmap: Bitmap,
+        srcRect: Rect,
+        fullWidth: Int,
+        fullHeight: Int,
+    ): List<YoloSignDetection> {
+        val lbBmp = letterboxBitmap ?: return emptyList()
+        val lbCanvas = letterboxCanvas ?: return emptyList()
+        val outArr = reusableOutArr ?: return emptyList()
+
+        val tileW = srcRect.width().coerceAtLeast(1)
+        val tileH = srcRect.height().coerceAtLeast(1)
+
+        // Uniform scale to preserve exact 1:1 aspect ratio of circular/triangular signs
+        val scale = min(inputWidth.toFloat() / tileW.toFloat(), inputHeight.toFloat() / tileH.toFloat())
+        val drawnW = tileW * scale
+        val drawnH = tileH * scale
+        val padX = (inputWidth - drawnW) * 0.5f
+        val padY = (inputHeight - drawnH) * 0.5f
+
+        // Fill letterbox background with neutral YOLO grey (114, 114, 114)
+        lbCanvas.drawColor(Color.rgb(114, 114, 114))
+        val dstRect = RectF(padX, padY, padX + drawnW, padY + drawnH)
+        lbCanvas.drawBitmap(sourceBitmap, srcRect, dstRect, bitmapPaint)
+
+        lbBmp.getPixels(reusablePixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
+
+        val inputBuffer: ByteBuffer = if (inputDataType == DataType.UINT8) {
+            val buf = reusableUint8Buffer ?: return emptyList()
+            buf.clear()
+            for (px in reusablePixels) {
+                buf.put(Color.red(px).toByte())
+                buf.put(Color.green(px).toByte())
+                buf.put(Color.blue(px).toByte())
             }
+            buf.rewind()
+            buf
         } else {
-            ByteBuffer.allocateDirect(4 * inputWidth * inputHeight * 3).order(ByteOrder.nativeOrder()).apply {
-                for (px in pixels) {
-                    putFloat(Color.red(px) / 255f)
-                    putFloat(Color.green(px) / 255f)
-                    putFloat(Color.blue(px) / 255f)
-                }
-                rewind()
+            val buf = reusableFloatBuffer ?: return emptyList()
+            buf.clear()
+            val inv255 = 1f / 255f
+            for (px in reusablePixels) {
+                buf.putFloat(((px shr 16) and 0xFF) * inv255)
+                buf.putFloat(((px shr 8) and 0xFF) * inv255)
+                buf.putFloat((px and 0xFF) * inv255)
             }
+            buf.rewind()
+            buf
         }
 
         return runCatching {
-            if (outputShape.size < 3) return emptyList()
-            val d1 = outputShape[1]
-            val d2 = outputShape[2]
-            val outArr = Array(1) { Array(d1) { FloatArray(d2) } }
             interp.run(inputBuffer, outArr)
 
-            // Ultralytics YOLO11 TFLite output is typically [1, 4 + NC, numBoxes]
+            val d1 = outputShape[1]
+            val d2 = outputShape[2]
             val numClasses = labels.size
             val isChannelsFirst = (d1 == 4 + numClasses) || (d1 < d2)
             val numBoxes = if (isChannelsFirst) d2 else d1
@@ -161,7 +259,7 @@ class LiteRtYoloSignDetector @Inject constructor(
             val classCount = min(numClasses, (channels - 4).coerceAtLeast(0))
             if (classCount <= 0) return emptyList()
 
-            val candidates = ArrayList<YoloSignDetection>()
+            val results = ArrayList<YoloSignDetection>()
             for (b in 0 until numBoxes) {
                 var bestCls = -1
                 var bestScore = CONFIDENCE_THRESHOLD
@@ -179,36 +277,47 @@ class LiteRtYoloSignDetector @Inject constructor(
                 var bw = if (isChannelsFirst) outArr[0][2][b] else outArr[0][b][2]
                 var bh = if (isChannelsFirst) outArr[0][3][b] else outArr[0][b][3]
 
-                // Support both normalized [0..1] and pixel [0..inputSize] coordinates
-                if (cx > 2f || cy > 2f || bw > 2f || bh > 2f) {
-                    cx /= inputWidth.toFloat()
-                    cy /= inputHeight.toFloat()
-                    bw /= inputWidth.toFloat()
-                    bh /= inputHeight.toFloat()
+                // Convert normalized [0..1] model coords to [0..inputSize] pixel coords for un-letterboxing
+                if (cx <= 2f && cy <= 2f && bw <= 2f && bh <= 2f) {
+                    cx *= inputWidth.toFloat()
+                    cy *= inputHeight.toFloat()
+                    bw *= inputWidth.toFloat()
+                    bh *= inputHeight.toFloat()
                 }
 
-                val left = (cx - bw / 2f).coerceIn(0f, 1f)
-                val top = (cy - bh / 2f).coerceIn(0f, 1f)
-                val right = (cx + bw / 2f).coerceIn(0f, 1f)
-                val bottom = (cy + bh / 2f).coerceIn(0f, 1f)
-                if (right - left < 0.02f || bottom - top < 0.02f) continue
+                // Un-letterbox from [0..inputWidth, 0..inputHeight] back to source tile pixels, then full-frame normalized [0..1]
+                val tileLeftPx = (cx - bw * 0.5f - padX) / scale
+                val tileTopPx = (cy - bh * 0.5f - padY) / scale
+                val tileRightPx = (cx + bw * 0.5f - padX) / scale
+                val tileBottomPx = (cy + bh * 0.5f - padY) / scale
+
+                val fullLeft = ((srcRect.left + tileLeftPx) / fullWidth.toFloat()).coerceIn(0f, 1f)
+                val fullTop = ((srcRect.top + tileTopPx) / fullHeight.toFloat()).coerceIn(0f, 1f)
+                val fullRight = ((srcRect.left + tileRightPx) / fullWidth.toFloat()).coerceIn(0f, 1f)
+                val fullBottom = ((srcRect.top + tileBottomPx) / fullHeight.toFloat()).coerceIn(0f, 1f)
+
+                val normW = fullRight - fullLeft
+                val normH = fullBottom - fullTop
+                if (normW < 0.015f || normH < 0.015f || normW > 0.65f || normH > 0.65f) continue
 
                 val labelName = labels.getOrNull(bestCls) ?: continue
                 val category = mapLabelToCategory(labelName) ?: continue
-                candidates.add(
+                // Require higher confidence for ROADWORKS to prevent yellow-object false positives
+                if (category == TrafficSignCategory.ROADWORKS && bestScore < 0.58f) continue
+
+                results.add(
                     YoloSignDetection(
                         category = category,
                         label = labelName,
                         confidence = bestScore.coerceIn(0f, 0.99f),
-                        normalizedLeft = left,
-                        normalizedTop = top,
-                        normalizedRight = right,
-                        normalizedBottom = bottom,
+                        normalizedLeft = fullLeft,
+                        normalizedTop = fullTop,
+                        normalizedRight = fullRight,
+                        normalizedBottom = fullBottom,
                     ),
                 )
             }
-
-            applyNms(candidates, NMS_IOU_THRESHOLD)
+            results
         }.getOrDefault(emptyList())
     }
 

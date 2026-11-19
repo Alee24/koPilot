@@ -135,4 +135,51 @@ class OfflineSymbolSignDetectorTest {
         assertNotNull(result)
         assertEquals(TrafficSignCategory.ROUNDABOUT, result?.category)
     }
+
+    @Test
+    fun `detects KEEP_LEFT blue circle with diagonal white arrow and rejects empty indoor clutter`() {
+        val colorMask = Array(24) { arrayOfNulls<SignRoiColor>(24) }
+        val darkMask = Array(24) { BooleanArray(24) }
+        val whiteMask = Array(24) { BooleanArray(24) }
+
+        for (r in 2..21) {
+            for (c in 2..21) {
+                colorMask[r][c] = SignRoiColor.BLUE
+            }
+        }
+        // Diagonal white arrow from upper-right (rows 6..11, cols 12..17) to lower-left (rows 12..17, cols 6..11)
+        for (r in 6..11) {
+            for (c in 12..17) {
+                colorMask[r][c] = null
+                whiteMask[r][c] = true
+            }
+        }
+        for (r in 12..17) {
+            for (c in 6..11) {
+                colorMask[r][c] = null
+                whiteMask[r][c] = true
+            }
+        }
+
+        val keepLeft = OfflineSymbolSignDetector.classifyGrid(
+            colorMask = colorMask,
+            darkMask = darkMask,
+            whiteMask = whiteMask,
+            dominantColor = SignRoiColor.BLUE,
+            normalizedCenterX = 0.3f,
+        )
+        assertNotNull(keepLeft)
+        assertEquals(TrafficSignCategory.KEEP_LEFT, keepLeft?.category)
+
+        // Indoor scene with no sign colors -> must return null (zero false positives)
+        val emptyIndoorColor = Array(24) { arrayOfNulls<SignRoiColor>(24) }
+        val indoorNull = OfflineSymbolSignDetector.classifyGrid(
+            colorMask = emptyIndoorColor,
+            darkMask = darkMask,
+            whiteMask = whiteMask,
+            dominantColor = SignRoiColor.YELLOW,
+            normalizedCenterX = 0.5f,
+        )
+        org.junit.Assert.assertNull(indoorNull)
+    }
 }

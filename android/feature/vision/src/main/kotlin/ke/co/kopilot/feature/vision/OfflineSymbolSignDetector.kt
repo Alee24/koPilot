@@ -116,7 +116,7 @@ object OfflineSymbolSignDetector {
             return classifyWarningTriangleInterior(darkMask, normalizedCenterX)
         }
 
-        // 3. Blue-dominant circular mandatory signs (e.g., Roundabout)
+        // 3. Blue-dominant circular mandatory signs (Roundabout & Keep Left)
         if (dominantColor == SignRoiColor.BLUE && dominantFill >= 0.30f && midSpan >= 10f) {
             val ringWhite = (
                 regionRatio(whiteMask, 6..8, 7..16) +
@@ -129,6 +129,20 @@ object OfflineSymbolSignDetector {
                 return RawSignDetection(
                     category = TrafficSignCategory.ROUNDABOUT,
                     confidence = 0.73f,
+                    normalizedCenterX = normalizedCenterX.coerceIn(0f, 1f),
+                )
+            }
+            // Keep Left: diagonal white arrow from upper-right quadrant toward lower-left quadrant
+            val upperRightWhite = regionRatio(whiteMask, 6..11, 12..17)
+            val lowerLeftWhite = regionRatio(whiteMask, 12..17, 6..11)
+            val upperLeftWhite = regionRatio(whiteMask, 6..11, 6..11)
+            val lowerRightWhite = regionRatio(whiteMask, 12..17, 12..17)
+            val diagMain = (upperRightWhite + lowerLeftWhite) * 0.5f
+            val diagOff = (upperLeftWhite + lowerRightWhite) * 0.5f
+            if (diagMain >= 0.20f && diagMain > diagOff * 1.55f) {
+                return RawSignDetection(
+                    category = TrafficSignCategory.KEEP_LEFT,
+                    confidence = 0.72f,
                     normalizedCenterX = normalizedCenterX.coerceIn(0f, 1f),
                 )
             }
@@ -151,6 +165,22 @@ object OfflineSymbolSignDetector {
             return RawSignDetection(
                 category = TrafficSignCategory.SPEED_BUMP,
                 confidence = 0.74f,
+                normalizedCenterX = normalizedCenterX.coerceIn(0f, 1f),
+            )
+        }
+
+        // Red-triangle Roundabout (W6): dark circular ring around center (rows 9..16, cols 8..15) with lighter hollow center (11..14, 10..13)
+        val ringDark = (
+            regionRatio(darkMask, 9..10, 9..14) +
+                regionRatio(darkMask, 15..16, 9..14) +
+                regionRatio(darkMask, 11..14, 8..9) +
+                regionRatio(darkMask, 11..14, 14..15)
+            ) / 4f
+        val coreDark = regionRatio(darkMask, 11..14, 10..13)
+        if (ringDark >= 0.18f && ringDark > coreDark * 1.6f) {
+            return RawSignDetection(
+                category = TrafficSignCategory.ROUNDABOUT,
+                confidence = 0.72f,
                 normalizedCenterX = normalizedCenterX.coerceIn(0f, 1f),
             )
         }
