@@ -76,6 +76,16 @@ fun SettingsScreen(
     val savedBackendUrl by viewModel.backendUrl.collectAsStateWithLifecycle()
     val savedOpenAiKey by viewModel.openAiKey.collectAsStateWithLifecycle()
     val savedGoogleKey by viewModel.googleMapsKey.collectAsStateWithLifecycle()
+    val obdConnState by viewModel.obdConnectionState.collectAsStateWithLifecycle()
+    val obdStatusMsg by viewModel.obdStatusMessage.collectAsStateWithLifecycle()
+    val obdTelemetry by viewModel.liveObdTelemetry.collectAsStateWithLifecycle()
+    val pairedDevices by viewModel.pairedDevices.collectAsStateWithLifecycle()
+    val discoveredDevices by viewModel.discoveredObdDevices.collectAsStateWithLifecycle()
+    var showObdAdapterPicker by remember { mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(bluetoothPermissionGranted) {
+        viewModel.refreshPairedBluetoothDevices(bluetoothPermissionGranted)
+    }
 
     var backendUrlInput by remember(savedBackendUrl) { mutableStateOf(savedBackendUrl) }
     var openAiKeyInput by remember(savedOpenAiKey) { mutableStateOf(savedOpenAiKey) }
@@ -126,6 +136,145 @@ fun SettingsScreen(
             if (statusBanner != null) {
                 SettingsCard {
                     Text(statusBanner!!, color = KoPilotClusterTokens.PrimaryAccent, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            // 0. Top Quick Connect OBD-II Card (no scrolling required, auto-connects once paired on app start)
+            SettingsCard {
+                val isConnected = obdConnState == ke.co.kopilot.feature.diagnostics.ObdConnectionState.CONNECTED
+                val isConnecting = obdConnState == ke.co.kopilot.feature.diagnostics.ObdConnectionState.CONNECTING ||
+                    obdConnState == ke.co.kopilot.feature.diagnostics.ObdConnectionState.PAIRING ||
+                    obdConnState == ke.co.kopilot.feature.diagnostics.ObdConnectionState.ADAPTER_INITIALIZING ||
+                    obdConnState == ke.co.kopilot.feature.diagnostics.ObdConnectionState.ECU_CONNECTING ||
+                    obdConnState == ke.co.kopilot.feature.diagnostics.ObdConnectionState.RECONNECTING ||
+                    obdConnState == ke.co.kopilot.feature.diagnostics.ObdConnectionState.SCANNING
+                val savedName = settings.lastObdDeviceName.ifBlank { "Paired OBD-II Adapter" }
+                val savedAddr = settings.lastObdDeviceAddress
+
+                SectionTitle(
+                    title = "OBD-II Quick Connect",
+                    subtitle = if (savedAddr.isNotBlank()) {
+                        "Paired: $savedName ($savedAddr) • Auto-connects on app start"
+                    } else {
+                        "Pair & connect your Bluetooth OBD-II adapter. Once paired, KoPilot connects automatically when you start the app."
+                    },
+                )
+                Text(
+                    text = buildString {
+                        append("Status: ${obdConnState.name.replace('_', ' ')}")
+                        if (obdStatusMsg.isNotBlank()) append(" — $obdStatusMsg")
+                        if (isConnected) {
+                            obdTelemetry.engineRpm?.let { append(" • $it RPM") }
+                            (obdTelemetry.controlModuleVoltageV ?: obdTelemetry.adapterVoltageV)?.let {
+                                append(" • ${"%.1f".format(it)}V")
+                            }
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (isConnected) KoPilotClusterTokens.SmoothRoad else KoPilotClusterTokens.PrimaryAccent,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(
+                        onClick = {
+                            if (isConnected) {
+                                viewModel.disconnectObd()
+                            } else {
+                                val connectedImmediately = viewModel.quickConnectObd(bluetoothPermissionGranted)
+                                if (!connectedImmediately) {
+                                    showObdAdapterPicker = true
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1.2f).height(48.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isConnected) KoPilotClusterTokens.VeryRough else KoPilotClusterTokens.PrimaryAccent,
+                            contentColor = if (isConnected) androidx.compose.ui.graphics.Color.White else KoPilotClusterTokens.Background,
+                        ),
+                    ) {
+                        Text(
+                            text = when {
+                                isConnected -> "Disconnect OBD"
+                                isConnecting -> "Connecting..."
+                                savedAddr.isNotBlank() -> "Connect OBD"
+                                else -> "Connect OBD"
+                            },
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            showObdAdapterPicker = !showObdAdapterPicker
+                            if (showObdAdapterPicker) {
+                                viewModel.startObdDiscovery(bluetoothPermissionGranted)
+                            } else {
+                                viewModel.stopObdDiscovery()
+                            }
+                        },
+                        modifier = Modifier.weight(1f).height(48.dp),
+                    ) {
+                        Text(
+                            text = if (showObdAdapterPicker) "Hide Adapters" else "Select Adapter",
+                            color = KoPilotClusterTokens.PrimaryText,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = onOpenObd,
+                    modifier = Modifier.fillMaxWidth().height(42.dp),
+                ) {
+                    Text("Open Full OBD-II & ECU Gauges", color = KoPilotClusterTokens.PrimaryAccent)
+                }
+
+                if (showObdAdapterPicker) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Tap an adapter below to pair & auto-connect on startup:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = KoPilotClusterTokens.SecondaryText,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    val allAdapters = remember(pairedDevices, discoveredDevices) {
+                        val map = LinkedHashMap<String, String>()
+                        pairedDevices.forEach { map[it.address] = "${it.name} (Paired)" }
+                        discoveredDevices.forEach {
+                            if (!map.containsKey(it.address)) {
+                                map[it.address] = it.name
+                            }
+                        }
+                        map.entries.toList()
+                    }
+                    if (allAdapters.isEmpty()) {
+                        Text(
+                            text = "No paired Bluetooth adapters found yet. Ensure Bluetooth is ON and your OBD-II adapter is powered.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = KoPilotClusterTokens.SecondaryText,
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            allAdapters.forEach { (addr, label) ->
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.connectObd(addr, bluetoothPermissionGranted, label.removeSuffix(" (Paired)"))
+                                        showObdAdapterPicker = false
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        text = "$label • $addr",
+                                        color = KoPilotClusterTokens.PrimaryText,
+                                        fontWeight = if (addr == savedAddr) FontWeight.Bold else FontWeight.Normal,
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

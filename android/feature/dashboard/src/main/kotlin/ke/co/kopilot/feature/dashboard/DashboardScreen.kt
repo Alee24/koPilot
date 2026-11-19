@@ -513,6 +513,7 @@ private fun ViewportCard(
     viewModel: DashboardViewModel,
     isFullscreen: Boolean = false,
     onToggleFullscreen: () -> Unit = {},
+    showOverlayControls: Boolean = true,
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -624,10 +625,10 @@ private fun ViewportCard(
                                 style = Stroke(width = 3.dp.toPx()),
                             )
                         }
-                        // Drivable road surface coloring + yellow lane lines when driving with camera active
-                        if (state.isDrivingSessionActive && state.settings.sensorCameraEnabled) {
+                        // Drivable road surface coloring + blue lane lines when in standalone ViewportCard
+                        if (showOverlayControls && state.isDrivingSessionActive && state.settings.sensorCameraEnabled) {
                             val lane = state.visionState.laneOverlay
-                            val yellowLane = Color(0xFFFFD600)
+                            val blueLane = Color(0xFF00B0FF)
                             val alertRed = Color(0xFFFF5252)
                             val isShifting = lane.shiftEvent != LaneShiftEvent.NONE
 
@@ -646,7 +647,7 @@ private fun ViewportCard(
                                 }
                                 drawPath(
                                     path = roadPath,
-                                    color = if (isShifting) alertRed.copy(alpha = 0.22f) else MintTeal.copy(alpha = 0.22f),
+                                    color = if (isShifting) alertRed.copy(alpha = 0.22f) else blueLane.copy(alpha = 0.18f),
                                 )
                             }
 
@@ -654,11 +655,11 @@ private fun ViewportCard(
                             val lBot = Offset(lane.leftBottomX * size.width, lane.leftBottomY * size.height)
                             val rTop = Offset(lane.rightTopX * size.width, lane.rightTopY.coerceAtLeast(0.50f) * size.height)
                             val rBot = Offset(lane.rightBottomX * size.width, lane.rightBottomY * size.height)
-                            val leftColor = if (lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_LEFT || lane.shiftEvent == LaneShiftEvent.SHIFTING_LEFT) alertRed else yellowLane
-                            val rightColor = if (lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_RIGHT || lane.shiftEvent == LaneShiftEvent.SHIFTING_RIGHT) alertRed else yellowLane
+                            val leftColor = if (lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_LEFT || lane.shiftEvent == LaneShiftEvent.SHIFTING_LEFT) alertRed else blueLane
+                            val rightColor = if (lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_RIGHT || lane.shiftEvent == LaneShiftEvent.SHIFTING_RIGHT) alertRed else blueLane
                             val dashEffect = if (lane.lanesDetected) null else PathEffect.dashPathEffect(floatArrayOf(18f, 14f), 0f)
                             val laneStroke = if (lane.lanesDetected) 4.dp.toPx() else 2.5.dp.toPx()
-                            val laneAlpha = if (lane.lanesDetected) 0.95f else 0.55f
+                            val laneAlpha = if (lane.lanesDetected) 0.95f else 0.70f
 
                             drawLine(
                                 color = leftColor.copy(alpha = laneAlpha),
@@ -676,8 +677,8 @@ private fun ViewportCard(
                             )
                         }
                     }
-                    // Lane / Turn status pill at bottom-center of camera viewport
-                    if (state.isDrivingSessionActive) {
+                    // Lane / Turn status pill at bottom-center of camera viewport (only when standalone overlay controls shown)
+                    if (showOverlayControls && state.isDrivingSessionActive) {
                         val lat = state.motionAnalysis.lateralState
                         val shift = state.visionState.laneOverlay.shiftEvent
                         val laneBadgeText = when {
@@ -752,173 +753,183 @@ private fun ViewportCard(
                 )
             }
 
-            // Top-left View + LIVE badge
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(10.dp),
-                shape = RoundedCornerShape(50),
-                color = Color(0xCC0D141C),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+            if (showOverlayControls) {
+                // Top-left View + LIVE badge
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(10.dp),
+                    shape = RoundedCornerShape(50),
+                    color = Color(0xCC0D141C),
                 ) {
-                    Icon(
-                        imageVector = if (state.settings.cameraPrimaryLayout) Icons.Default.Videocam else Icons.Default.Navigation,
-                        contentDescription = null,
-                        tint = MintTeal,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = if (state.settings.cameraPrimaryLayout) "Camera View" else "Map View",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    if (state.cameraStatus.isPreviewActive) {
-                        Spacer(Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF198754))
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                        ) {
-                            Text("● LIVE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = if (state.settings.cameraPrimaryLayout) Icons.Default.Videocam else Icons.Default.Navigation,
+                            contentDescription = null,
+                            tint = MintTeal,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (state.settings.cameraPrimaryLayout) "Camera View" else "Map View",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        if (state.cameraStatus.isPreviewActive) {
+                            Spacer(Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color(0xFF198754))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                            ) {
+                                Text("● LIVE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
-            }
 
-            // Top-right controls (Zoom pill when in Camera view + Expand/Swap button)
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(10.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (state.settings.cameraPrimaryLayout) {
-                    Surface(
-                        modifier = Modifier.clickable(onClick = viewModel::cycleCameraZoom),
-                        shape = RoundedCornerShape(50),
-                        color = Color(0xCC0D141C),
-                    ) {
-                        Text(
-                            text = "Auto ${"%.1f".format(state.visionState.recommendedZoomRatio)}x",
-                            color = MintTeal,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        )
-                    }
-                } else {
-                    val dest = state.navigationState.destinationLatLng
-                    val destName = state.navigationState.destinationName ?: "Destination"
-                    if (dest != null) {
-                        val ctx = LocalContext.current
+                // Top-right controls (Zoom pill when in Camera view + Expand/Swap button)
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (state.settings.cameraPrimaryLayout) {
                         Surface(
-                            modifier = Modifier.clickable {
-                                val navUri = Uri.parse("google.navigation:q=${dest.latitude},${dest.longitude}&mode=d")
-                                val intent = Intent(Intent.ACTION_VIEW, navUri).apply {
-                                    setPackage("com.google.android.apps.maps")
-                                }
-                                runCatching { ctx.startActivity(intent) }.onFailure {
-                                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:${dest.latitude},${dest.longitude}?q=${dest.latitude},${dest.longitude}(${Uri.encode(destName)})")))
-                                }
-                            },
+                            modifier = Modifier.clickable(onClick = viewModel::cycleCameraZoom),
                             shape = RoundedCornerShape(50),
-                            color = NavBlue,
+                            color = Color(0xCC0D141C),
                         ) {
                             Text(
-                                text = "Google Maps",
-                                color = Color.White,
-                                fontSize = 11.sp,
+                                text = "Zoom ${"%.1f".format(state.visionState.recommendedZoomRatio)}x",
+                                color = MintTeal,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             )
                         }
+                    } else {
+                        val dest = state.navigationState.destinationLatLng
+                        val destName = state.navigationState.destinationName ?: "Destination"
+                        if (dest != null) {
+                            val ctx = LocalContext.current
+                            Surface(
+                                modifier = Modifier.clickable {
+                                    val navUri = Uri.parse("google.navigation:q=${dest.latitude},${dest.longitude}&mode=d")
+                                    val intent = Intent(Intent.ACTION_VIEW, navUri).apply {
+                                        setPackage("com.google.android.apps.maps")
+                                    }
+                                    runCatching { ctx.startActivity(intent) }.onFailure {
+                                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:${dest.latitude},${dest.longitude}?q=${dest.latitude},${dest.longitude}(${Uri.encode(destName)})")))
+                                    }
+                                },
+                                shape = RoundedCornerShape(50),
+                                color = NavBlue,
+                            ) {
+                                Text(
+                                    text = "Google Maps",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                )
+                            }
+                        }
+                    }
+                    Surface(
+                        modifier = Modifier.clickable(onClick = viewModel::toggleCameraPrimaryLayout),
+                        shape = RoundedCornerShape(50),
+                        color = Color(0xCC0D141C),
+                    ) {
+                        Text(
+                            text = if (state.settings.cameraPrimaryLayout) "Map View" else "Camera View",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
+                    }
+                    Surface(
+                        modifier = Modifier.clickable(onClick = onToggleFullscreen),
+                        shape = RoundedCornerShape(50),
+                        color = Color(0xCC0D141C),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                imageVector = if (isFullscreen) Icons.Default.CloseFullscreen else Icons.Default.OpenInFull,
+                                contentDescription = if (isFullscreen) "Exit Fullscreen" else "Fullscreen Camera",
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Text(
+                                text = if (isFullscreen) "Exit Full" else "Fullscreen",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
                     }
                 }
+
+                // Bottom-left monitoring status pill
                 Surface(
-                    modifier = Modifier.clickable(onClick = viewModel::toggleCameraPrimaryLayout),
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(10.dp),
                     shape = RoundedCornerShape(50),
                     color = Color(0xCC0D141C),
                 ) {
-                    Text(
-                        text = if (state.settings.cameraPrimaryLayout) "Map" else "Cam",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                    )
-                }
-                Surface(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clickable(onClick = onToggleFullscreen),
-                    shape = CircleShape,
-                    color = Color(0xCC0D141C),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Icon(
-                            imageVector = if (isFullscreen) Icons.Default.CloseFullscreen else Icons.Default.OpenInFull,
-                            contentDescription = if (isFullscreen) "Exit Fullscreen" else "Fullscreen Camera",
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp),
+                            imageVector = Icons.Default.MyLocation,
+                            contentDescription = null,
+                            tint = if (state.isDrivingSessionActive) MintTeal else Color(0xFF8C9EB2),
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = buildString {
+                                if (state.cameraStatus.isPreviewActive) {
+                                    val summary = state.visionState.trackedObjects
+                                        .take(2)
+                                        .joinToString(", ") { it.label }
+                                    append(
+                                        if (summary.isNotBlank()) {
+                                            "${state.visionState.trackedObjects.size} obj ($summary)"
+                                        } else {
+                                            "Scanning road"
+                                        },
+                                    )
+                                    state.visionState.lastDetectedPlate?.let { plate ->
+                                        append(" • $plate")
+                                    }
+                                    if (state.visionState.redBrakeLightsAhead) {
+                                        append(" • BRAKE LIGHTS")
+                                    } else if (state.visionState.isDarkScene) {
+                                        append(" • LOW LIGHT")
+                                    }
+                                } else {
+                                    append(state.cameraStatus.statusMessage)
+                                }
+                            },
+                            color = Color.White,
+                            fontSize = 11.sp,
                         )
                     }
-                }
-            }
-
-            // Bottom-left monitoring status pill
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(10.dp),
-                shape = RoundedCornerShape(50),
-                color = Color(0xCC0D141C),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MyLocation,
-                        contentDescription = null,
-                        tint = if (state.isDrivingSessionActive) MintTeal else Color(0xFF8C9EB2),
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = buildString {
-                            if (state.cameraStatus.isPreviewActive) {
-                                val summary = state.visionState.trackedObjects
-                                    .take(2)
-                                    .joinToString(", ") { it.label }
-                                append(
-                                    if (summary.isNotBlank()) {
-                                        "${state.visionState.trackedObjects.size} obj ($summary)"
-                                    } else {
-                                        "Scanning road"
-                                    },
-                                )
-                                state.visionState.lastDetectedPlate?.let { plate ->
-                                    append(" • $plate")
-                                }
-                                if (state.visionState.redBrakeLightsAhead) {
-                                    append(" • BRAKE LIGHTS")
-                                } else if (state.visionState.isDarkScene) {
-                                    append(" • LOW LIGHT")
-                                }
-                            } else {
-                                append(state.cameraStatus.statusMessage)
-                            }
-                        },
-                        color = Color.White,
-                        fontSize = 11.sp,
-                    )
                 }
             }
         }
@@ -2117,8 +2128,8 @@ private fun FullBleedArHudLanding(
     onOpenNavigation: () -> Unit,
     onToggleFullscreenCamera: () -> Unit,
 ) {
-    val hudGlassBg = Color(0xBF071019)
-    val hudGlassBorder = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.35f)
+    val hudGlassBg = Color(0xCC071019)
+    val hudGlassBorder = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.40f)
     val intel = state.intelligenceState
     val motion = state.motionAnalysis
     val stats = motion.behaviourStats
@@ -2146,110 +2157,253 @@ private fun FullBleedArHudLanding(
         label = "hudFuel",
     )
 
+    // Smooth sensor-driven horizontal bend for blue AR road lane lines:
+    // Positive = turning RIGHT (compass heading increasing / clockwise yaw / right turn) -> lines curve RIGHT (+X).
+    // Negative = turning LEFT (compass heading decreasing / counter-clockwise yaw / left turn) -> lines curve LEFT (-X).
+    val turnStateBiasDp = when (motion.lateralState) {
+        LateralMotionState.RIGHT_TURN -> 36f
+        LateralMotionState.LEFT_TURN -> -36f
+        LateralMotionState.LANE_SHIFT_RIGHT -> 20f
+        LateralMotionState.LANE_SHIFT_LEFT -> -20f
+        LateralMotionState.SHARP_CORNERING ->
+            if (state.compassReading.headingDeltaDegrees >= 0f || motion.yawRateRadPerSec < 0f) 52f else -52f
+        LateralMotionState.STRAIGHT -> 0f
+    }
+    val rawTurnRightDp = (
+        state.compassReading.headingDeltaDegrees * 1.8f +
+            (-motion.yawRateRadPerSec) * 58f +
+            (-motion.lateralAccelMps2) * 5.5f +
+            turnStateBiasDp
+        ).coerceIn(-120f, 120f)
+    val animatedTurnOffsetDp by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = rawTurnRightDp,
+        animationSpec = androidx.compose.animation.core.tween(140),
+        label = "hudLaneTurnOffset",
+    )
+    val animatedHorizonShiftDp by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = (motion.pitchDegrees * 0.8f).coerceIn(-18f, 18f),
+        animationSpec = androidx.compose.animation.core.tween(140),
+        label = "hudHorizonPitch",
+    )
+
     Box(modifier = modifier.background(KoPilotClusterTokens.Background)) {
-        // 1. Full-Bleed CameraX Feed Backdrop
+        // 1. Full-Bleed CameraX Feed Backdrop (suppress duplicate ViewportCard overlay pills so HUD buttons never overlap)
         ViewportCard(
             state = state,
             viewModel = viewModel,
             isFullscreen = true,
             onToggleFullscreen = onToggleFullscreenCamera,
+            showOverlayControls = false,
         )
 
-        // 2. Clearer Protective Vignette + Road-Adaptive AR Lane Vector Projection
-        val curveOffsetDp = (motion.yawRateRadPerSec * 45f + motion.lateralAccelMps2 * 8f).coerceIn(-65f, 65f)
-        val horizonShiftDp = (motion.pitchDegrees * 1.2f).coerceIn(-28f, 28f)
+        // 2. Road-Aligned Blue AR Lane Lines Moving with Sensors & Road Detection
+        val lane = state.visionState.laneOverlay
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawRect(
                 brush = Brush.verticalGradient(
-                    0.0f to Color(0x8C071019),
-                    0.22f to Color(0x00071019),
-                    0.56f to Color(0x1A071019),
+                    0.0f to Color(0x99071019),
+                    0.26f to Color(0x14071019),
+                    0.58f to Color(0x26071019),
                     1.0f to Color(0xEB071019),
                 ),
             )
-            val horizonY = (size.height * 0.52f + horizonShiftDp.dp.toPx()).coerceIn(size.height * 0.50f, size.height * 0.65f)
-            val bottomY = size.height * 0.84f
-            val cx = size.width * 0.5f
-            val targetX = cx + curveOffsetDp.dp.toPx()
 
-            // Horizon reticle line
-            drawLine(
-                color = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.32f),
-                start = Offset(20.dp.toPx(), horizonY),
-                end = Offset(size.width - 20.dp.toPx(), horizonY),
-                strokeWidth = 1.5.dp.toPx(),
-                pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 10f)),
-            )
+            // Align the blue HUD lines with the road corridor in the open camera viewport (above the speedometer card)
+            val horizonY = (size.height * 0.42f + animatedHorizonShiftDp.dp.toPx())
+                .coerceIn(size.height * 0.37f, size.height * 0.48f)
+            val bottomY = size.height * 0.62f
 
-            // Dual AR lane projection curves adapting to road turn / lateral motion
-            val dashEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(18f, 14f))
-            val leftPath = androidx.compose.ui.graphics.Path().apply {
-                moveTo(cx - size.width * 0.26f, bottomY)
-                quadraticTo(cx - size.width * 0.12f, (bottomY + horizonY) * 0.52f, targetX - 10.dp.toPx(), horizonY)
-            }
-            val rightPath = androidx.compose.ui.graphics.Path().apply {
-                moveTo(cx + size.width * 0.26f, bottomY)
-                quadraticTo(cx + size.width * 0.12f, (bottomY + horizonY) * 0.52f, targetX + 10.dp.toPx(), horizonY)
+            val useDetectedRoad = lane.lanesDetected || lane.roadSurfaceDetected
+            val baseLeftBotX = (if (useDetectedRoad) lane.leftBottomX.coerceIn(0.10f, 0.38f) else 0.16f) * size.width
+            val baseRightBotX = (if (useDetectedRoad) lane.rightBottomX.coerceIn(0.62f, 0.90f) else 0.84f) * size.width
+            val baseLeftTopX = (if (useDetectedRoad) lane.leftTopX.coerceIn(0.28f, 0.45f) else 0.37f) * size.width
+            val baseRightTopX = (if (useDetectedRoad) lane.rightTopX.coerceIn(0.55f, 0.72f) else 0.63f) * size.width
+
+            val turnShiftPx = animatedTurnOffsetDp.dp.toPx()
+            val topLeftX = (baseLeftTopX + turnShiftPx).coerceIn(size.width * 0.06f, size.width * 0.78f)
+            val topRightX = (baseRightTopX + turnShiftPx).coerceIn(topLeftX + 36.dp.toPx(), size.width * 0.94f)
+            val midY = (bottomY + horizonY) * 0.50f
+            val ctrlLeftX = (baseLeftBotX + topLeftX) * 0.5f + turnShiftPx * 0.55f
+            val ctrlRightX = (baseRightBotX + topRightX) * 0.5f + turnShiftPx * 0.55f
+
+            val hudBlue = Color(0xFF00B0FF)
+            val hudCyan = Color(0xFF18E2B8)
+            val isDeparting = lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_LEFT ||
+                lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_RIGHT
+            val primaryLineColor = if (isDeparting) Color(0xFFFF5252) else hudBlue
+
+            // Translucent blue road lane corridor fill aligned between the left and right lane curves
+            val corridorPath = Path().apply {
+                moveTo(baseLeftBotX, bottomY)
+                quadraticTo(ctrlLeftX, midY, topLeftX, horizonY)
+                lineTo(topRightX, horizonY)
+                quadraticTo(ctrlRightX, midY, baseRightBotX, bottomY)
+                close()
             }
             drawPath(
+                path = corridorPath,
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        primaryLineColor.copy(alpha = 0.06f),
+                        primaryLineColor.copy(alpha = 0.20f),
+                    ),
+                    startY = horizonY,
+                    endY = bottomY,
+                ),
+            )
+
+            // Horizon guidance line
+            drawLine(
+                color = hudCyan.copy(alpha = 0.35f),
+                start = Offset(24.dp.toPx(), horizonY),
+                end = Offset(size.width - 24.dp.toPx(), horizonY),
+                strokeWidth = 1.5.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f)),
+            )
+
+            // Perspective distance rungs across the lane corridor that bend with the turn
+            for (t in listOf(0.28f, 0.55f, 0.82f)) {
+                val u = 1f - t
+                val rungY = u * u * bottomY + 2f * u * t * midY + t * t * horizonY
+                val rungLeftX = u * u * baseLeftBotX + 2f * u * t * ctrlLeftX + t * t * topLeftX
+                val rungRightX = u * u * baseRightBotX + 2f * u * t * ctrlRightX + t * t * topRightX
+                drawLine(
+                    color = hudBlue.copy(alpha = 0.28f),
+                    start = Offset(rungLeftX + 6.dp.toPx(), rungY),
+                    end = Offset(rungRightX - 6.dp.toPx(), rungY),
+                    strokeWidth = 1.5.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
+                )
+            }
+
+            // Left & Right Blue Road-Aligned HUD Lane Lines (curve right when turning right, left when turning left)
+            val leftPath = Path().apply {
+                moveTo(baseLeftBotX, bottomY)
+                quadraticTo(ctrlLeftX, midY, topLeftX, horizonY)
+            }
+            val rightPath = Path().apply {
+                moveTo(baseRightBotX, bottomY)
+                quadraticTo(ctrlRightX, midY, topRightX, horizonY)
+            }
+            val dashEffect = if (lane.lanesDetected) null else PathEffect.dashPathEffect(floatArrayOf(22f, 12f))
+
+            // Outer glow
+            drawPath(
                 path = leftPath,
-                color = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.8f),
-                style = Stroke(width = 2.5.dp.toPx(), pathEffect = dashEffect, cap = StrokeCap.Round),
+                color = primaryLineColor.copy(alpha = 0.32f),
+                style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round),
             )
             drawPath(
                 path = rightPath,
-                color = KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.8f),
-                style = Stroke(width = 2.5.dp.toPx(), pathEffect = dashEffect, cap = StrokeCap.Round),
+                color = primaryLineColor.copy(alpha = 0.32f),
+                style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round),
+            )
+            // Crisp blue lane lines
+            drawPath(
+                path = leftPath,
+                color = primaryLineColor.copy(alpha = 0.95f),
+                style = Stroke(width = 3.5.dp.toPx(), pathEffect = dashEffect, cap = StrokeCap.Round),
+            )
+            drawPath(
+                path = rightPath,
+                color = primaryLineColor.copy(alpha = 0.95f),
+                style = Stroke(width = 3.5.dp.toPx(), pathEffect = dashEffect, cap = StrokeCap.Round),
             )
         }
 
-        // 3. Floating HUD Foreground Layers (Camera unobstructed in upper/mid area; Speedometer lowered above Safety Index)
+        // 3. Floating HUD Foreground Layers
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
-            // Top Floating Holographic Telemetry Pills
+            // ROW 1: Well-Labeled Non-Overlapping Top Camera Control Bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Surface(
                     onClick = onOpenMenu,
                     color = hudGlassBg,
-                    shape = CircleShape,
+                    shape = RoundedCornerShape(50),
                     border = BorderStroke(1.dp, hudGlassBorder),
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(9.dp)
-                                .background(KoPilotClusterTokens.PrimaryAccent, CircleShape),
+                        Icon(
+                            imageVector = Icons.Default.Menu,
+                            contentDescription = "Menu & Tools",
+                            tint = KoPilotClusterTokens.PrimaryAccent,
+                            modifier = Modifier.size(16.dp),
                         )
                         Text(
-                            text = "KOPILOT • HUD AR",
+                            text = "Menu",
                             style = MaterialTheme.typography.labelMedium,
-                            color = KoPilotClusterTokens.PrimaryAccent,
+                            color = KoPilotClusterTokens.PrimaryText,
                             fontWeight = FontWeight.Bold,
                         )
                     }
                 }
 
+                if (state.settings.cameraPrimaryLayout) {
+                    Surface(
+                        onClick = viewModel::cycleCameraZoom,
+                        color = hudGlassBg,
+                        shape = RoundedCornerShape(50),
+                        border = BorderStroke(1.dp, hudGlassBorder),
+                    ) {
+                        Text(
+                            text = "Zoom ${"%.1f".format(state.visionState.recommendedZoomRatio)}x",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = KoPilotClusterTokens.PrimaryAccent,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        )
+                    }
+                }
+
                 Surface(
-                    onClick = onOpenObdLive,
+                    onClick = viewModel::toggleCameraPrimaryLayout,
                     color = hudGlassBg,
-                    shape = CircleShape,
+                    shape = RoundedCornerShape(50),
                     border = BorderStroke(1.dp, hudGlassBorder),
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (state.settings.cameraPrimaryLayout) Icons.Default.Map else Icons.Default.Videocam,
+                            contentDescription = null,
+                            tint = KoPilotClusterTokens.SecondaryAccent,
+                            modifier = Modifier.size(15.dp),
+                        )
+                        Text(
+                            text = if (state.settings.cameraPrimaryLayout) "Map View" else "Cam View",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = KoPilotClusterTokens.PrimaryText,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+
+                Spacer(Modifier.weight(1f))
+
+                Surface(
+                    onClick = onOpenObdLive,
+                    color = hudGlassBg,
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, hudGlassBorder),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
                         Box(
                             modifier = Modifier
@@ -2263,25 +2417,25 @@ private fun FullBleedArHudLanding(
                             text = if (satCount > 0) "$satCount SAT" else "GPS",
                             style = MaterialTheme.typography.labelSmall,
                             color = if (satCount > 0) KoPilotClusterTokens.SmoothRoad else KoPilotClusterTokens.SecondaryText,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                         )
                         Text("•", color = KoPilotClusterTokens.SecondaryText, style = MaterialTheme.typography.labelSmall)
                         Text(
-                            text = if (obdConnected) "OBD LIVE" else "IMU",
+                            text = if (obdConnected) "OBD Live" else "OBD/IMU",
                             style = MaterialTheme.typography.labelSmall,
                             color = KoPilotClusterTokens.PrimaryAccent,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                         )
                     }
                 }
             }
 
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
 
-            // Compact Compass + Weather HUD Pills (without altering Camera HUD layout)
+            // ROW 2: 4x Bigger Weather & Compass HUD Cards with Large High-Visibility Icons
             var showLargeCompass by remember { mutableStateOf(false) }
             if (showLargeCompass) {
-                androidx.compose.material3.AlertDialog(
+                AlertDialog(
                     onDismissRequest = { showLargeCompass = false },
                     title = { Text("Compass Heading") },
                     text = {
@@ -2305,7 +2459,7 @@ private fun FullBleedArHudLanding(
                         }
                     },
                     confirmButton = {
-                        androidx.compose.material3.TextButton(onClick = { showLargeCompass = false }) {
+                        TextButton(onClick = { showLargeCompass = false }) {
                             Text("Close")
                         }
                     },
@@ -2315,104 +2469,181 @@ private fun FullBleedArHudLanding(
             if (state.settings.weatherHudEnabled || state.settings.compassHudEnabled) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (state.settings.weatherHudEnabled) {
                         val w = state.weatherState
-                        val weatherText = when {
-                            w.available && w.temperatureC != null -> {
-                                val temp = "${w.temperatureC!!.toInt()}°C"
-                                val ageSuffix = if (w.isStaleOfflineCache && w.fetchedAtMillis != null) {
-                                    val mins = ((System.currentTimeMillis() - w.fetchedAtMillis!!) / 60_000L).coerceAtLeast(1L)
-                                    " (${mins}m ago)"
-                                } else ""
-                                "${w.conditionSummary} · $temp$ageSuffix"
-                            }
-                            else -> "Weather unavailable"
+                        val tempHeadline = if (w.available && w.temperatureC != null) {
+                            "${w.temperatureC!!.toInt()}°C"
+                        } else {
+                            "--°C"
+                        }
+                        val condSubtitle = when {
+                            w.available -> w.conditionSummary.ifBlank { "Clear Sky" }
+                            else -> "Weather Standby"
                         }
                         val (weatherIcon, weatherTint) = remember(w.conditionSummary, w.available) {
                             val cond = w.conditionSummary.lowercase()
                             val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
                             val isNight = hour < 6 || hour >= 19
                             when {
-                                !w.available -> Icons.Default.Cloud to KoPilotClusterTokens.SecondaryText
+                                !w.available -> Icons.Default.WbCloudy to Color(0xFF94A3B8)
                                 cond.contains("rain") || cond.contains("drizzle") || cond.contains("storm") || cond.contains("thunder") ->
                                     Icons.Default.Grain to Color(0xFF38BDF8)
                                 cond.contains("cloud") || cond.contains("overcast") || cond.contains("fog") ->
-                                    Icons.Default.Cloud to Color(0xFFCBD5E1)
+                                    Icons.Default.WbCloudy to Color(0xFFE2E8F0)
                                 isNight -> Icons.Default.NightsStay to Color(0xFFFDE68A)
                                 else -> Icons.Default.WbSunny to Color(0xFFFACC15)
                             }
                         }
                         Surface(
                             color = hudGlassBg,
-                            shape = CircleShape,
-                            border = BorderStroke(1.dp, hudGlassBorder),
+                            shape = RoundedCornerShape(18.dp),
+                            border = BorderStroke(1.5.dp, weatherTint.copy(alpha = 0.55f)),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 84.dp),
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                Icon(
-                                    imageVector = weatherIcon,
-                                    contentDescription = w.conditionSummary,
-                                    tint = weatherTint,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                                Text(
-                                    text = weatherText,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (w.available && !w.isStaleOfflineCache) KoPilotClusterTokens.PrimaryText else KoPilotClusterTokens.SecondaryText,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(52.dp)
+                                        .background(weatherTint.copy(alpha = 0.18f), CircleShape)
+                                        .border(1.5.dp, weatherTint.copy(alpha = 0.7f), CircleShape),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = weatherIcon,
+                                        contentDescription = condSubtitle,
+                                        tint = weatherTint,
+                                        modifier = Modifier.size(34.dp),
+                                    )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "WEATHER",
+                                        fontSize = 10.sp,
+                                        color = weatherTint,
+                                        fontWeight = FontWeight.ExtraBold,
+                                    )
+                                    Text(
+                                        text = tempHeadline,
+                                        fontSize = 24.sp,
+                                        lineHeight = 26.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Black,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        text = condSubtitle,
+                                        fontSize = 12.sp,
+                                        color = KoPilotClusterTokens.PrimaryText,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
                         }
-                    } else {
-                        Spacer(Modifier.width(1.dp))
                     }
 
                     if (state.settings.compassHudEnabled) {
+                        val compass = state.compassReading
+                        val turnStatusText = when {
+                            compass.headingDeltaDegrees <= -20f -> "Turning Left"
+                            compass.headingDeltaDegrees >= 20f -> "Turning Right"
+                            else -> "Heading ${compass.cardinal} • ${compass.source}"
+                        }
                         Surface(
                             onClick = { showLargeCompass = true },
                             color = hudGlassBg,
-                            shape = CircleShape,
-                            border = BorderStroke(1.dp, hudGlassBorder),
+                            shape = RoundedCornerShape(18.dp),
+                            border = BorderStroke(1.5.dp, KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.65f)),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 84.dp),
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Explore,
-                                    contentDescription = "Compass",
-                                    tint = KoPilotClusterTokens.PrimaryAccent,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                                Text(
-                                    text = state.compassReading.formatted,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = KoPilotClusterTokens.PrimaryAccent,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(52.dp)
+                                        .background(KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.18f), CircleShape)
+                                        .border(2.dp, KoPilotClusterTokens.PrimaryAccent, CircleShape),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Explore,
+                                        contentDescription = "Compass",
+                                        tint = KoPilotClusterTokens.PrimaryAccent,
+                                        modifier = Modifier.size(36.dp),
+                                    )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "COMPASS",
+                                        fontSize = 10.sp,
+                                        color = KoPilotClusterTokens.PrimaryAccent,
+                                        fontWeight = FontWeight.ExtraBold,
+                                    )
+                                    Text(
+                                        text = "${compass.cardinal} · ${compass.degrees}°",
+                                        fontSize = 22.sp,
+                                        lineHeight = 25.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Black,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        text = turnStatusText,
+                                        fontSize = 12.sp,
+                                        color = if (kotlin.math.abs(compass.headingDeltaDegrees) >= 20f) {
+                                            KoPilotClusterTokens.ModerateRoad
+                                        } else {
+                                            KoPilotClusterTokens.PrimaryText
+                                        },
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
                         }
                     }
                 }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
             }
 
-            // Speed Limit Sign + Road Surface Glass Row
+            // ROW 3: Live Data Strip Replacing AI Speed Zone (Road Sign + Car Plate Informs + Muted Alerts + Road Surface)
+            val latestSignObs = state.visionState.lastObservation
+            val signTitle = latestSignObs?.let { it.customLabel ?: it.category.displayName }
+                ?: limitKmh?.let { "Speed Limit $it km/h" }
+                ?: "Scanning Signs"
+            val spottedPlate = state.visionState.lastDetectedPlate
+            val watchedPlates = state.settings.watchedPlatesList()
+            val isWatchedMatch = spottedPlate != null && watchedPlates.any {
+                it.replace(" ", "").equals(spottedPlate.replace(" ", ""), ignoreCase = true)
+            }
+            val alertsMuted = state.settings.alertsMuted
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // Live Road Sign + Car Plate Informs + Muted Alerts Card
                 Surface(
                     color = hudGlassBg,
                     shape = RoundedCornerShape(14.dp),
@@ -2420,42 +2651,92 @@ private fun FullBleedArHudLanding(
                     modifier = Modifier.weight(1f),
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        // 1. Live Road Sign Badge
                         Box(
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(38.dp)
                                 .background(Color.White, CircleShape)
-                                .border(2.5.dp, Color(0xFFDC2626), CircleShape),
+                                .border(3.dp, Color(0xFFDC2626), CircleShape),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = limitKmh?.toString() ?: "--",
+                                text = limitKmh?.toString()
+                                    ?: latestSignObs?.category?.displayName?.take(3)?.uppercase()
+                                    ?: "--",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = KoPilotClusterTokens.Background,
                                 fontWeight = FontWeight.Black,
                             )
                         }
+
+                        // 2. Road Sign & Car Plate Live Information
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "AI SPEED ZONE",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = KoPilotClusterTokens.PrimaryAccent,
+                                text = "Sign: $signTitle",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color.White,
                                 fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                text = state.navigationState.destinationName ?: "Kenyan Corridor",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = KoPilotClusterTokens.PrimaryText,
+                                text = when {
+                                    spottedPlate != null && isWatchedMatch -> "Plate: $spottedPlate (WATCHLIST!)"
+                                    spottedPlate != null -> "Plate: $spottedPlate"
+                                    watchedPlates.isNotEmpty() -> "Plate: Scanning (${watchedPlates.size} watched)"
+                                    else -> "Plate: Scanning Road Ahead"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isWatchedMatch) KoPilotColors.DangerRed else KoPilotClusterTokens.PrimaryAccent,
+                                fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+
+                        // 3. Muted Alerts Live Status & Toggle Button
+                        Surface(
+                            onClick = viewModel::toggleAlertsMute,
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (alertsMuted) Color(0xFF3E1018) else Color(0xFF0E2E28),
+                            border = BorderStroke(
+                                1.dp,
+                                if (alertsMuted) KoPilotColors.DangerRed else KoPilotClusterTokens.SmoothRoad,
+                            ),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Icon(
+                                    imageVector = if (alertsMuted) {
+                                        Icons.AutoMirrored.Filled.VolumeOff
+                                    } else {
+                                        Icons.AutoMirrored.Filled.VolumeUp
+                                    },
+                                    contentDescription = if (alertsMuted) "Alerts Muted" else "Alerts Active",
+                                    tint = if (alertsMuted) KoPilotColors.DangerRed else KoPilotClusterTokens.SmoothRoad,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Text(
+                                    text = if (alertsMuted) "Muted" else "Alerts On",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
                     }
                 }
 
+                // Road Surface Score Tile
                 Surface(
                     onClick = onOpenRoadQuality,
                     color = hudGlassBg,
@@ -2470,11 +2751,11 @@ private fun FullBleedArHudLanding(
                         RoadVibrationLevel.UNKNOWN -> KoPilotClusterTokens.SecondaryText
                     }
                     Column(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                         horizontalAlignment = Alignment.End,
                     ) {
                         Text(
-                            text = "ROAD SURFACE",
+                            text = "ROAD",
                             style = MaterialTheme.typography.labelSmall,
                             color = KoPilotClusterTokens.SecondaryText,
                         )
@@ -2671,7 +2952,7 @@ private fun FullBleedArHudLanding(
                     }
                 }
 
-                // Quick Voice, Start/Stop Drive & Navigation Actions
+                // Bottom Action Buttons — All Clearly Labeled (Stop Drive, Voice, Navigate)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2681,7 +2962,7 @@ private fun FullBleedArHudLanding(
                             if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
                         },
                         modifier = Modifier
-                            .weight(1f)
+                            .weight(1.1f)
                             .height(48.dp),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -2689,8 +2970,14 @@ private fun FullBleedArHudLanding(
                             contentColor = if (state.isDrivingSessionActive) Color.White else KoPilotClusterTokens.Background,
                         ),
                     ) {
+                        Icon(
+                            imageVector = if (state.isDrivingSessionActive) Icons.Default.Stop else Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
                         Text(
-                            text = if (state.isDrivingSessionActive) "Stop Drive" else "Start Driving",
+                            text = if (state.isDrivingSessionActive) "Stop Drive" else "Start Drive",
                             fontWeight = FontWeight.Black,
                             maxLines = 1,
                         )
@@ -2707,13 +2994,13 @@ private fun FullBleedArHudLanding(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Mic,
-                            contentDescription = null,
+                            contentDescription = "Voice",
                             tint = KoPilotClusterTokens.PrimaryAccent,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(17.dp),
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            text = if (state.voiceState.isListening) "Listening" else "Voice",
+                            text = if (state.voiceState.isListening) "Listening" else "Voice AI",
                             color = KoPilotClusterTokens.PrimaryText,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
@@ -2722,7 +3009,9 @@ private fun FullBleedArHudLanding(
 
                     OutlinedButton(
                         onClick = onOpenNavigation,
-                        modifier = Modifier.height(48.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.outlinedButtonColors(containerColor = hudGlassBg),
                         border = BorderStroke(1.dp, hudGlassBorder),
@@ -2731,7 +3020,14 @@ private fun FullBleedArHudLanding(
                             imageVector = Icons.Default.Navigation,
                             contentDescription = "Navigate",
                             tint = KoPilotClusterTokens.SecondaryAccent,
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(17.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "Navigate",
+                            color = KoPilotClusterTokens.PrimaryText,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
                         )
                     }
                 }

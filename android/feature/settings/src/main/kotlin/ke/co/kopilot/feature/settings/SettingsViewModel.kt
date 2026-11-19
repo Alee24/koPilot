@@ -264,11 +264,43 @@ class SettingsViewModel @Inject constructor(
         _pairedDevices.value = obdManager.listPairedDevices(bluetoothPermissionGranted)
     }
 
-    fun connectObd(address: String, bluetoothPermissionGranted: Boolean) {
+    fun connectObd(address: String, bluetoothPermissionGranted: Boolean, deviceName: String = "") {
         obdManager.connectAndMonitor(address, bluetoothPermissionGranted)
         viewModelScope.launch {
+            val resolvedName = deviceName.ifBlank {
+                _pairedDevices.value.firstOrNull { it.address == address }?.name
+                    ?: discoveredObdDevices.value.firstOrNull { it.address == address }?.name
+                    ?: settings.value.lastObdDeviceName.ifBlank { "OBD-II Adapter" }
+            }
+            prefsRepo.setLastObdDevice(address, resolvedName)
             val current = vehicleProfile.value
             vehicleRepo.saveProfile(current.copy(obdAdapterAddress = address))
+            _statusBanner.value = "Connecting to $resolvedName ($address) — auto-connect enabled on app start"
+        }
+    }
+
+    fun quickConnectObd(bluetoothPermissionGranted: Boolean): Boolean {
+        val paired = obdManager.listPairedDevices(bluetoothPermissionGranted)
+        _pairedDevices.value = paired
+        val s = settings.value
+        val savedAddr = s.lastObdDeviceAddress.ifBlank { vehicleProfile.value.obdAdapterAddress.orEmpty() }
+        val targetDevice = when {
+            savedAddr.isNotBlank() -> paired.firstOrNull { it.address == savedAddr }
+                ?: PairedBluetoothDevice(s.lastObdDeviceName.ifBlank { "Saved OBD-II Adapter" }, savedAddr)
+            else -> paired.firstOrNull { dev ->
+                val n = dev.name.uppercase()
+                n.contains("OBD") || n.contains("ELM") || n.contains("V-LINK") ||
+                    n.contains("VLINK") || n.contains("VEEPEAK") || n.contains("KONNWEI") ||
+                    n.contains("VGATE") || n.contains("CARISTA") || n.contains("CHX") ||
+                    n.contains("CBT") || n.contains("SCAN")
+            } ?: paired.singleOrNull()
+        }
+        return if (targetDevice != null && targetDevice.address.isNotBlank()) {
+            connectObd(targetDevice.address, bluetoothPermissionGranted, targetDevice.name)
+            true
+        } else {
+            startObdDiscovery(bluetoothPermissionGranted)
+            false
         }
     }
 

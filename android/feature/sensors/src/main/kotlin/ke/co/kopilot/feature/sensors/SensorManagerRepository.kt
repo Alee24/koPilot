@@ -319,7 +319,7 @@ class SensorManagerRepository @Inject constructor(
                 gyroX = latestGyro[0],
                 gyroY = latestGyro[1],
                 gyroZ = latestGyro[2],
-                azimuthDeg = latestOrientationDeg[0],
+                azimuthDeg = compass.degrees.toFloat(),
                 pitchDeg = latestOrientationDeg[1],
                 rollDeg = latestOrientationDeg[2],
                 gpsSpeedKmh = gpsSpeedKmh,

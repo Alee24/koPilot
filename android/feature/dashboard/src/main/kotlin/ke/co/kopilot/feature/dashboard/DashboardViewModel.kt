@@ -164,8 +164,10 @@ class DashboardViewModel @Inject constructor(
     private var lastIntelVoiceType: String? = null
     private var motionDetectedSinceMs = 0L
     private var lastVehicleMovingMs = 0L
-    private var autoModeArmed = true
+    private var autoModeArmed = false
     private var autoObdConnectAttempted = false
+    private var lastTurnReferenceHeadingDeg: Float? = null
+    private var lastTurnReferenceCardinal: String? = null
     private var preflightObdSpoken = false
     private var obdBeepPlayed = false
     private var gpsBeepPlayed = false
@@ -274,14 +276,18 @@ class DashboardViewModel @Inject constructor(
                 if (speechSink is AndroidTtsSpeechSink) {
                     speechSink.setVoiceProfile(s.aiVoiceName)
                 }
-                if (s.sensorObdEnabled &&
-                    s.lastObdDeviceAddress.isNotBlank() &&
-                    bluetoothGranted &&
-                    !autoObdConnectAttempted &&
-                    !obdManager.state.value.obdConnected
-                ) {
-                    autoObdConnectAttempted = true
-                    obdManager.connectAndMonitor(s.lastObdDeviceAddress, bluetoothGranted)
+                tryAutoConnectObd(s)
+            }
+        }
+        viewModelScope.launch {
+            obdManager.lastAttemptedAddress.collect { addr ->
+                if (!addr.isNullOrBlank()) {
+                    val name = obdManager.discoveredDevices.value
+                        .firstOrNull { it.address == addr }?.name
+                        ?: obdManager.listPairedDevices(bluetoothGranted)
+                            .firstOrNull { it.address == addr }?.name
+                        ?: uiState.value.settings.lastObdDeviceName.ifBlank { "OBD-II Adapter" }
+                    prefsRepo.setLastObdDevice(addr, name)
                 }
             }
         }
@@ -494,21 +500,8 @@ class DashboardViewModel @Inject constructor(
                     }
                 }
 
-                // Auto Mode: automatically start trip when sustained vehicle motion is detected
-                if (autoModeArmed && !isDriving.value) {
-                    if (effectiveSpeedKmh >= 4.0f || isSensorMotion) {
-                        if (motionDetectedSinceMs == 0L) motionDetectedSinceMs = now
-                        if ((now - motionDetectedSinceMs) >= 1_500L) {
-                            motionDetectedSinceMs = 0L
-                            lastVehicleMovingMs = now
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                startDriving()
-                            }
-                        }
-                    } else {
-                        motionDetectedSinceMs = 0L
-                    }
-                }
+                // Auto-start is disabled: driving only starts when the user explicitly taps Start Driving.
+                motionDetectedSinceMs = 0L
 
                 // Record GPS track & OBD fuel/voltage stats during active trip
                 if (isDriving.value) {
@@ -694,7 +687,8 @@ class DashboardViewModel @Inject constructor(
         viewModelScope.launch {
             visionPipeline.state.collect { vision ->
                 val s = uiState.value.settings
-                val moving = (locationTracker.state.value.currentFix?.speedKmh ?: 0f) >= 8f || isDriving.value
+                val currentSpeed = locationTracker.state.value.currentFix?.speedKmh ?: 0f
+                val moving = isDriving.value && currentSpeed >= 8f
                 val now = System.currentTimeMillis()
                 val plate = vision.lastDetectedPlate
                 if (isDriving.value && plate != null && plate != lastLoggedPlate) {
@@ -731,94 +725,59 @@ class DashboardViewModel @Inject constructor(
                         )
                     }
                 }
-                if (vision.redBrakeLightsAhead && moving && s.alertTrafficLightsEnabled) {
-                    if (isDriving.value && (now - lastLoggedBrakeLightMs) >= 8_000L) {
+                val roadObjects = vision.trackedObjects.filter { it.label != "Road Object" }
+                val closeVehicleAhead = roadObjects.any {
+                    val cx = (it.normalizedLeft + it.normalizedRight) / 2f
+                    cx in 0.28f..0.72f && it.normalizedBottom >= 0.62f
+                }
+                // Only warn about car ahead braking when actively driving >= 20 km/h AND a close vehicle ahead has confirmed red brake lights
+                if (isDriving.value && currentSpeed >= 20f && closeVehicleAhead && vision.redBrakeLightsAhead && s.alertTrafficLightsEnabled) {
+                    if ((now - lastLoggedBrakeLightMs) >= 25_000L) {
                         lastLoggedBrakeLightMs = now
                         tripActivityLogger.logActivity("BRAKE_LIGHTS_AHEAD", "Red brake lights ahead — Slow down", now)
+                        alertCoordinator.submit(
+                            alert = AlertMessage(
+                                id = UUID.randomUUID().toString(),
+                                priority = AlertPriority.ROAD_OBSERVATION,
+                                spokenText = "Car in front is braking. Slow down.",
+                                displayText = "Car braking ahead — Slow down",
+                                dedupKey = "front_brake_lights",
+                                timestampMillis = now,
+                            ),
+                            speechRate = s.voiceSpeed,
+                            language = s.language,
+                            globalMute = s.alertsMuted,
+                        )
                     }
-                    alertCoordinator.submit(
-                        alert = AlertMessage(
-                            id = UUID.randomUUID().toString(),
-                            priority = AlertPriority.ROAD_OBSERVATION,
-                            spokenText = "Car in front is braking. Brake now.",
-                            displayText = "Car braking ahead — Brake!",
-                            dedupKey = "front_brake_lights",
-                            timestampMillis = System.currentTimeMillis(),
-                        ),
-                        speechRate = s.voiceSpeed,
-                        language = s.language,
-                        globalMute = s.alertsMuted,
-                    )
                 }
                 if (isDriving.value && s.sensorCameraEnabled) {
-                    val currentSpeed = locationTracker.state.value.currentFix?.speedKmh ?: 0f
-                    val roadObjects = vision.trackedObjects.filter { it.label != "Road Object" }
-                    val closeVehicleAhead = roadObjects.any {
-                        val cx = (it.normalizedLeft + it.normalizedRight) / 2f
-                        cx in 0.25f..0.75f && it.normalizedBottom >= 0.56f
-                    }
                     if (roadObjects.isNotEmpty() || vision.redBrakeLightsAhead) {
                         clearRoadSinceMs = 0L
                     } else if (clearRoadSinceMs == 0L) {
                         clearRoadSinceMs = now
                     }
 
-                    when {
-                        roadObjects.size >= 3 && currentSpeed >= 10f && (now - lastTutorBusyRoadMs) >= 18_000L -> {
-                            lastTutorBusyRoadMs = now
-                            tripActivityLogger.logActivity("ROAD_TUTOR", "Busy road (${roadObjects.size} objects) — stay ready on brake", now)
-                            alertCoordinator.submit(
-                                alert = AlertMessage(
-                                    id = UUID.randomUUID().toString(),
-                                    priority = AlertPriority.ROAD_OBSERVATION,
-                                    spokenText = "Road is busy. Concentrate and keep your foot on the brake.",
-                                    displayText = "Busy road — Keep foot on brake",
-                                    dedupKey = "tutor_busy_road",
-                                    timestampMillis = now,
-                                ),
-                                speechRate = s.voiceSpeed,
-                                language = s.language,
-                                globalMute = s.alertsMuted,
-                            )
-                        }
-                        closeVehicleAhead && !vision.redBrakeLightsAhead && (now - lastTutorVehicleAheadMs) >= 10_000L -> {
-                            lastTutorVehicleAheadMs = now
-                            tripActivityLogger.logActivity("ROAD_TUTOR", "Vehicle ahead in lane — prepare to brake", now)
-                            alertCoordinator.submit(
-                                alert = AlertMessage(
-                                    id = UUID.randomUUID().toString(),
-                                    priority = AlertPriority.ROAD_OBSERVATION,
-                                    spokenText = "Car in front of you. Start braking.",
-                                    displayText = "Vehicle ahead — Start braking",
-                                    dedupKey = "tutor_vehicle_ahead",
-                                    timestampMillis = now,
-                                ),
-                                speechRate = s.voiceSpeed,
-                                language = s.language,
-                                globalMute = s.alertsMuted,
-                            )
-                        }
-                        roadObjects.isEmpty() && !vision.redBrakeLightsAhead &&
-                            clearRoadSinceMs > 0L && (now - clearRoadSinceMs) >= 4_000L &&
-                            currentSpeed in 40f..80f &&
-                            (vision.lastSpeedLimitKmh == null || currentSpeed < (vision.lastSpeedLimitKmh!! - 5)) &&
-                            (now - lastTutorClearRoadMs) >= 25_000L -> {
-                            lastTutorClearRoadMs = now
-                            tripActivityLogger.logActivity("ROAD_TUTOR", "Clear road at ${currentSpeed.toInt()} km/h — pick up pace", now)
-                            alertCoordinator.submit(
-                                alert = AlertMessage(
-                                    id = UUID.randomUUID().toString(),
-                                    priority = AlertPriority.TRAFFIC_UPDATE,
-                                    spokenText = "Clear road ahead. Please pick up the pace and speed up a bit.",
-                                    displayText = "Clear road — Pick up pace",
-                                    dedupKey = "tutor_clear_road",
-                                    timestampMillis = now,
-                                ),
-                                speechRate = s.voiceSpeed,
-                                language = s.language,
-                                globalMute = s.alertsMuted,
-                            )
-                        }
+                    if (roadObjects.isEmpty() && !vision.redBrakeLightsAhead &&
+                        clearRoadSinceMs > 0L && (now - clearRoadSinceMs) >= 4_000L &&
+                        currentSpeed in 40f..80f &&
+                        (vision.lastSpeedLimitKmh == null || currentSpeed < (vision.lastSpeedLimitKmh!! - 5)) &&
+                        (now - lastTutorClearRoadMs) >= 25_000L
+                    ) {
+                        lastTutorClearRoadMs = now
+                        tripActivityLogger.logActivity("ROAD_TUTOR", "Clear road at ${currentSpeed.toInt()} km/h — pick up pace", now)
+                        alertCoordinator.submit(
+                            alert = AlertMessage(
+                                id = UUID.randomUUID().toString(),
+                                priority = AlertPriority.TRAFFIC_UPDATE,
+                                spokenText = "Clear road ahead. Please pick up the pace and speed up a bit.",
+                                displayText = "Clear road — Pick up pace",
+                                dedupKey = "tutor_clear_road",
+                                timestampMillis = now,
+                            ),
+                            speechRate = s.voiceSpeed,
+                            language = s.language,
+                            globalMute = s.alertsMuted,
+                        )
                     }
                 }
                 if (isDriving.value && vision.trafficLightSignal != TrafficLightSignal.NONE &&
@@ -920,40 +879,82 @@ class DashboardViewModel @Inject constructor(
         }
         viewModelScope.launch {
             sensorManagerRepo.state.collect { sensorState ->
-                if (!isDriving.value) return@collect
-                val lat = sensorState.motionAnalysis.lateralState
-                if (lat == LateralMotionState.STRAIGHT) {
+                if (!isDriving.value) {
+                    lastTurnReferenceHeadingDeg = null
+                    lastTurnReferenceCardinal = null
                     lastAnnouncedTurnState = LateralMotionState.STRAIGHT
                     return@collect
                 }
                 val s = uiState.value.settings
                 if (!s.alertLaneTurnEnabled) return@collect
-                val now = System.currentTimeMillis()
-                if (lat == lastAnnouncedTurnState || (now - lastTurnAlertMs) < 1_500L) return@collect
-                lastAnnouncedTurnState = lat
-                lastTurnAlertMs = now
-                val (tag, msg) = when (lat) {
-                    LateralMotionState.LANE_SHIFT_LEFT -> "LANE_CHANGE" to "Drifting left"
-                    LateralMotionState.LANE_SHIFT_RIGHT -> "LANE_CHANGE" to "Drifting right"
-                    LateralMotionState.LEFT_TURN -> "TURNING_LEFT" to "Turning left"
-                    LateralMotionState.RIGHT_TURN -> "TURNING_RIGHT" to "Turning right"
-                    LateralMotionState.SHARP_CORNERING -> "SHARP_CORNERING" to if (sensorState.motionAnalysis.yawRateRadPerSec >= 0f) "Turning left" else "Turning right"
-                    LateralMotionState.STRAIGHT -> return@collect
+                val gpsSpeed = locationTracker.state.value.currentFix?.speedKmh ?: 0f
+                val obdSpeed = obdManager.liveTelemetry.value.vehicleSpeedKmh?.toFloat() ?: 0f
+                val effectiveSpeed = maxOf(gpsSpeed, obdSpeed)
+                if (effectiveSpeed < 10f) return@collect
+
+                val compass = sensorState.compassReading
+                val currentDeg = compass.degrees.toFloat()
+                val currentCardinal = compass.cardinal
+                val refDeg = lastTurnReferenceHeadingDeg
+                val refCardinal = lastTurnReferenceCardinal
+
+                if (refDeg == null || refCardinal == null) {
+                    lastTurnReferenceHeadingDeg = currentDeg
+                    lastTurnReferenceCardinal = currentCardinal
+                    return@collect
                 }
-                tripActivityLogger.logActivity(tag, msg, now)
-                alertCoordinator.submit(
-                    alert = AlertMessage(
-                        id = UUID.randomUUID().toString(),
-                        priority = AlertPriority.ROAD_OBSERVATION,
-                        spokenText = msg,
-                        displayText = msg,
-                        dedupKey = "sensor_lat_${msg.replace(' ', '_')}",
-                        timestampMillis = now,
-                    ),
-                    speechRate = s.voiceSpeed,
-                    language = s.language,
-                    globalMute = s.alertsMuted,
-                )
+
+                // Turning signal informed by the Compass: requires a cardinal direction change
+                // (e.g., heading NE -> N) AND at least a 20-degree (20-point) change in compass heading.
+                val deltaDeg = ke.co.kopilot.feature.sensors.CompassHeadingEstimator.signedAngleDelta(refDeg, currentDeg)
+                if (currentCardinal != refCardinal && kotlin.math.abs(deltaDeg) >= 20f) {
+                    val now = System.currentTimeMillis()
+                    lastTurnReferenceHeadingDeg = currentDeg
+                    lastTurnReferenceCardinal = currentCardinal
+                    if ((now - lastTurnAlertMs) < 5_000L) return@collect
+                    lastTurnAlertMs = now
+
+                    val isLeftTurn = deltaDeg < 0f
+                    val tag = if (isLeftTurn) "TURNING_LEFT" else "TURNING_RIGHT"
+                    val fullCardinal = when (currentCardinal) {
+                        "N" -> "North"
+                        "NE" -> "North East"
+                        "E" -> "East"
+                        "SE" -> "South East"
+                        "S" -> "South"
+                        "SW" -> "South West"
+                        "W" -> "West"
+                        "NW" -> "North West"
+                        else -> currentCardinal
+                    }
+                    val spokenMsg = if (isLeftTurn) {
+                        "Turning left, now heading $fullCardinal"
+                    } else {
+                        "Turning right, now heading $fullCardinal"
+                    }
+                    val displayMsg = if (isLeftTurn) {
+                        "Turning Left • Heading $currentCardinal (${compass.degrees}°)"
+                    } else {
+                        "Turning Right • Heading $currentCardinal (${compass.degrees}°)"
+                    }
+                    tripActivityLogger.logActivity(tag, "$displayMsg (from $refCardinal)", now)
+                    alertCoordinator.submit(
+                        alert = AlertMessage(
+                            id = UUID.randomUUID().toString(),
+                            priority = AlertPriority.ROAD_OBSERVATION,
+                            spokenText = spokenMsg,
+                            displayText = displayMsg,
+                            dedupKey = "compass_turn_${tag}_$currentCardinal",
+                            timestampMillis = now,
+                        ),
+                        speechRate = s.voiceSpeed,
+                        language = s.language,
+                        globalMute = s.alertsMuted,
+                    )
+                } else if (currentCardinal == refCardinal && kotlin.math.abs(deltaDeg) < 10f) {
+                    // Gently keep reference aligned with current cardinal cruise direction
+                    lastTurnReferenceHeadingDeg = currentDeg
+                }
             }
         }
         viewModelScope.launch {
@@ -1057,18 +1058,15 @@ class DashboardViewModel @Inject constructor(
                     )
                 }
 
-                val isMoving = (fix.speedKmh ?: 0f) >= 5f
                 val zoneEval = speedZoneMonitor.evaluate(
                     fix = fix,
                     signalState = speedEval.signalState,
-                    isDrivingActive = isDriving.value || isMoving,
+                    isDrivingActive = isDriving.value,
                 )
                 currentSpeedZone.value = zoneEval.zone
                 val spoken = zoneEval.zone.spokenAlert
-                if (zoneEval.shouldNotify && spoken != null) {
-                    if (isDriving.value) {
-                        tripActivityLogger.logActivity("SPEED_ZONE", "${zoneEval.zone.name}: $spoken")
-                    }
+                if (isDriving.value && zoneEval.shouldNotify && spoken != null) {
+                    tripActivityLogger.logActivity("SPEED_ZONE", "${zoneEval.zone.name}: $spoken")
                     val s = uiState.value.settings
                     alertCoordinator.submit(
                         alert = AlertMessage(
@@ -1092,6 +1090,31 @@ class DashboardViewModel @Inject constructor(
         }
     }
 
+    private fun tryAutoConnectObd(s: KoPilotSettings = uiState.value.settings) {
+        if (!s.sensorObdEnabled || !bluetoothGranted || obdManager.state.value.obdConnected) return
+        if (autoObdConnectAttempted) return
+        val paired = obdManager.listPairedDevices(bluetoothGranted)
+        val targetAddress = when {
+            s.lastObdDeviceAddress.isNotBlank() -> s.lastObdDeviceAddress
+            else -> paired.firstOrNull { dev ->
+                val n = dev.name.uppercase()
+                n.contains("OBD") || n.contains("ELM") || n.contains("V-LINK") ||
+                    n.contains("VLINK") || n.contains("VEEPEAK") || n.contains("KONNWEI") ||
+                    n.contains("VGATE") || n.contains("CARISTA") || n.contains("CHX") ||
+                    n.contains("CBT") || n.contains("SCAN")
+            }?.address ?: ""
+        }
+        if (targetAddress.isNotBlank()) {
+            autoObdConnectAttempted = true
+            val matchedName = paired.firstOrNull { it.address == targetAddress }?.name
+                ?: s.lastObdDeviceName.ifBlank { "OBD-II Adapter" }
+            viewModelScope.launch {
+                prefsRepo.setLastObdDevice(targetAddress, matchedName)
+            }
+            obdManager.connectAndMonitor(targetAddress, bluetoothGranted)
+        }
+    }
+
     fun updatePermissions(
         cameraGranted: Boolean,
         locationGranted: Boolean,
@@ -1102,22 +1125,9 @@ class DashboardViewModel @Inject constructor(
         cameraController.setPermissionGranted(cameraGranted)
         locationTracker.setPermissionGranted(locationGranted)
         voiceClient.setMicPermissionGranted(micGranted)
-        val s = uiState.value.settings
-        if (s.sensorObdEnabled &&
-            s.lastObdDeviceAddress.isNotBlank() &&
-            bluetoothGranted &&
-            !autoObdConnectAttempted &&
-            !obdManager.state.value.obdConnected
-        ) {
-            autoObdConnectAttempted = true
-            obdManager.connectAndMonitor(s.lastObdDeviceAddress, bluetoothGranted)
-        }
-        // Keep high-accuracy GPS & lightweight motion watch active whenever the app is running
-        if (locationGranted) {
+        tryAutoConnectObd(uiState.value.settings)
+        if (locationGranted && isDriving.value) {
             locationTracker.startTracking(highAccuracy = true)
-        }
-        if (autoModeArmed && !isDriving.value) {
-            sensorManagerRepo.startMonitoring(SensorSamplingProfile.IDLE)
         }
     }
 
@@ -1343,16 +1353,10 @@ class DashboardViewModel @Inject constructor(
 
         isDriving.value = false
         tripStartedAt.value = null
+        lastTurnReferenceHeadingDeg = null
+        lastTurnReferenceCardinal = null
         sensorManagerRepo.stopMonitoring()
-        if (uiState.value.settings.sensorGpsEnabled) {
-            locationTracker.startTracking(highAccuracy = true)
-        } else {
-            locationTracker.stopTracking()
-        }
-        if (autoModeArmed && uiState.value.settings.sensorMotionEnabled) {
-            // Re-arm lightweight IDLE watch so the next drive auto-starts on motion
-            sensorManagerRepo.startMonitoring(SensorSamplingProfile.IDLE)
-        }
+        locationTracker.stopTracking()
         voiceClient.disconnect()
         speedAlertEngine.reset()
         speedZoneMonitor.reset()

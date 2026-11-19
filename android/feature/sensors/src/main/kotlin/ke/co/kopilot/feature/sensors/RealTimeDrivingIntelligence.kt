@@ -214,6 +214,10 @@ class RealTimeDrivingIntelligence @Inject constructor() {
         var newlyConfirmedEvent: DrivingIntelligenceEvent? = null
 
         if (input.isJourneyActive) {
+            val hadPriorCruiseSpeeds = cruiseSpeedWindow.isNotEmpty()
+            val recentPeakSpeedKmh = cruiseSpeedWindow.maxOrNull() ?: speed
+            val speedReducedForBrake = !hadPriorCruiseSpeeds || (recentPeakSpeedKmh - speed) >= 4.0f
+
             if (isMoving) {
                 movingSecAccum += dtSec
                 if (cruiseSpeedWindow.size >= SPEED_WINDOW_SIZE) cruiseSpeedWindow.removeFirst()
@@ -222,8 +226,10 @@ class RealTimeDrivingIntelligence @Inject constructor() {
                 idlingSecAccum += dtSec
             }
 
-            // 1. Confirmed Harsh Braking
+            // 1. Confirmed Harsh Braking (requires both speed reduction and longitudinal braking forces)
             if (motion.longitudinalState == LongitudinalMotionState.HARSH_BRAKING &&
+                speedReducedForBrake &&
+                motion.longitudinalAccelMps2 <= DrivingMotionAnalyzer.HARSH_BRAKE_MPS2 &&
                 (lastHarshBrakeEventMs == 0L || (now - lastHarshBrakeEventMs) >= EVENT_COOLDOWN_MS)
             ) {
                 lastHarshBrakeEventMs = now
