@@ -50,26 +50,33 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LocalGasStation
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.SatelliteAlt
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Traffic
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.WbCloudy
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -152,6 +159,8 @@ fun DashboardScreen(
     onOpenTrips: () -> Unit = {},
     onOpenNavigation: () -> Unit = {},
     onOpenSoundStudio: () -> Unit = {},
+    onOpenSafetySettings: () -> Unit = {},
+    onOpenLiveMap: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -392,6 +401,8 @@ fun DashboardScreen(
                 onOpenTrips = onOpenTrips,
                 onOpenSoundStudio = onOpenSoundStudio,
                 onOpenNavigation = onOpenNavigation,
+                onOpenSafetySettings = onOpenSafetySettings,
+                onOpenLiveMap = onOpenLiveMap,
                 onToggleFullscreenCamera = { isCameraFullscreen = true },
             )
         }
@@ -1469,6 +1480,8 @@ private fun KoPilotCockpitLanding(
     onOpenTrips: () -> Unit,
     onOpenSoundStudio: () -> Unit,
     onOpenNavigation: () -> Unit,
+    onOpenSafetySettings: () -> Unit,
+    onOpenLiveMap: () -> Unit,
     onToggleFullscreenCamera: () -> Unit,
 ) {
     val intel = state.intelligenceState
@@ -1874,20 +1887,70 @@ private fun KoPilotCockpitLanding(
             )
         }
 
-        // 6. 2x3 Feature Action Grid
+        // 5b. Accident Monitoring & Mount Calibration Status Banner (tap to open Safety & Emergency)
+        Surface(
+            onClick = onOpenSafetySettings,
+            shape = RoundedCornerShape(12.dp),
+            color = KoPilotClusterTokens.GlassCardSurface,
+            border = BorderStroke(
+                1.dp,
+                if (state.settings.accidentMonitoringEnabled) KoPilotClusterTokens.SmoothRoad.copy(alpha = 0.5f) else KoPilotClusterTokens.Border,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(
+                            if (state.settings.accidentMonitoringEnabled) KoPilotClusterTokens.SmoothRoad else KoPilotClusterTokens.SecondaryText,
+                            CircleShape,
+                        ),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (state.settings.accidentMonitoringEnabled) "Accident Monitoring Ready" else "Accident Monitoring Off",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = KoPilotClusterTokens.PrimaryText,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Impact • Rollover • Swerve • Mount: ${state.mountCalibrationStatus.label}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = KoPilotClusterTokens.SecondaryText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    text = "Safety ›",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = KoPilotClusterTokens.PrimaryAccent,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+
+        // 6. 2x3 Feature Action Grid (with Live Map & Safety)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             LandingActionTile("OBD Diagnostics", Icons.Default.Build, KoPilotClusterTokens.SecondaryAccent, onOpenObd, Modifier.weight(1f))
-            LandingActionTile("Road Signs", Icons.Default.Traffic, KoPilotClusterTokens.VeryRough, onOpenSignsDb, Modifier.weight(1f))
-            LandingActionTile("Driving Analysis", Icons.Default.BarChart, KoPilotClusterTokens.PrimaryAccent, onOpenDrivingBehaviour, Modifier.weight(1f))
+            LandingActionTile("Live Map", Icons.Default.Map, KoPilotClusterTokens.PrimaryAccent, onOpenLiveMap, Modifier.weight(1f))
+            LandingActionTile("Safety & SOS", Icons.Default.Shield, KoPilotClusterTokens.SmoothRoad, onOpenSafetySettings, Modifier.weight(1f))
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            LandingActionTile("Trips & History", Icons.Default.Route, KoPilotClusterTokens.SecondaryAccent, onOpenTrips, Modifier.weight(1f))
+            LandingActionTile("Trips & Maps", Icons.Default.Route, KoPilotClusterTokens.SecondaryAccent, onOpenTrips, Modifier.weight(1f))
             LandingActionTile("AI Assistant", Icons.Default.SmartToy, KoPilotClusterTokens.PrimaryAccent, onOpenVehicleIntelligence, Modifier.weight(1f))
             LandingActionTile("Sound Studio", Icons.Default.GraphicEq, KoPilotClusterTokens.PrimaryAccent, onOpenSoundStudio, Modifier.weight(1f))
         }
@@ -2251,20 +2314,45 @@ private fun FullBleedArHudLanding(
                             }
                             else -> "Weather unavailable"
                         }
+                        val (weatherIcon, weatherTint) = remember(w.conditionSummary, w.available) {
+                            val cond = w.conditionSummary.lowercase()
+                            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                            val isNight = hour < 6 || hour >= 19
+                            when {
+                                !w.available -> Icons.Default.Cloud to KoPilotClusterTokens.SecondaryText
+                                cond.contains("rain") || cond.contains("drizzle") || cond.contains("storm") || cond.contains("thunder") ->
+                                    Icons.Default.Grain to Color(0xFF38BDF8)
+                                cond.contains("cloud") || cond.contains("overcast") || cond.contains("fog") ->
+                                    Icons.Default.Cloud to Color(0xFFCBD5E1)
+                                isNight -> Icons.Default.NightsStay to Color(0xFFFDE68A)
+                                else -> Icons.Default.WbSunny to Color(0xFFFACC15)
+                            }
+                        }
                         Surface(
                             color = hudGlassBg,
                             shape = CircleShape,
                             border = BorderStroke(1.dp, hudGlassBorder),
                         ) {
-                            Text(
-                                text = weatherText,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (w.available && !w.isStaleOfflineCache) KoPilotClusterTokens.PrimaryText else KoPilotClusterTokens.SecondaryText,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                            Row(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            )
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                Icon(
+                                    imageVector = weatherIcon,
+                                    contentDescription = w.conditionSummary,
+                                    tint = weatherTint,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Text(
+                                    text = weatherText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (w.available && !w.isStaleOfflineCache) KoPilotClusterTokens.PrimaryText else KoPilotClusterTokens.SecondaryText,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                     } else {
                         Spacer(Modifier.width(1.dp))
@@ -2277,14 +2365,25 @@ private fun FullBleedArHudLanding(
                             shape = CircleShape,
                             border = BorderStroke(1.dp, hudGlassBorder),
                         ) {
-                            Text(
-                                text = state.compassReading.formatted,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = KoPilotClusterTokens.PrimaryAccent,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
+                            Row(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            )
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Explore,
+                                    contentDescription = "Compass",
+                                    tint = KoPilotClusterTokens.PrimaryAccent,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Text(
+                                    text = state.compassReading.formatted,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = KoPilotClusterTokens.PrimaryAccent,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                )
+                            }
                         }
                     }
                 }

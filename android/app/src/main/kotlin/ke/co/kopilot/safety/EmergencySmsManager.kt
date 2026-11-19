@@ -9,14 +9,12 @@ import android.os.Build
 import android.telephony.SmsManager
 import androidx.core.content.ContextCompat
 import ke.co.kopilot.feature.sensors.AccidentAssessment
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@Serializable
 data class EmergencyContact(
     val id: String,
     val name: String,
@@ -24,7 +22,6 @@ data class EmergencyContact(
     val isPrimary: Boolean = false,
 )
 
-@Serializable
 data class EmergencyNotificationRecord(
     val id: String,
     val timestampMillis: Long,
@@ -36,19 +33,82 @@ data class EmergencyNotificationRecord(
 )
 
 object EmergencySmsManager {
-    private val json = Json { ignoreUnknownKeys = true }
     private val sentIncidentIds = mutableSetOf<String>()
 
     fun parseContacts(rawJson: String): List<EmergencyContact> =
-        runCatching { json.decodeFromString<List<EmergencyContact>>(rawJson) }.getOrDefault(emptyList())
+        runCatching {
+            if (rawJson.isBlank()) return emptyList()
+            val arr = JSONArray(rawJson)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val id = o.optString("id", "")
+                    val name = o.optString("name", "")
+                    val phone = o.optString("phone", "")
+                    val isPrimary = o.optBoolean("isPrimary", false)
+                    if (name.isNotBlank() && phone.isNotBlank()) {
+                        add(EmergencyContact(id.ifBlank { "c_$i" }, name, phone, isPrimary))
+                    }
+                }
+            }
+        }.getOrDefault(emptyList())
 
-    fun encodeContacts(list: List<EmergencyContact>): String = json.encodeToString(list)
+    fun encodeContacts(list: List<EmergencyContact>): String =
+        runCatching {
+            val arr = JSONArray()
+            list.forEach { c ->
+                arr.put(
+                    JSONObject().apply {
+                        put("id", c.id)
+                        put("name", c.name)
+                        put("phone", c.phone)
+                        put("isPrimary", c.isPrimary)
+                    },
+                )
+            }
+            arr.toString()
+        }.getOrDefault("[]")
 
     fun parseHistory(rawJson: String): List<EmergencyNotificationRecord> =
-        runCatching { json.decodeFromString<List<EmergencyNotificationRecord>>(rawJson) }.getOrDefault(emptyList())
+        runCatching {
+            if (rawJson.isBlank()) return emptyList()
+            val arr = JSONArray(rawJson)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    add(
+                        EmergencyNotificationRecord(
+                            id = o.optString("id", "h_$i"),
+                            timestampMillis = o.optLong("timestampMillis", 0L),
+                            eventLabel = o.optString("eventLabel", "Alert"),
+                            confidencePercent = o.optInt("confidencePercent", 0),
+                            status = o.optString("status", ""),
+                            recipients = o.optString("recipients", ""),
+                            detail = o.optString("detail", ""),
+                        ),
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
 
     fun encodeHistory(list: List<EmergencyNotificationRecord>): String =
-        json.encodeToString(list.take(40))
+        runCatching {
+            val arr = JSONArray()
+            list.take(40).forEach { r ->
+                arr.put(
+                    JSONObject().apply {
+                        put("id", r.id)
+                        put("timestampMillis", r.timestampMillis)
+                        put("eventLabel", r.eventLabel)
+                        put("confidencePercent", r.confidencePercent)
+                        put("status", r.status)
+                        put("recipients", r.recipients)
+                        put("detail", r.detail)
+                    },
+                )
+            }
+            arr.toString()
+        }.getOrDefault("[]")
 
     /**
      * Normalizes Kenyan local mobile formats (e.g. 0712345678 -> +254712345678, 0110... -> +254110...)
@@ -117,7 +177,6 @@ object EmergencySmsManager {
         }
 
         if (!hasSmsPermission(context)) {
-            // Compliant user-mediated fallback when SEND_SMS permission is unavailable
             val launched = openSmsComposerFallback(context, ordered.first(), message)
             return SmsDispatchResult(
                 success = launched,

@@ -191,6 +191,10 @@ class DashboardViewModel @Inject constructor(
     )
     private var countdownJob: kotlinx.coroutines.Job? = null
     private var lastWeatherRefreshMs = 0L
+    private var lastAnnouncedCardinal: String? = null
+    private var pendingCardinal: String? = null
+    private var pendingCardinalSinceMs = 0L
+    private var lastHeadingAnnounceMs = 0L
 
     private val coreFlows = combine(
         isDriving,
@@ -382,6 +386,53 @@ class DashboardViewModel @Inject constructor(
                     viewModelScope.launch {
                         weatherRepo.refreshWeather(fix.latitude, fix.longitude)
                     }
+                }
+
+                // Announce heading change when driving and cardinal direction shifts cleanly
+                if (isDriving.value && effectiveSpeedKmh >= 12.0f && uiState.value.settings.compassHudEnabled && !uiState.value.settings.alertsMuted) {
+                    val c = hub.compassReading.cardinal
+                    if (lastAnnouncedCardinal == null) {
+                        lastAnnouncedCardinal = c
+                    } else if (c != lastAnnouncedCardinal) {
+                        if (pendingCardinal != c) {
+                            pendingCardinal = c
+                            pendingCardinalSinceMs = now
+                        } else if ((now - pendingCardinalSinceMs) >= 2_000L && (now - lastHeadingAnnounceMs) >= 20_000L) {
+                            lastAnnouncedCardinal = c
+                            lastHeadingAnnounceMs = now
+                            pendingCardinal = null
+                            val fullName = when (c) {
+                                "N" -> "North"
+                                "NE" -> "North East"
+                                "E" -> "East"
+                                "SE" -> "South East"
+                                "S" -> "South"
+                                "SW" -> "South West"
+                                "W" -> "West"
+                                "NW" -> "North West"
+                                else -> c
+                            }
+                            val s = uiState.value.settings
+                            alertCoordinator.submit(
+                                alert = AlertMessage(
+                                    id = UUID.randomUUID().toString(),
+                                    priority = AlertPriority.NAVIGATION_INSTRUCTION,
+                                    spokenText = "Heading $fullName, ${hub.compassReading.degrees} degrees",
+                                    displayText = "Heading: ${hub.compassReading.formatted}",
+                                    dedupKey = "heading_$c",
+                                    timestampMillis = now,
+                                ),
+                                speechRate = s.voiceSpeed,
+                                language = s.language,
+                                globalMute = s.alertsMuted,
+                            )
+                        }
+                    } else {
+                        pendingCardinal = null
+                    }
+                } else if (!isDriving.value) {
+                    lastAnnouncedCardinal = null
+                    pendingCardinal = null
                 }
 
                 // Multi-sensor accident & unexpected engine stop monitoring during active trip

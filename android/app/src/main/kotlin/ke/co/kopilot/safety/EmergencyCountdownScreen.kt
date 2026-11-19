@@ -72,15 +72,19 @@ fun EmergencyCountdownScreen(
 
     LaunchedEffect(remainingSeconds, vibrationEnabled) {
         if (vibrationEnabled && remainingSeconds > 0) {
-            runCatching {
+            try {
                 val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                    vm.defaultVibrator
+                    val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                    vm?.defaultVibrator
                 } else {
                     @Suppress("DEPRECATION")
-                    context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                    context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
                 }
-                vibrator.vibrate(VibrationEffect.createOneShot(320L, VibrationEffect.DEFAULT_AMPLITUDE))
+                if (vibrator?.hasVibrator() == true) {
+                    vibrator.vibrate(VibrationEffect.createOneShot(280L, VibrationEffect.DEFAULT_AMPLITUDE))
+                }
+            } catch (_: Throwable) {
+                // Ignore vibration failures on devices/OS policies that restrict haptic feedback
             }
         }
     }

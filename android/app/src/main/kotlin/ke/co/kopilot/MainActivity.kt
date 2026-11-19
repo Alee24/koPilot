@@ -263,7 +263,28 @@ class MainActivity : ComponentActivity() {
 
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                     val useRail = maxWidth >= 600.dp
-                    Scaffold(
+                    val pending = dashState.pendingAccident
+                    if (pending != null) {
+                        val contacts = remember(settings.emergencyContactsJson) {
+                            EmergencySmsManager.parseContacts(settings.emergencyContactsJson)
+                        }
+                        EmergencyCountdownScreen(
+                            assessment = pending,
+                            remainingSeconds = dashState.accidentCountdownRemainingSec,
+                            totalSeconds = settings.emergencyCountdownSeconds,
+                            latitude = dashState.locationState.currentFix?.latitude,
+                            longitude = dashState.locationState.currentFix?.longitude,
+                            contactsCount = contacts.size,
+                            vibrationEnabled = settings.accidentVibrationEnabled,
+                            onCancelAlert = { dashboardViewModel.cancelEmergencyCountdown() },
+                            onSendAlertNow = { dashboardViewModel.sendEmergencyAlertNow() },
+                            onOpenContacts = {
+                                dashboardViewModel.cancelEmergencyCountdown()
+                                navController.navigate("emergency_contacts")
+                            },
+                        )
+                    } else {
+                        Scaffold(
                         containerColor = KoPilotClusterTokens.Background,
                         contentWindowInsets = WindowInsets(0, 0, 0, 0),
                         bottomBar = {
@@ -369,6 +390,8 @@ class MainActivity : ComponentActivity() {
                                         onOpenTrips = { navigateTopLevel("trips") },
                                         onOpenNavigation = { navController.navigate("navigation") },
                                         onOpenSoundStudio = { navController.navigate("sound_studio") },
+                                        onOpenSafetySettings = { navController.navigate("safety_settings") },
+                                        onOpenLiveMap = { navController.navigate("live_map") },
                                         onCallEmergency = { phone ->
                                             startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
                                         },
@@ -555,26 +578,6 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
-
-                    dashState.pendingAccident?.let { pending ->
-                        val contacts = remember(settings.emergencyContactsJson) {
-                            EmergencySmsManager.parseContacts(settings.emergencyContactsJson)
-                        }
-                        EmergencyCountdownScreen(
-                            assessment = pending,
-                            remainingSeconds = dashState.accidentCountdownRemainingSec,
-                            totalSeconds = settings.emergencyCountdownSeconds,
-                            latitude = dashState.locationState.currentFix?.latitude,
-                            longitude = dashState.locationState.currentFix?.longitude,
-                            contactsCount = contacts.size,
-                            vibrationEnabled = settings.accidentVibrationEnabled,
-                            onCancelAlert = { dashboardViewModel.cancelEmergencyCountdown() },
-                            onSendAlertNow = { dashboardViewModel.sendEmergencyAlertNow() },
-                            onOpenContacts = {
-                                dashboardViewModel.cancelEmergencyCountdown()
-                                navController.navigate("emergency_contacts")
-                            },
-                        )
                     }
                 }
             }
