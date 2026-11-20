@@ -11,7 +11,7 @@ package ke.co.kopilot.feature.diagnostics
 object ObdReadOnlyFirewall {
 
     private val ALLOWED_AT_COMMANDS = setOf(
-        "ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATI", "ATRV",
+        "ATZ", "ATWS", "ATD", "ATE0", "ATL0", "ATS0", "ATH0", "ATI", "ATRV",
         "ATDP", "ATDPN",
         "ATSP0", "ATSP3", "ATSP4", "ATSP5", "ATSP6", "ATSP7", "ATSP8", "ATSP9",
     )

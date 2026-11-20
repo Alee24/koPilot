@@ -3,14 +3,25 @@ package ke.co.kopilot.feature.diagnostics
 object ObdPidParser {
 
     fun isAdapterError(response: String): Boolean {
-        val upper = response.uppercase()
+        val upper = response.replace("\u0000", "").uppercase().trim()
+        if (upper.isEmpty()) return true
+        if (upper == "?" || upper == "TIMEOUT" || upper == "DISCONNECTED" || upper == "BLOCKED_READ_ONLY") {
+            return true
+        }
+        val busInitFailed = upper.contains("BUS INIT") && !upper.contains("BUS INIT: OK") &&
+            !upper.contains("BUS INIT: ...OK") && !upper.contains("BUS INIT:...OK") &&
+            (upper.contains("ERROR") || upper.contains("FAIL") || !upper.contains("41"))
         return upper.contains("NO DATA") ||
             upper.contains("STOPPED") ||
-            upper.contains("BUS INIT") ||
+            upper.contains("BUS ERROR") ||
+            busInitFailed ||
             upper.contains("UNABLE TO CONNECT") ||
             upper.contains("CAN ERROR") ||
-            upper.contains("ERROR") ||
-            upper.trim() == "?"
+            upper.contains("DATA ERROR") ||
+            upper.contains("FB ERROR") ||
+            upper.contains("ACT ALERT") ||
+            upper.contains("BUFFER FULL") ||
+            upper.contains("ERROR")
     }
 
     /**
@@ -229,9 +240,13 @@ object ObdPidParser {
 
     private fun extractPayloadBytes(response: String, expectedMode: String, expectedPid: String): List<Int>? {
         if (isAdapterError(response)) return null
-        val hexOnly = response.uppercase()
+        val cleaned = response
+            .replace("\u0000", "")
+            .uppercase()
+            .replace("SEARCHING...", "")
+            .replace(Regex("BUS INIT[:.\\s]*OK"), "")
             .replace(">", "")
-            .replace(Regex("[^0-9A-F]"), "")
+        val hexOnly = cleaned.replace(Regex("[^0-9A-F]"), "")
         val header = "$expectedMode$expectedPid"
         val start = hexOnly.indexOf(header)
         if (start < 0) return null

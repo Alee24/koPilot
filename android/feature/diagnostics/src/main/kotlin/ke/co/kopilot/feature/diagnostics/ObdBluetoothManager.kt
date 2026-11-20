@@ -109,11 +109,17 @@ class ObdBluetoothManager @Inject constructor(
                 val transport = connRes.getOrDefault(ObdTransportType.UNKNOWN)
                 connectionManager.setState(ObdConnectionState.ADAPTER_INITIALIZING, "Initializing adapter...")
 
-                // Wake up ELM327/HHOBD chip before ATZ
+                // Wake up ELM327/HHOBD/BLE chip before reset
                 connectionManager.sendCommand("", timeoutMs = 600L, retries = 0)
-                val atz = connectionManager.sendCommand("ATZ", timeoutMs = 3_500L)
+                var atz = connectionManager.sendCommand("ATZ", timeoutMs = 3_500L)
                 connectionManager.appendLog("> ATZ -> ${atz.replace("\r", " ").take(40)}")
-                delay(600L)
+                if (atz.isBlank() || atz.equals("TIMEOUT", ignoreCase = true)) {
+                    // Some ELM327 v2.1 / BLE clones drop or ignore hard reset ATZ; try warm start ATWS + defaults ATD
+                    atz = connectionManager.sendCommand("ATWS", timeoutMs = 2_500L)
+                    connectionManager.appendLog("> ATWS -> ${atz.replace("\r", " ").take(40)}")
+                    connectionManager.sendCommand("ATD", timeoutMs = 1_500L, retries = 0)
+                }
+                delay(500L)
                 val ate0 = connectionManager.sendCommand("ATE0")
                 connectionManager.appendLog("> ATE0 -> ${ate0.replace("\r", " ").take(24)}")
                 connectionManager.sendCommand("ATL0")
@@ -132,7 +138,7 @@ class ObdBluetoothManager @Inject constructor(
                     atrv.contains("V", ignoreCase = true)
 
                 if (!adapterVerified) {
-                    connectionManager.appendLog("Adapter init failed: ATZ='$atz' ATE0='$ate0'")
+                    connectionManager.appendLog("Adapter init failed: ATZ='$atz' ATE0='$ate0' ATI='$ati'")
                     connectionManager.setFailureCategory(ObdFailureCategory.UNSUPPORTED_PROTOCOL)
                     connectionManager.setState(
                         ObdConnectionState.UNSUPPORTED,
@@ -150,19 +156,37 @@ class ObdBluetoothManager @Inject constructor(
                 var protoResp = ""
                 var pid00Resp = ""
                 var ecuLatencyMs: Long? = null
-                for (protoCmd in listOf("ATSP0", "ATSP6", "ATSP7", "ATSP3", "ATSP5")) {
+                var fallbackDirectPidOk = false
+                val protocolSweep = listOf("ATSP0", "ATSP6", "ATSP7", "ATSP4", "ATSP5", "ATSP3", "ATSP8", "ATSP9")
+                for (protoCmd in protocolSweep) {
                     protoResp = connectionManager.sendCommand(protoCmd, timeoutMs = 3_000L)
                     val t0 = System.nanoTime()
-                    pid00Resp = connectionManager.sendCommand("0100", timeoutMs = 12_000L)
+                    pid00Resp = connectionManager.sendCommand("0100", timeoutMs = 10_000L, retries = 0)
                     val elapsedMs = ((System.nanoTime() - t0) / 1_000_000L).coerceAtLeast(1L)
-                    connectionManager.appendLog("> $protoCmd + 0100 (${elapsedMs}ms) -> ${pid00Resp.replace("\r", " ").take(36)}")
+                    connectionManager.appendLog("> $protoCmd + 0100 (${elapsedMs}ms) -> ${pid00Resp.replace("\r", " ").take(40)}")
                     if (!ObdPidParser.isAdapterError(pid00Resp) && pid00Resp.uppercase().replace(" ", "").contains("4100")) {
                         ecuLatencyMs = elapsedMs
                         break
                     }
+                    if (pid00Resp == "DISCONNECTED") break
                 }
 
-                if (ObdPidParser.isAdapterError(pid00Resp) || !pid00Resp.uppercase().replace(" ", "").contains("4100")) {
+                // Fallback for older/JDM ECUs that answer 010C (RPM) or 0105 (Coolant) directly even if 0100 bitmap is omitted
+                if ((ObdPidParser.isAdapterError(pid00Resp) || !pid00Resp.uppercase().replace(" ", "").contains("4100")) &&
+                    pid00Resp != "DISCONNECTED"
+                ) {
+                    connectionManager.sendCommand("ATSP0", timeoutMs = 2_000L, retries = 0)
+                    val probeRpm = connectionManager.sendCommand("010C", timeoutMs = 6_000L, retries = 0)
+                    val probeCoolant = connectionManager.sendCommand("0105", timeoutMs = 4_000L, retries = 0)
+                    if (ObdPidParser.parseRpm(probeRpm) != null || ObdPidParser.parseCoolantTempC(probeCoolant) != null) {
+                        fallbackDirectPidOk = true
+                        connectionManager.appendLog("ECU responded directly to 010C/0105 fallback probe.")
+                    }
+                }
+
+                if (!fallbackDirectPidOk &&
+                    (ObdPidParser.isAdapterError(pid00Resp) || !pid00Resp.uppercase().replace(" ", "").contains("4100"))
+                ) {
                     connectionManager.setFailureCategory(ObdFailureCategory.ECU_NO_RESPONSE_IGNITION_OFF)
                     connectionManager.setState(
                         ObdConnectionState.ERROR,
@@ -190,7 +214,12 @@ class ObdBluetoothManager @Inject constructor(
                 }
 
                 val supportedPids = mutableSetOf<String>()
-                supportedPids.addAll(ObdPidParser.parseSupportedPidsBitmap(pid00Resp, 0x00))
+                if (!fallbackDirectPidOk) {
+                    supportedPids.addAll(ObdPidParser.parseSupportedPidsBitmap(pid00Resp, 0x00))
+                } else {
+                    // Core universal SAE J1979 PIDs when ECU skips 0100 bitmap
+                    supportedPids.addAll(listOf("0104", "0105", "010C", "010D", "010F", "0111", "0142"))
+                }
                 if ("0120" in supportedPids) {
                     supportedPids.addAll(ObdPidParser.parseSupportedPidsBitmap(connectionManager.sendCommand("0120"), 0x20))
                 }

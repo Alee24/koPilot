@@ -24,6 +24,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -82,6 +83,7 @@ class ObdConnectionManager @Inject constructor(
     }
 
     private var classicSocket: BluetoothSocket? = null
+    private var classicRxChannel: Channel<Int>? = null
     private var bleGatt: BluetoothGatt? = null
     private var bleWriteChar: BluetoothGattCharacteristic? = null
     private var bleResponseBuffer = StringBuilder()
@@ -255,31 +257,26 @@ class ObdConnectionManager @Inject constructor(
         }
 
         // Explicitly initiate OS Bluetooth bonding when a Classic/Dual adapter is unpaired
+        var pairingFailedHint = false
         if (device.type != BluetoothDevice.DEVICE_TYPE_LE && device.bondState == BluetoothDevice.BOND_NONE) {
             _connectionState.value = ObdConnectionState.PAIRING
-            _statusMessage.value = "Pairing with ${device.name ?: address}... Confirm OS pairing prompt."
+            _statusMessage.value = "Pairing with ${device.name ?: address}... Confirm OS pairing prompt (PIN 1234 or 0000)."
             appendLog("Initiating OS createBond() for unpaired adapter ${device.address}...")
-            val bondInitiated = runCatching { device.createBond() }.getOrDefault(false)
-            if (bondInitiated) {
-                var waitedMs = 0L
-                while (waitedMs < 12_000L && device.bondState == BluetoothDevice.BOND_BONDING) {
-                    delay(400L)
-                    waitedMs += 400L
-                }
-                if (device.bondState != BluetoothDevice.BOND_BONDED) {
-                    val pairMsg = "OS pairing did not complete for ${device.name ?: address}. Pair in Android Bluetooth Settings (PIN 1234 or 0000)."
-                    appendLog(pairMsg)
-                    _failureCategory.value = ObdFailureCategory.PAIRING_FAILED
-                    _connectionState.value = ObdConnectionState.ERROR
-                    _statusMessage.value = pairMsg
-                    return Result.failure(IllegalStateException(pairMsg))
-                }
+            val bonded = awaitBonding(device)
+            if (bonded) {
                 appendLog("OS pairing succeeded for ${device.name ?: address}.")
+            } else {
+                pairingFailedHint = true
+                appendLog("OS bonding did not complete; attempting insecure Classic SPP fallback...")
             }
         } else if (device.bondState == BluetoothDevice.BOND_BONDING) {
             _connectionState.value = ObdConnectionState.PAIRING
             _statusMessage.value = "Pairing with ${device.name ?: address}..."
-            delay(2_500L)
+            var waitedMs = 0L
+            while (waitedMs < 12_000L && device.bondState == BluetoothDevice.BOND_BONDING) {
+                delay(300L)
+                waitedMs += 300L
+            }
         }
 
         _connectionState.value = ObdConnectionState.CONNECTING
@@ -296,14 +293,27 @@ class ObdConnectionManager @Inject constructor(
             classicError = sppResult.exceptionOrNull()
         }
 
-        // Fall back to BLE GATT dynamic service/characteristic discovery
-        val bleResult = connectBleGatt(device)
-        if (bleResult.isSuccess) {
-            _activeTransport.value = ObdTransportType.BLUETOOTH_LOW_ENERGY_GATT
-            return Result.success(ObdTransportType.BLUETOOTH_LOW_ENERGY_GATT)
+        // Fall back to BLE GATT only if the device supports LE / Dual / Unknown transport
+        var bleError: Throwable? = null
+        if (device.type != BluetoothDevice.DEVICE_TYPE_CLASSIC) {
+            val bleResult = connectBleGatt(device)
+            if (bleResult.isSuccess) {
+                _activeTransport.value = ObdTransportType.BLUETOOTH_LOW_ENERGY_GATT
+                return Result.success(ObdTransportType.BLUETOOTH_LOW_ENERGY_GATT)
+            }
+            bleError = bleResult.exceptionOrNull()
         }
 
-        val err = classicError ?: bleResult.exceptionOrNull()
+        if (pairingFailedHint && device.bondState != BluetoothDevice.BOND_BONDED) {
+            val pairMsg = "OS pairing did not complete for ${device.name ?: address}. Pair in Android Bluetooth Settings (PIN 1234 or 0000)."
+            appendLog(pairMsg)
+            _failureCategory.value = ObdFailureCategory.PAIRING_FAILED
+            _connectionState.value = ObdConnectionState.ERROR
+            _statusMessage.value = pairMsg
+            return Result.failure(IllegalStateException(pairMsg))
+        }
+
+        val err = classicError ?: bleError
             ?: IllegalStateException("Unsupported or unreachable OBD-II adapter")
         _failureCategory.value = if (err is UnsupportedOperationException) {
             ObdFailureCategory.UNSUPPORTED_PROTOCOL
@@ -320,10 +330,77 @@ class ObdConnectionManager @Inject constructor(
     }
 
     @SuppressLint("MissingPermission")
+    private suspend fun awaitBonding(device: BluetoothDevice): Boolean {
+        val bondResult = CompletableDeferred<Boolean>()
+        var sawBondingState = false
+        val bondReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+                val dev: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                }
+                if (dev?.address != device.address) return
+                val state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
+                when (state) {
+                    BluetoothDevice.BOND_BONDING -> sawBondingState = true
+                    BluetoothDevice.BOND_BONDED -> if (!bondResult.isCompleted) bondResult.complete(true)
+                    BluetoothDevice.BOND_NONE -> if (sawBondingState && !bondResult.isCompleted) bondResult.complete(false)
+                }
+            }
+        }
+        val registered = runCatching {
+            context.registerReceiver(bondReceiver, IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
+            true
+        }.getOrDefault(false)
+
+        return try {
+            val initiated = runCatching { device.createBond() }.getOrDefault(false)
+            if (!initiated) return device.bondState == BluetoothDevice.BOND_BONDED
+            withTimeoutOrNull(15_000L) {
+                // Poll alongside BroadcastReceiver in case OS already transitioned before receiver fired
+                val pollJob = scope.launch {
+                    var elapsed = 0L
+                    while (elapsed < 15_000L && !bondResult.isCompleted) {
+                        val st = device.bondState
+                        if (st == BluetoothDevice.BOND_BONDED) {
+                            bondResult.complete(true)
+                            break
+                        }
+                        if (st == BluetoothDevice.BOND_BONDING) {
+                            sawBondingState = true
+                        } else if (sawBondingState && st == BluetoothDevice.BOND_NONE) {
+                            bondResult.complete(false)
+                            break
+                        }
+                        delay(300L)
+                        elapsed += 300L
+                    }
+                }
+                try {
+                    bondResult.await()
+                } finally {
+                    pollJob.cancel()
+                }
+            } ?: (device.bondState == BluetoothDevice.BOND_BONDED)
+        } finally {
+            if (registered) runCatching { context.unregisterReceiver(bondReceiver) }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
     private suspend fun connectClassicSpp(device: BluetoothDevice): Result<Unit> {
         val attempts: List<Pair<String, () -> BluetoothSocket>> = listOf(
             "Secure SPP" to { device.createRfcommSocketToServiceRecord(SPP_UUID) },
             "Insecure SPP" to { device.createInsecureRfcommSocketToServiceRecord(SPP_UUID) },
+            "Insecure RFCOMM Ch.1" to {
+                @Suppress("UNCHECKED_CAST")
+                device.javaClass
+                    .getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
+                    .invoke(device, 1) as BluetoothSocket
+            },
             "RFCOMM Ch.1" to {
                 @Suppress("UNCHECKED_CAST")
                 device.javaClass
@@ -367,6 +444,7 @@ class ObdConnectionManager @Inject constructor(
                     throw IllegalStateException("$label timed out after 7s (adapter powered off or busy in another app)")
                 }
                 classicSocket = s
+                startClassicReader(s)
                 appendLog("Classic $label connected!")
             }.onFailure { err ->
                 lastError = err
@@ -376,6 +454,42 @@ class ObdConnectionManager @Inject constructor(
             if (ok) return Result.success(Unit)
         }
         return Result.failure(lastError ?: IllegalStateException("Classic SPP connection failed"))
+    }
+
+    private fun startClassicReader(sock: BluetoothSocket) {
+        classicRxChannel?.close()
+        val channel = Channel<Int>(capacity = 4096)
+        classicRxChannel = channel
+        val readerThread = Thread({
+            val buf = ByteArray(512)
+            try {
+                val input: InputStream = sock.inputStream
+                while (classicSocket === sock && sock.isConnected) {
+                    val count = input.read(buf)
+                    if (count == -1) {
+                        channel.trySend(-1)
+                        if (classicSocket === sock) {
+                            markUnexpectedSocketDrop("OBD-II stream closed by adapter (EOF)")
+                        }
+                        break
+                    }
+                    for (i in 0 until count) {
+                        channel.trySend(buf[i].toInt() and 0xFF)
+                    }
+                }
+            } catch (io: java.io.IOException) {
+                channel.trySend(-1)
+                if (classicSocket === sock) {
+                    markUnexpectedSocketDrop("OBD-II socket I/O dropped: ${io.localizedMessage ?: "broken pipe"}")
+                }
+            } catch (_: Throwable) {
+                channel.trySend(-1)
+            } finally {
+                channel.close()
+            }
+        }, "KoPilot-OBD-SPP-Reader")
+        readerThread.isDaemon = true
+        readerThread.start()
     }
 
     @SuppressLint("MissingPermission")
@@ -399,37 +513,60 @@ class ObdConnectionManager @Inject constructor(
 
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
                 if (status != BluetoothGatt.GATT_SUCCESS) {
-                    readyDeferred.complete(Result.failure(UnsupportedOperationException("BLE service discovery failed")))
+                    readyDeferred.complete(Result.failure(UnsupportedOperationException("BLE service discovery failed (status=$status)")))
                     return
                 }
+                val candidateServices = gatt.services.orEmpty()
+                    .filterNot { isIgnoredStandardGattService(it.uuid) }
+                    .sortedByDescending { obdGattServicePriority(it.uuid) }
+
                 var writeChar: BluetoothGattCharacteristic? = null
                 var notifyChar: BluetoothGattCharacteristic? = null
-                for (service in gatt.services.orEmpty()) {
+                var matchedServiceUuid: UUID? = null
+
+                for (service in candidateServices) {
+                    var svcWrite: BluetoothGattCharacteristic? = null
+                    var svcNotify: BluetoothGattCharacteristic? = null
                     for (ch in service.characteristics.orEmpty()) {
                         val props = ch.properties
                         val writable = (props and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0 ||
                             (props and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
                         val notifiable = (props and BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0 ||
                             (props and BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0
-                        if (writable && writeChar == null) writeChar = ch
-                        if (notifiable && notifyChar == null) notifyChar = ch
+                        if (writable && svcWrite == null) svcWrite = ch
+                        if (notifiable && svcNotify == null) svcNotify = ch
+                    }
+                    if (svcWrite != null && svcNotify != null) {
+                        writeChar = svcWrite
+                        notifyChar = svcNotify
+                        matchedServiceUuid = service.uuid
+                        break
                     }
                 }
                 if (writeChar == null || notifyChar == null) {
+                    appendLog("BLE services found (${gatt.services.orEmpty().size}) but none expose OBD serial write+notify.")
                     readyDeferred.complete(
                         Result.failure(UnsupportedOperationException("Device exposes no serial BLE GATT command/notify characteristics")),
                     )
                     return
                 }
+                appendLog("BLE OBD service ${matchedServiceUuid.toString().take(8)} W=${writeChar.uuid.toString().take(8)} N=${notifyChar.uuid.toString().take(8)}")
                 bleWriteChar = writeChar
                 gatt.setCharacteristicNotification(notifyChar, true)
                 val cccd = notifyChar.getDescriptor(CCCD_UUID)
                 if (cccd != null) {
+                    val useIndicate = (notifyChar.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY) == 0 &&
+                        (notifyChar.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0
+                    val enableVal = if (useIndicate) {
+                        BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                    } else {
+                        BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        gatt.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                        gatt.writeDescriptor(cccd, enableVal)
                     } else {
                         @Suppress("DEPRECATION")
-                        cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        cccd.value = enableVal
                         @Suppress("DEPRECATION")
                         gatt.writeDescriptor(cccd)
                     }
@@ -439,6 +576,7 @@ class ObdConnectionManager @Inject constructor(
             }
 
             override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+                runCatching { gatt.requestMtu(247) }
                 if (!readyDeferred.isCompleted) {
                     readyDeferred.complete(Result.success(Unit))
                 }
@@ -469,8 +607,10 @@ class ObdConnectionManager @Inject constructor(
     }
 
     private fun handleBleChunk(chunk: String) {
-        bleResponseBuffer.append(chunk)
-        if (chunk.contains('>')) {
+        val clean = chunk.replace("\u0000", "")
+        if (clean.isEmpty()) return
+        bleResponseBuffer.append(clean)
+        if (clean.contains('>')) {
             val full = bleResponseBuffer.toString().trim()
             bleResponseBuffer.clear()
             blePendingDeferred?.complete(full)
@@ -508,6 +648,7 @@ class ObdConnectionManager @Inject constructor(
 
     private suspend fun sendClassicCommand(command: String, timeoutMs: Long): String {
         val sock = classicSocket ?: return "DISCONNECTED"
+        val rx = classicRxChannel ?: return "DISCONNECTED"
         if (!sock.isConnected) {
             markUnexpectedSocketDrop("Classic SPP socket is no longer connected")
             return "DISCONNECTED"
@@ -515,24 +656,23 @@ class ObdConnectionManager @Inject constructor(
         return withTimeoutOrNull(timeoutMs) {
             try {
                 val out: OutputStream = sock.outputStream
-                val input: InputStream = sock.inputStream
-                while (input.available() > 0) input.read()
+                // Drain any stale bytes already queued in the persistent reader channel
+                while (rx.tryReceive().isSuccess) {
+                    // discard stale prompt/echo
+                }
                 out.write("$command\r".toByteArray(Charsets.US_ASCII))
                 out.flush()
                 val sb = StringBuilder()
                 while (true) {
-                    if (input.available() > 0) {
-                        val ch = input.read()
-                        if (ch == -1) {
-                            markUnexpectedSocketDrop("OBD-II stream closed by adapter (EOF)")
-                            return@withTimeoutOrNull "DISCONNECTED"
-                        }
-                        val c = ch.toChar()
-                        if (c == '>') break
-                        sb.append(c)
-                    } else {
-                        delay(15L)
+                    val ch = rx.receiveCatching().getOrNull() ?: -1
+                    if (ch == -1) {
+                        markUnexpectedSocketDrop("OBD-II stream closed by adapter (EOF)")
+                        return@withTimeoutOrNull "DISCONNECTED"
                     }
+                    if (ch == 0) continue
+                    val c = ch.toChar()
+                    if (c == '>') break
+                    sb.append(c)
                 }
                 sb.toString().trim()
             } catch (io: java.io.IOException) {
@@ -548,6 +688,8 @@ class ObdConnectionManager @Inject constructor(
         appendLog(reason)
         runCatching { classicSocket?.close() }
         classicSocket = null
+        runCatching { classicRxChannel?.close() }
+        classicRxChannel = null
         if (!manualDisconnectRequested && _connectionState.value == ObdConnectionState.CONNECTED) {
             _failureCategory.value = ObdFailureCategory.UNEXPECTED_DISCONNECT
             _connectionState.value = ObdConnectionState.RECONNECTING
@@ -612,6 +754,8 @@ class ObdConnectionManager @Inject constructor(
         stopDiscovery()
         runCatching { classicSocket?.close() }
         classicSocket = null
+        runCatching { classicRxChannel?.close() }
+        classicRxChannel = null
         runCatching {
             bleGatt?.disconnect()
             bleGatt?.close()
@@ -651,7 +795,39 @@ class ObdConnectionManager @Inject constructor(
     companion object {
         private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
         private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805F9B34FB")
-        private val HHOBD_NAME_HINTS = listOf("HHOBD", "OBDII", "OBD2", "OBD-II", "ELM327")
+        private val HHOBD_NAME_HINTS = listOf(
+            "HHOBD", "OBDII", "OBD2", "OBD-II", "ELM327",
+            "VGATE", "VEEPEAK", "OBDLINK", "CARISTA", "KONNWEI", "V-LINK", "IOS-VLINK",
+        )
+
+        private val IGNORED_STANDARD_GATT_PREFIXES = setOf(
+            "00001800", // Generic Access
+            "00001801", // Generic Attribute
+            "00001802", // Immediate Alert
+            "00001803", // Link Loss
+            "00001804", // Tx Power
+            "00001805", // Current Time
+            "0000180A", // Device Information
+            "0000180D", // Heart Rate
+            "0000180F", // Battery Service
+        )
+
+        fun isIgnoredStandardGattService(uuid: UUID): Boolean {
+            val prefix = uuid.toString().uppercase().take(8)
+            return prefix in IGNORED_STANDARD_GATT_PREFIXES
+        }
+
+        fun obdGattServicePriority(uuid: UUID): Int {
+            val upper = uuid.toString().uppercase()
+            return when {
+                upper.startsWith("0000FFF0") -> 100 // ELM327 BLE / Vgate / Veepeak primary serial
+                upper.startsWith("0000FFE0") -> 95  // HM-10 / ELM327 BLE serial
+                upper.startsWith("000018F0") -> 90  // Vgate iCar Pro / V-Link BLE
+                upper.startsWith("E7810A71") -> 88  // Common BLE OBD-II UART bridge
+                upper.startsWith("6E400001") -> 85  // Nordic UART Service (NUS)
+                else -> 10
+            }
+        }
 
         fun isHhobdNameHint(name: String): Boolean {
             val upper = name.uppercase()
