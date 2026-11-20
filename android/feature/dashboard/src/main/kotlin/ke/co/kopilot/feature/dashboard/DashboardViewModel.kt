@@ -22,6 +22,9 @@ import ke.co.kopilot.feature.alerts.LocalAlertCoordinator
 import ke.co.kopilot.feature.alerts.SpeechSink
 import ke.co.kopilot.feature.camera.CameraPerformanceController
 import ke.co.kopilot.feature.camera.CameraStatusState
+import ke.co.kopilot.feature.dashboard.status.SystemStatusBriefingEngine
+import ke.co.kopilot.feature.dashboard.status.SystemStatusInput
+import ke.co.kopilot.feature.dashboard.status.SystemStatusReport
 import ke.co.kopilot.feature.diagnostics.ObdBluetoothManager
 import ke.co.kopilot.feature.location.LocationTracker
 import ke.co.kopilot.feature.location.LocationTrackingState
@@ -129,6 +132,9 @@ data class DashboardUiState(
     val sleepAnalyticsState: SleepAnalyticsUiState = SleepAnalyticsUiState(),
     val currentRoadName: String? = null,
     val tripBreadcrumbPoints: List<com.google.android.gms.maps.model.LatLng> = emptyList(),
+    val lastSystemStatusReport: SystemStatusReport? = null,
+    val isSystemCheckRunning: Boolean = false,
+    val isVoiceBriefingSpeaking: Boolean = false,
 )
 
 @HiltViewModel
@@ -217,6 +223,9 @@ class DashboardViewModel @Inject constructor(
     private val accidentThresholdConfigState = MutableStateFlow(AccidentThresholdConfig())
     private val safetyEventHistoryState = MutableStateFlow<List<SafetyEventRecord>>(emptyList())
     private val lastEvidenceSnapshotState = MutableStateFlow<IncidentEvidenceSnapshot?>(null)
+    private val lastSystemStatusReportState = MutableStateFlow<SystemStatusReport?>(null)
+    private val isSystemCheckRunningState = MutableStateFlow(false)
+    private val isVoiceBriefingSpeakingState = MutableStateFlow(false)
     private val countdownRemainingState = MutableStateFlow(0)
     private val postImpactState = MutableStateFlow(false)
     private val emergencyDispatchTrigger = MutableStateFlow<String?>(null)
@@ -320,6 +329,9 @@ class DashboardViewModel @Inject constructor(
             sleepAnalyticsState = sleepState,
             currentRoadName = currentRoadNameFlow.value,
             tripBreadcrumbPoints = tripBreadcrumbFlow.value,
+            lastSystemStatusReport = lastSystemStatusReportState.value,
+            isSystemCheckRunning = isSystemCheckRunningState.value,
+            isVoiceBriefingSpeaking = isVoiceBriefingSpeakingState.value,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -1332,8 +1344,122 @@ class DashboardViewModel @Inject constructor(
         sensorManagerRepo.recalibrateMount()
     }
 
+    /**
+     * One-touch "Check All Systems" & Automatic Pre-Trip Voice Briefing.
+     * Prevents concurrent checks, refreshes available sensors/weather/sleep asynchronously
+     * with bounded timeouts, builds a real SystemStatusReport, and speaks it cleanly.
+     */
+    fun runCheckAllSystems(speakReport: Boolean = true, isPreTripBriefing: Boolean = false) {
+        if (isSystemCheckRunningState.value) return
+        viewModelScope.launch {
+            isSystemCheckRunningState.value = true
+            try {
+                // Non-blocking refresh of weather with bounded 2.2s timeout so offline/disconnected devices never freeze UI
+                kotlinx.coroutines.withTimeoutOrNull<Unit>(2_200L) {
+                    val fix = locationTracker.state.value.currentFix
+                    if (fix != null && uiState.value.isOnline) {
+                        runCatching { weatherRepo.refreshWeather(fix.latitude, fix.longitude, force = false) }
+                    }
+                }
+
+                val now = System.currentTimeMillis()
+                val snap = uiState.value
+                val hub = sensorManagerRepo.state.value
+                val fix = snap.locationState.currentFix
+                val tel = obdManager.liveTelemetry.value
+                val obdDiag = snap.diagnosticsState
+                val hr = snap.heartRateState
+                val sleep = snap.sleepAnalyticsState
+                val weather = snap.weatherState
+                val watchDiag = snap.smartwatchDiagnostics
+
+                val accelAvail = hub.physicalSensors.any { it.typeName == "Accelerometer" && it.isAvailable }
+                val gyroAvail = hub.physicalSensors.any { it.typeName == "Gyroscope" && it.isAvailable }
+                val watchFresh = hr.currentBpm != null && !hr.isStale &&
+                    hr.lastMeasurementTimestampMillis != null &&
+                    (now - hr.lastMeasurementTimestampMillis!!) <= 15_000L
+                val speedKmh = fix?.speedKmh ?: tel.vehicleSpeedKmh?.toFloat() ?: 0f
+                val isMoving = speedKmh >= 8.0f
+                val weatherAgeMin = weather.fetchedAtMillis?.let { ((now - it).coerceAtLeast(0L)) / 60_000L }
+
+                val report = SystemStatusBriefingEngine.buildReport(
+                    SystemStatusInput(
+                        nowMillis = now,
+                        isMoving = isMoving,
+                        cameraAvailable = snap.cameraStatus.cameraAvailable,
+                        cameraPermissionGranted = snap.cameraStatus.permissionGranted,
+                        accelerometerAvailable = accelAvail,
+                        gyroscopeAvailable = gyroAvail,
+                        mountCalibrationLabel = hub.mountCalibrationStatus.label,
+                        gpsConnected = fix != null,
+                        gpsAccuracyMeters = fix?.horizontalAccuracyMeters,
+                        compassReading = hub.compassReading,
+                        compassCalibrationPoor = hub.compassReading.interferenceSuspected,
+                        obdConnected = obdDiag.obdConnected,
+                        obdIgnitionOffSuspected = obdManager.failureCategory.value ==
+                            ke.co.kopilot.feature.diagnostics.ObdFailureCategory.ECU_NO_RESPONSE_IGNITION_OFF,
+                        obdAdapterName = obdDiag.adapterName,
+                        obdProtocolName = obdDiag.protocolName?.takeIf { it.isNotBlank() } ?: tel.protocolName,
+                        obdRpm = tel.engineRpm ?: obdDiag.engineRpm,
+                        obdSpeedKmh = tel.vehicleSpeedKmh ?: obdDiag.obdSpeedKmh,
+                        obdFuelLevelPct = tel.fuelLevelPct,
+                        obdMafGramsPerSec = tel.mafGramsPerSec,
+                        obdCoolantTempC = tel.coolantTempC ?: obdDiag.coolantTempC,
+                        obdEngineLoadPct = tel.engineLoadPct,
+                        obdThrottlePct = tel.throttlePositionPct,
+                        obdVoltageV = tel.controlModuleVoltageV ?: tel.adapterVoltageV,
+                        obdDtcCodes = obdDiag.dtcCodes,
+                        obdMilOn = tel.milOn,
+                        obdSupportedPids = tel.supportedPidHexes,
+                        watchConnected = watchDiag.connectionState.name == "CONNECTED",
+                        watchName = watchDiag.connectedName,
+                        watchBatteryPct = watchDiag.batteryPercent,
+                        watchHeartRateBpm = hr.currentBpm,
+                        watchHeartRateFresh = watchFresh,
+                        watchSensorContact = hr.sensorContactDetected,
+                        sleepDurationMinutes = sleep.latestSession?.totalSleepDurationMinutes,
+                        sleepHistoryAvailable = sleep.latestSession != null,
+                        weatherAvailable = weather.available,
+                        weatherCondition = weather.conditionSummary,
+                        weatherTempC = weather.temperatureC,
+                        weatherRainProbPct = weather.rainProbabilityPercent,
+                        weatherWindKmh = weather.windSpeedKmh,
+                        weatherIsStaleCache = weather.isStaleOfflineCache,
+                        weatherObservationAgeMinutes = weatherAgeMin,
+                        isOnline = snap.isOnline,
+                    ),
+                )
+                lastSystemStatusReportState.value = report
+
+                if (speakReport && pendingAccidentState.value == null) {
+                    val script = if (isMoving && !isPreTripBriefing) {
+                        report.spokenBriefingDrivingConcise
+                    } else {
+                        report.spokenBriefingFull
+                    }
+                    isVoiceBriefingSpeakingState.value = true
+                    speechSink.speak(
+                        text = script,
+                        flushQueue = true,
+                        speechRate = 1.0f,
+                        languageTag = "en-US",
+                    )
+                }
+            } finally {
+                isSystemCheckRunningState.value = false
+            }
+        }
+    }
+
+    fun stopVoiceBriefing() {
+        isVoiceBriefingSpeakingState.value = false
+        speechSink.stop()
+    }
+
     fun startEmergencyCountdown(assessment: AccidentAssessment) {
         if (pendingAccidentState.value != null) return
+        // Critical emergency warning always interrupts any routine system status briefing
+        isVoiceBriefingSpeakingState.value = false
         val totalSec = uiState.value.settings.emergencyCountdownSeconds.coerceIn(5, 30)
         pendingAccidentState.value = assessment
         countdownRemainingState.value = totalSec

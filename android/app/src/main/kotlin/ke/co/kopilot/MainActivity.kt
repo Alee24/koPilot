@@ -79,6 +79,7 @@ import ke.co.kopilot.feature.dashboard.DashboardViewModel
 import ke.co.kopilot.feature.dashboard.NavigationScreen
 import ke.co.kopilot.feature.dashboard.PerformanceThermalScreen
 import ke.co.kopilot.feature.dashboard.pretrip.PreTripStartupScreen
+import ke.co.kopilot.feature.dashboard.status.SystemStatusScreen
 import ke.co.kopilot.feature.diagnostics.ObdScreen
 import ke.co.kopilot.feature.sensors.DrivingIntelligenceScreen
 import ke.co.kopilot.feature.sensors.SensorsScreen
@@ -423,6 +424,12 @@ class MainActivity : ComponentActivity() {
                                         onOpenSmartwatchHealth = {
                                             navController.navigate("smartwatch_health")
                                         },
+                                        onPreTripChecksCompleted = {
+                                            dashboardViewModel.runCheckAllSystems(speakReport = true, isPreTripBriefing = true)
+                                        },
+                                        onStopVoiceBriefing = {
+                                            dashboardViewModel.stopVoiceBriefing()
+                                        },
                                     )
                                 }
                                 composable("dashboard") {
@@ -441,10 +448,24 @@ class MainActivity : ComponentActivity() {
                                         onOpenLiveMap = { navController.navigate("live_map") },
                                         onOpenPerformanceThermal = { navController.navigate("performance_thermal") },
                                         onOpenSmartwatchHealth = { navController.navigate("smartwatch_health") },
+                                        onOpenSystemStatus = { navController.navigate("system_status") },
                                         onCallEmergency = { phone ->
                                             startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
                                         },
                                         viewModel = dashboardViewModel,
+                                    )
+                                }
+                                composable("system_status") {
+                                    SystemStatusScreen(
+                                        state = dashState,
+                                        onRunCheckAllSystems = { dashboardViewModel.runCheckAllSystems(speakReport = true) },
+                                        onStopVoiceBriefing = { dashboardViewModel.stopVoiceBriefing() },
+                                        onOpenDetailedDiagnostics = { navController.navigate("accident_diagnostics") },
+                                        onStartTrip = {
+                                            dashboardViewModel.startDriving()
+                                            navController.popBackStack()
+                                        },
+                                        onBack = { navController.popBackStack() },
                                     )
                                 }
                                 composable("performance_thermal") {

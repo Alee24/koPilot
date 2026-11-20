@@ -99,9 +99,19 @@ fun PreTripStartupScreen(
     onSkipToDashboard: () -> Unit,
     onOpenFullDiagnostics: () -> Unit,
     onOpenSmartwatchHealth: () -> Unit,
+    onPreTripChecksCompleted: () -> Unit = {},
+    onStopVoiceBriefing: () -> Unit = {},
     viewModel: PreTripStartupViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var briefingTriggered by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state.currentStage) {
+        if (state.currentStage == PreTripWizardStage.READINESS_REPORT && !briefingTriggered) {
+            briefingTriggered = true
+            onPreTripChecksCompleted()
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.startRealInitialization(

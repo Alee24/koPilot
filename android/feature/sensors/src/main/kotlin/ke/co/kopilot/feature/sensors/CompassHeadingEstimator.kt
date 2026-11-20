@@ -6,8 +6,11 @@ import kotlin.math.roundToInt
 data class CompassReading(
     val degrees: Int = 0,
     val cardinal: String = "N",
-    val formatted: String = "N · 000°",
+    val fullDirectionName: String = "North",
+    val formatted: String = "North · 000°",
     val source: String = "IMU",
+    val northReference: String = "Magnetic North",
+    val isReliable: Boolean = true,
     val interferenceSuspected: Boolean = false,
     val headingDeltaDegrees: Float = 0f,
     val previousCardinal: String = "N",
@@ -61,11 +64,17 @@ class CompassHeadingEstimator {
         val prevCardinal = referenceCardinal
 
         val interference = !useGps && magneticFieldUt != null && (magneticFieldUt < 20f || magneticFieldUt > 75f)
+        val fullName = toFullDirectionName(cardinal)
+        val reliable = useGps || (!interference && !sensorAzimuthDeg.isNaN())
+        val northRef = if (useGps) "True North" else "Magnetic North"
         return CompassReading(
             degrees = degInt,
             cardinal = cardinal,
-            formatted = "$cardinal · ${degInt.toString().padStart(3, '0')}°",
+            fullDirectionName = fullName,
+            formatted = if (reliable) "$fullName · ${degInt.toString().padStart(3, '0')}°" else "Heading unavailable",
             source = if (useGps) "GPS" else "Sensor",
+            northReference = northRef,
+            isReliable = reliable,
             interferenceSuspected = interference,
             headingDeltaDegrees = deltaFromRef,
             previousCardinal = prevCardinal,
@@ -80,11 +89,54 @@ class CompassHeadingEstimator {
 
     companion object {
         private val CARDINALS = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+        private val FULL_NAMES = listOf(
+            "North",
+            "Northeast",
+            "East",
+            "Southeast",
+            "South",
+            "Southwest",
+            "West",
+            "Northwest",
+        )
 
         fun toCardinal(degrees: Int): String {
             val norm = ((degrees % 360) + 360) % 360
             val idx = ((norm + 22.5) / 45.0).toInt() % 8
             return CARDINALS[idx]
+        }
+
+        fun toFullDirectionName(degrees: Int): String {
+            val norm = ((degrees % 360) + 360) % 360
+            val idx = ((norm + 22.5) / 45.0).toInt() % 8
+            return FULL_NAMES[idx]
+        }
+
+        fun toFullDirectionName(cardinal: String): String = when (cardinal.trim().uppercase()) {
+            "N", "NORTH" -> "North"
+            "NE", "NORTHEAST" -> "Northeast"
+            "E", "EAST" -> "East"
+            "SE", "SOUTHEAST" -> "Southeast"
+            "S", "SOUTH" -> "South"
+            "SW", "SOUTHWEST" -> "Southwest"
+            "W", "WEST" -> "West"
+            "NW", "NORTHWEST" -> "Northwest"
+            else -> "Heading unavailable"
+        }
+
+        fun formatSpokenHeading(reading: CompassReading?): String {
+            if (reading == null || !reading.isReliable || reading.interferenceSuspected) {
+                return "Heading unavailable"
+            }
+            return toFullDirectionName(reading.degrees)
+        }
+
+        fun formatDisplayHeading(reading: CompassReading?): String {
+            if (reading == null || !reading.isReliable || reading.interferenceSuspected) {
+                return "Heading unavailable"
+            }
+            val dir = toFullDirectionName(reading.degrees)
+            return "$dir · ${reading.degrees.toString().padStart(3, '0')}°"
         }
 
         /**

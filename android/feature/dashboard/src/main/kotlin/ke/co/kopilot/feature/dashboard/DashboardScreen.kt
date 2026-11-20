@@ -61,6 +61,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.Notifications
@@ -163,6 +164,7 @@ fun DashboardScreen(
     onOpenLiveMap: () -> Unit = {},
     onOpenPerformanceThermal: () -> Unit = {},
     onOpenSmartwatchHealth: () -> Unit = {},
+    onOpenSystemStatus: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -345,6 +347,10 @@ fun DashboardScreen(
             onOpenSmartwatchHealth = {
                 showToolsDialog = false
                 onOpenSmartwatchHealth()
+            },
+            onOpenSystemStatus = {
+                showToolsDialog = false
+                onOpenSystemStatus()
             },
             onToggleMuteAlerts = viewModel::toggleAlertsMute,
             onCallEmergency = {
@@ -1460,19 +1466,19 @@ private fun PrimaryActionButtonsRow(
 
         Button(
             onClick = onOpenNavigate,
-            modifier = Modifier.weight(0.9f).heightIn(min = 48.dp),
+            modifier = Modifier.weight(1.05f).heightIn(min = 48.dp),
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = NavBlue,
                 contentColor = Color.White,
             ),
         ) {
-            Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(16.dp))
+            Icon(Icons.Default.FactCheck, contentDescription = "Check All Systems", modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(5.dp))
             Text(
-                text = "Navigate",
+                text = if (state.isSystemCheckRunning) "Checking..." else "Check All Systems",
                 fontWeight = FontWeight.Bold,
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -3151,25 +3157,27 @@ private fun FullBleedArHudLanding(
                     }
 
                     OutlinedButton(
-                        onClick = onOpenNavigation,
+                        onClick = { viewModel.runCheckAllSystems(speakReport = true) },
+                        enabled = !state.isSystemCheckRunning,
                         modifier = Modifier
-                            .weight(1f)
+                            .weight(1.1f)
                             .height(48.dp),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.outlinedButtonColors(containerColor = hudGlassBg),
                         border = BorderStroke(1.dp, hudGlassBorder),
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Navigation,
-                            contentDescription = "Navigate",
+                            imageVector = Icons.Default.FactCheck,
+                            contentDescription = "Check All Systems",
                             tint = KoPilotClusterTokens.SecondaryAccent,
                             modifier = Modifier.size(17.dp),
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            text = "Navigate",
+                            text = if (state.isSystemCheckRunning) "Checking..." else "Check All",
                             color = KoPilotClusterTokens.PrimaryText,
                             fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
                             maxLines = 1,
                         )
                     }
@@ -4067,6 +4075,7 @@ private fun DashboardToolsDialog(
     onOpenVisionDiag: () -> Unit,
     onOpenPerformanceThermal: () -> Unit = {},
     onOpenSmartwatchHealth: () -> Unit = {},
+    onOpenSystemStatus: () -> Unit = {},
     onToggleMuteAlerts: () -> Unit,
     onCallEmergency: () -> Unit,
 ) {
@@ -4171,6 +4180,7 @@ private fun DashboardToolsDialog(
                         androidx.compose.material3.HorizontalDivider(color = KoPilotClusterTokens.ElevatedSurface)
 
                         Text("SENSORS, WATCH & VISION", style = MaterialTheme.typography.labelSmall, color = KoPilotClusterTokens.PrimaryAccent, fontWeight = FontWeight.Bold)
+                        MenuDrawerItem("System Status & Briefing", Icons.Default.FactCheck, onOpenSystemStatus)
                         MenuDrawerItem("Smartwatch & Health", Icons.Default.MyLocation, onOpenSmartwatchHealth)
                         MenuDrawerItem("Sensors Hub", Icons.Default.Explore, onOpenSensors)
                         MenuDrawerItem("Performance & Thermal", Icons.Default.Explore, onOpenPerformanceThermal)

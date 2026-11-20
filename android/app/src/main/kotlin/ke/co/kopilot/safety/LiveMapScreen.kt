@@ -184,8 +184,9 @@ fun LiveMapScreen(
                     }
                     val marker = Marker(view).apply {
                         position = pos
-                        title = state.currentRoadName?.let { "On $it (${state.compassReading.cardinal})" }
-                            ?: "Heading ${state.compassReading.cardinal} ${state.compassReading.degrees} deg"
+                        val fullHeading = ke.co.kopilot.feature.sensors.CompassHeadingEstimator.formatSpokenHeading(state.compassReading)
+                        title = state.currentRoadName?.let { "On $it ($fullHeading)" }
+                            ?: if (fullHeading == "Heading unavailable") fullHeading else "Heading $fullHeading (${state.compassReading.degrees}°)"
                         icon = headingArrowDrawable
                         rotation = -headingDeg
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
@@ -317,7 +318,12 @@ fun LiveMapScreen(
                         )
                         Text(
                             text = buildString {
-                                append("Heading ${state.compassReading.cardinal} (${state.compassReading.degrees} deg)")
+                                val fullHeading = ke.co.kopilot.feature.sensors.CompassHeadingEstimator.formatSpokenHeading(state.compassReading)
+                                if (fullHeading == "Heading unavailable") {
+                                    append("Heading unavailable")
+                                } else {
+                                    append("Heading $fullHeading (${state.compassReading.degrees}°)")
+                                }
                                 state.navigationState.activeRoute?.let { r ->
                                     append(" • Route ${r.durationSeconds / 60} min")
                                 }
