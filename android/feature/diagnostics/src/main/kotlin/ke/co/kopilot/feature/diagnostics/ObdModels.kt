@@ -20,6 +20,41 @@ enum class ObdTransportType {
     BLUETOOTH_LOW_ENERGY_GATT,
 }
 
+enum class ObdFailureCategory(
+    val title: String,
+    val guidance: String,
+) {
+    NONE("No Error", ""),
+    BLUETOOTH_DISABLED(
+        "Bluetooth Disabled",
+        "Turn on Bluetooth in Android Settings, then tap Retry Connection.",
+    ),
+    PERMISSION_DENIED(
+        "Bluetooth Permission Required",
+        "Grant Nearby Devices (BLUETOOTH_SCAN & BLUETOOTH_CONNECT) permissions so KoPilot can communicate with your OBD-II adapter.",
+    ),
+    PAIRING_FAILED(
+        "Adapter Pairing Failed",
+        "Ensure the OBD-II adapter is plugged into the vehicle's diagnostic port and powered on. Pair it in Android Bluetooth settings (common PIN: 1234 or 0000), then retry.",
+    ),
+    ADAPTER_UNREACHABLE_OR_BUSY(
+        "Adapter Unreachable or Busy",
+        "Verify the OBD-II adapter LED is lit, move closer to the vehicle, and close any other OBD apps (Torque, Car Scanner) that may be holding the Bluetooth socket.",
+    ),
+    UNSUPPORTED_PROTOCOL(
+        "Incompatible Adapter Protocol",
+        "The selected Bluetooth device did not respond to ELM327 initialization. Confirm you selected an ELM327-compatible OBD-II adapter rather than a headset or smartwatch.",
+    ),
+    ECU_NO_RESPONSE_IGNITION_OFF(
+        "Vehicle ECU Not Responding",
+        "The OBD-II adapter connected, but the car's ECU did not reply. Turn the vehicle ignition to ON (or start the engine) and tap Retry Connection.",
+    ),
+    UNEXPECTED_DISCONNECT(
+        "OBD-II Link Dropped",
+        "The Bluetooth connection to the OBD-II adapter was interrupted. KoPilot will attempt automatic reconnection when the adapter is back in range.",
+    ),
+}
+
 enum class PidSupportStatus {
     SUPPORTED,
     UNSUPPORTED,
@@ -85,5 +120,8 @@ data class ObdLiveTelemetry(
     val transmissionDtcCodes: List<String> = emptyList(),
     val observedRpmSpeedRatio: Float? = null,
     val transmissionStatusNote: String = "Standard OBD-II monitors P07xx–P09xx transmission DTCs; CVT fluid temp & pressure require manufacturer-specific PIDs.",
+    val milOn: Boolean? = null,
+    val ecuLatencyMs: Long? = null,
+    val genuineParameterVerified: Boolean = false,
     val lastUpdatedMillis: Long? = null,
 )

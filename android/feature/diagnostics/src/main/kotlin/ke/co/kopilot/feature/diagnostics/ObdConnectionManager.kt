@@ -68,8 +68,17 @@ class ObdConnectionManager @Inject constructor(
     private val _connectionLog = MutableStateFlow<List<String>>(emptyList())
     val connectionLog: StateFlow<List<String>> = _connectionLog.asStateFlow()
 
+    private val _failureCategory = MutableStateFlow(ObdFailureCategory.NONE)
+    val failureCategory: StateFlow<ObdFailureCategory> = _failureCategory.asStateFlow()
+
+    fun setFailureCategory(category: ObdFailureCategory) {
+        _failureCategory.value = category
+    }
+
+    fun isBluetoothEnabled(): Boolean = adapter?.isEnabled == true
+
     fun appendLog(line: String) {
-        _connectionLog.value = (_connectionLog.value + line).takeLast(20)
+        _connectionLog.value = (_connectionLog.value + line).takeLast(30)
     }
 
     private var classicSocket: BluetoothSocket? = null
@@ -218,6 +227,7 @@ class ObdConnectionManager @Inject constructor(
         if (!permissionGranted) {
             val msg = "Bluetooth permission not granted — tap Grant Bluetooth Permissions"
             appendLog(msg)
+            _failureCategory.value = ObdFailureCategory.PERMISSION_DENIED
             _connectionState.value = ObdConnectionState.ERROR
             _statusMessage.value = msg
             return Result.failure(IllegalStateException(msg))
@@ -225,38 +235,65 @@ class ObdConnectionManager @Inject constructor(
         if (btAdapter == null || !btAdapter.isEnabled) {
             val msg = "Bluetooth is turned OFF — enable Bluetooth and try again"
             appendLog(msg)
+            _failureCategory.value = ObdFailureCategory.BLUETOOTH_DISABLED
             _connectionState.value = ObdConnectionState.ERROR
             _statusMessage.value = msg
             return Result.failure(IllegalStateException(msg))
         }
 
         manualDisconnectRequested = false
+        _failureCategory.value = ObdFailureCategory.NONE
         stopDiscovery()
         disconnectInternal(resetManualFlag = false)
         lastConnectedAddress = address
 
         val device = runCatching { btAdapter.getRemoteDevice(address) }.getOrElse {
+            _failureCategory.value = ObdFailureCategory.ADAPTER_UNREACHABLE_OR_BUSY
             _connectionState.value = ObdConnectionState.ERROR
             _statusMessage.value = "Invalid Bluetooth address"
             return Result.failure(it)
         }
 
-        if (device.bondState == BluetoothDevice.BOND_BONDING) {
+        // Explicitly initiate OS Bluetooth bonding when a Classic/Dual adapter is unpaired
+        if (device.type != BluetoothDevice.DEVICE_TYPE_LE && device.bondState == BluetoothDevice.BOND_NONE) {
+            _connectionState.value = ObdConnectionState.PAIRING
+            _statusMessage.value = "Pairing with ${device.name ?: address}... Confirm OS pairing prompt."
+            appendLog("Initiating OS createBond() for unpaired adapter ${device.address}...")
+            val bondInitiated = runCatching { device.createBond() }.getOrDefault(false)
+            if (bondInitiated) {
+                var waitedMs = 0L
+                while (waitedMs < 12_000L && device.bondState == BluetoothDevice.BOND_BONDING) {
+                    delay(400L)
+                    waitedMs += 400L
+                }
+                if (device.bondState != BluetoothDevice.BOND_BONDED) {
+                    val pairMsg = "OS pairing did not complete for ${device.name ?: address}. Pair in Android Bluetooth Settings (PIN 1234 or 0000)."
+                    appendLog(pairMsg)
+                    _failureCategory.value = ObdFailureCategory.PAIRING_FAILED
+                    _connectionState.value = ObdConnectionState.ERROR
+                    _statusMessage.value = pairMsg
+                    return Result.failure(IllegalStateException(pairMsg))
+                }
+                appendLog("OS pairing succeeded for ${device.name ?: address}.")
+            }
+        } else if (device.bondState == BluetoothDevice.BOND_BONDING) {
             _connectionState.value = ObdConnectionState.PAIRING
             _statusMessage.value = "Pairing with ${device.name ?: address}..."
-            delay(2_000L)
+            delay(2_500L)
         }
 
         _connectionState.value = ObdConnectionState.CONNECTING
         _statusMessage.value = "Connecting to ${device.name ?: address}..."
 
         // Try Classic SPP first unless device explicitly reports LE-only
+        var classicError: Throwable? = null
         if (device.type != BluetoothDevice.DEVICE_TYPE_LE) {
             val sppResult = connectClassicSpp(device)
             if (sppResult.isSuccess) {
                 _activeTransport.value = ObdTransportType.BLUETOOTH_CLASSIC_SPP
                 return Result.success(ObdTransportType.BLUETOOTH_CLASSIC_SPP)
             }
+            classicError = sppResult.exceptionOrNull()
         }
 
         // Fall back to BLE GATT dynamic service/characteristic discovery
@@ -266,7 +303,13 @@ class ObdConnectionManager @Inject constructor(
             return Result.success(ObdTransportType.BLUETOOTH_LOW_ENERGY_GATT)
         }
 
-        val err = bleResult.exceptionOrNull() ?: IllegalStateException("Unsupported or unreachable OBD-II adapter")
+        val err = classicError ?: bleResult.exceptionOrNull()
+            ?: IllegalStateException("Unsupported or unreachable OBD-II adapter")
+        _failureCategory.value = if (err is UnsupportedOperationException) {
+            ObdFailureCategory.UNSUPPORTED_PROTOCOL
+        } else {
+            ObdFailureCategory.ADAPTER_UNREACHABLE_OR_BUSY
+        }
         _connectionState.value = if (err is UnsupportedOperationException) {
             ObdConnectionState.UNSUPPORTED
         } else {
@@ -299,14 +342,29 @@ class ObdConnectionManager @Inject constructor(
             var sock: BluetoothSocket? = null
             val ok = runCatching {
                 runCatching { adapter?.cancelDiscovery() }
-                delay(300L)
+                delay(250L)
                 sock = factory()
                 val s = sock!!
                 appendLog("Classic $label (${idx + 1}/${attempts.size})...")
-                s.connect()
-                if (!s.isConnected) {
+                // Bounded 7-second socket connect timeout prevents indefinite RFCOMM hangs
+                val connectedInTime = withTimeoutOrNull(7_000L) {
+                    val connectDeferred = CompletableDeferred<Unit>()
+                    val worker = Thread {
+                        try {
+                            s.connect()
+                            connectDeferred.complete(Unit)
+                        } catch (t: Throwable) {
+                            connectDeferred.completeExceptionally(t)
+                        }
+                    }
+                    worker.isDaemon = true
+                    worker.start()
+                    connectDeferred.await()
+                    true
+                } ?: false
+                if (!connectedInTime || !s.isConnected) {
                     runCatching { s.close() }
-                    throw IllegalStateException("RFCOMM SPP socket not connected")
+                    throw IllegalStateException("$label timed out after 7s (adapter powered off or busy in another app)")
                 }
                 classicSocket = s
                 appendLog("Classic $label connected!")
@@ -449,9 +507,13 @@ class ObdConnectionManager @Inject constructor(
     }
 
     private suspend fun sendClassicCommand(command: String, timeoutMs: Long): String {
-        val sock = classicSocket ?: return ""
+        val sock = classicSocket ?: return "DISCONNECTED"
+        if (!sock.isConnected) {
+            markUnexpectedSocketDrop("Classic SPP socket is no longer connected")
+            return "DISCONNECTED"
+        }
         return withTimeoutOrNull(timeoutMs) {
-            runCatching {
+            try {
                 val out: OutputStream = sock.outputStream
                 val input: InputStream = sock.inputStream
                 while (input.available() > 0) input.read()
@@ -461,7 +523,10 @@ class ObdConnectionManager @Inject constructor(
                 while (true) {
                     if (input.available() > 0) {
                         val ch = input.read()
-                        if (ch == -1) break
+                        if (ch == -1) {
+                            markUnexpectedSocketDrop("OBD-II stream closed by adapter (EOF)")
+                            return@withTimeoutOrNull "DISCONNECTED"
+                        }
                         val c = ch.toChar()
                         if (c == '>') break
                         sb.append(c)
@@ -470,8 +535,24 @@ class ObdConnectionManager @Inject constructor(
                     }
                 }
                 sb.toString().trim()
-            }.getOrDefault("")
+            } catch (io: java.io.IOException) {
+                markUnexpectedSocketDrop("OBD-II socket I/O dropped: ${io.localizedMessage ?: "broken pipe"}")
+                "DISCONNECTED"
+            } catch (_: Throwable) {
+                ""
+            }
         } ?: "TIMEOUT"
+    }
+
+    private fun markUnexpectedSocketDrop(reason: String) {
+        appendLog(reason)
+        runCatching { classicSocket?.close() }
+        classicSocket = null
+        if (!manualDisconnectRequested && _connectionState.value == ObdConnectionState.CONNECTED) {
+            _failureCategory.value = ObdFailureCategory.UNEXPECTED_DISCONNECT
+            _connectionState.value = ObdConnectionState.RECONNECTING
+            _statusMessage.value = "OBD-II link dropped; reconnecting..."
+        }
     }
 
     @SuppressLint("MissingPermission")

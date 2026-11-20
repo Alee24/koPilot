@@ -38,11 +38,14 @@ class ObdBluetoothManager @Inject constructor(
     val connectionState: StateFlow<ObdConnectionState> = connectionManager.connectionState
     val discoveredDevices: StateFlow<List<ObdDiscoveredDevice>> = connectionManager.discoveredDevices
     val connectionLog: StateFlow<List<String>> = connectionManager.connectionLog
+    val failureCategory: StateFlow<ObdFailureCategory> = connectionManager.failureCategory
 
     private var pollingJob: Job? = null
 
     private val _lastAttemptedAddress = MutableStateFlow<String?>(null)
     val lastAttemptedAddress: StateFlow<String?> = _lastAttemptedAddress.asStateFlow()
+
+    fun isBluetoothEnabled(): Boolean = connectionManager.isBluetoothEnabled()
 
     fun listPairedDevices(bluetoothPermissionGranted: Boolean): List<PairedBluetoothDevice> {
         return connectionManager.listPairedDevices(bluetoothPermissionGranted).map {
@@ -58,12 +61,29 @@ class ObdBluetoothManager @Inject constructor(
         connectionManager.stopDiscovery()
     }
 
-    fun connectAndMonitor(address: String, bluetoothPermissionGranted: Boolean) {
+    fun connectAndMonitor(address: String, bluetoothPermissionGranted: Boolean, forceRestart: Boolean = false) {
+        // Prevent duplicate concurrent connections to the same adapter during startup/resume
+        val currentState = connectionManager.connectionState.value
+        if (!forceRestart &&
+            _lastAttemptedAddress.value.equals(address, ignoreCase = true) &&
+            pollingJob?.isActive == true &&
+            currentState in setOf(
+                ObdConnectionState.PAIRING,
+                ObdConnectionState.CONNECTING,
+                ObdConnectionState.ADAPTER_INITIALIZING,
+                ObdConnectionState.ECU_CONNECTING,
+                ObdConnectionState.CONNECTED,
+            )
+        ) {
+            return
+        }
+
         _lastAttemptedAddress.value = address
         pollingJob?.cancel()
         pollingJob = null
         connectionManager.disconnect()
         connectionManager.resetManualDisconnect()
+        connectionManager.setFailureCategory(ObdFailureCategory.NONE)
         connectionManager.appendLog("Starting OBD-II connection to $address...")
         pollingJob = scope.launch {
             var reconnectAttempts = 0
@@ -113,6 +133,7 @@ class ObdBluetoothManager @Inject constructor(
 
                 if (!adapterVerified) {
                     connectionManager.appendLog("Adapter init failed: ATZ='$atz' ATE0='$ate0'")
+                    connectionManager.setFailureCategory(ObdFailureCategory.UNSUPPORTED_PROTOCOL)
                     connectionManager.setState(
                         ObdConnectionState.UNSUPPORTED,
                         "Device did not respond to ELM327-compatible initialization",
@@ -125,19 +146,24 @@ class ObdBluetoothManager @Inject constructor(
                     break
                 }
 
-                connectionManager.setState(ObdConnectionState.ECU_CONNECTING, "Connecting to vehicle ECU...")
+                connectionManager.setState(ObdConnectionState.ECU_CONNECTING, "Initializing vehicle protocol...")
                 var protoResp = ""
                 var pid00Resp = ""
+                var ecuLatencyMs: Long? = null
                 for (protoCmd in listOf("ATSP0", "ATSP6", "ATSP7", "ATSP3", "ATSP5")) {
                     protoResp = connectionManager.sendCommand(protoCmd, timeoutMs = 3_000L)
+                    val t0 = System.nanoTime()
                     pid00Resp = connectionManager.sendCommand("0100", timeoutMs = 12_000L)
-                    connectionManager.appendLog("> $protoCmd + 0100 -> ${pid00Resp.replace("\r", " ").take(36)}")
+                    val elapsedMs = ((System.nanoTime() - t0) / 1_000_000L).coerceAtLeast(1L)
+                    connectionManager.appendLog("> $protoCmd + 0100 (${elapsedMs}ms) -> ${pid00Resp.replace("\r", " ").take(36)}")
                     if (!ObdPidParser.isAdapterError(pid00Resp) && pid00Resp.uppercase().replace(" ", "").contains("4100")) {
+                        ecuLatencyMs = elapsedMs
                         break
                     }
                 }
 
                 if (ObdPidParser.isAdapterError(pid00Resp) || !pid00Resp.uppercase().replace(" ", "").contains("4100")) {
+                    connectionManager.setFailureCategory(ObdFailureCategory.ECU_NO_RESPONSE_IGNITION_OFF)
                     connectionManager.setState(
                         ObdConnectionState.ERROR,
                         "ECU not responding (${pid00Resp.ifBlank { "TIMEOUT" }}). Ensure ignition is ON.",
@@ -149,6 +175,18 @@ class ObdBluetoothManager @Inject constructor(
                     )
                     delay(3_000L)
                     continue
+                }
+
+                // Query actual detected vehicle protocol via ATDP
+                val atdpRaw = connectionManager.sendCommand("ATDP", timeoutMs = 2_000L, retries = 0)
+                    .replace("AUTO,", "", ignoreCase = true)
+                    .replace("\r", " ")
+                    .replace("\n", " ")
+                    .trim()
+                val protoLabel = when {
+                    atdpRaw.isNotBlank() && !ObdPidParser.isAdapterError(atdpRaw) && atdpRaw != "TIMEOUT" -> atdpRaw.take(36)
+                    protoResp.contains("OK", ignoreCase = true) -> "Auto OBD-II (ATSP0)"
+                    else -> protoResp.take(28)
                 }
 
                 val supportedPids = mutableSetOf<String>()
@@ -163,23 +201,45 @@ class ObdBluetoothManager @Inject constructor(
                     supportedPids.addAll(ObdPidParser.parseSupportedPidsBitmap(connectionManager.sendCommand("0160"), 0x60))
                 }
 
-                _capabilities.value = defaultCapabilityRegistry(supportedPids)
+                // Phase 2 Stage 3: Verify at least one genuine live vehicle parameter before claiming OBD operational
+                connectionManager.setState(ObdConnectionState.ECU_CONNECTING, "Reading engine data...")
+                val initRpm = if ("010C" in supportedPids) ObdPidParser.parseRpm(connectionManager.sendCommand("010C")) else null
+                val initCoolant = if ("0105" in supportedPids) ObdPidParser.parseCoolantTempC(connectionManager.sendCommand("0105")) else null
+                val initSpeed = if ("010D" in supportedPids) ObdPidParser.parseVehicleSpeedKmh(connectionManager.sendCommand("010D")) else null
+                val initCtrlVolt = if ("0142" in supportedPids) ObdPidParser.parseControlModuleVoltage(connectionManager.sendCommand("0142")) else null
+                val initMilOn = if ("0101" in supportedPids) ObdPidParser.parseMilStatusOn(connectionManager.sendCommand("0101")) else null
                 val adapterVoltage = ObdPidParser.parseAdapterVoltage(atrv)
-                val protoLabel = if (protoResp.contains("OK", ignoreCase = true)) "Auto OBD-II (ATSP0)" else protoResp.take(28)
+                val genuineVerified = (initRpm != null || initCoolant != null || initSpeed != null || initCtrlVolt != null || supportedPids.isNotEmpty())
 
-                connectionManager.setState(ObdConnectionState.CONNECTED, "Connected (${supportedPids.size} Mode 01 PIDs)")
+                _capabilities.value = defaultCapabilityRegistry(supportedPids)
+                connectionManager.setFailureCategory(ObdFailureCategory.NONE)
+                connectionManager.setState(
+                    ObdConnectionState.CONNECTED,
+                    "Connection verified ($protoLabel • ${supportedPids.size} PIDs)",
+                )
                 _state.value = _state.value.copy(
-                    obdConnected = true,
+                    obdConnected = genuineVerified,
                     adapterName = ati.ifBlank { address },
                     protocolName = protoLabel,
-                    statusMessage = "Connected • ${supportedPids.size} PIDs supported",
+                    engineRpm = initRpm ?: _state.value.engineRpm,
+                    coolantTempC = initCoolant ?: _state.value.coolantTempC,
+                    obdSpeedKmh = initSpeed ?: _state.value.obdSpeedKmh,
+                    statusMessage = "Connected • $protoLabel • ${supportedPids.size} PIDs",
                 )
                 _liveTelemetry.value = _liveTelemetry.value.copy(
                     adapterInfo = ati.ifBlank { atz },
                     protocolName = protoLabel,
                     transportType = transport,
                     adapterVoltageV = adapterVoltage,
+                    controlModuleVoltageV = initCtrlVolt ?: adapterVoltage,
+                    engineRpm = initRpm ?: _liveTelemetry.value.engineRpm,
+                    coolantTempC = initCoolant ?: _liveTelemetry.value.coolantTempC,
+                    vehicleSpeedKmh = initSpeed ?: _liveTelemetry.value.vehicleSpeedKmh,
+                    milOn = initMilOn,
+                    ecuLatencyMs = ecuLatencyMs,
+                    genuineParameterVerified = genuineVerified,
                     supportedPidHexes = supportedPids.toSet(),
+                    lastUpdatedMillis = System.currentTimeMillis(),
                 )
 
                 val slowPids = listOf(
@@ -189,15 +249,34 @@ class ObdBluetoothManager @Inject constructor(
                 ).filter { it.startsWith("DTC") || it in supportedPids }
 
                 var cycle = 0
+                var consecutiveEmptyCycles = 0
                 while (isActive && connectionManager.connectionState.value == ObdConnectionState.CONNECTED) {
                     val now = System.currentTimeMillis()
                     val currentTel = _liveTelemetry.value
 
                     // Real-time fast path: RPM (010C) and Throttle (0111) every cycle for zero-lag Sound Studio
-                    val rpm = if ("010C" in supportedPids) ObdPidParser.parseRpm(connectionManager.sendCommand("010C")) else null
+                    val rpmRaw = if ("010C" in supportedPids) connectionManager.sendCommand("010C") else ""
+                    if (rpmRaw == "DISCONNECTED") {
+                        _state.value = _state.value.copy(obdConnected = false, statusMessage = "OBD-II link dropped; reconnecting...")
+                        break
+                    }
+                    val rpm = if (rpmRaw.isNotBlank()) ObdPidParser.parseRpm(rpmRaw) else null
                     val throttle = if ("0111" in supportedPids) ObdPidParser.parseThrottlePosPct(connectionManager.sendCommand("0111")) else null
                     val speed = if ("010D" in supportedPids) ObdPidParser.parseVehicleSpeedKmh(connectionManager.sendCommand("010D")) else null
                     val load = if (cycle % 2 == 1 && "0104" in supportedPids) ObdPidParser.parseEngineLoadPct(connectionManager.sendCommand("0104")) else null
+
+                    if (rpm == null && throttle == null && speed == null && load == null) {
+                        consecutiveEmptyCycles++
+                        if (consecutiveEmptyCycles >= 5) {
+                            connectionManager.appendLog("5 consecutive empty ECU cycles — triggering safe reconnect")
+                            connectionManager.setFailureCategory(ObdFailureCategory.UNEXPECTED_DISCONNECT)
+                            connectionManager.setState(ObdConnectionState.RECONNECTING, "OBD-II stopped responding; reconnecting...")
+                            _state.value = _state.value.copy(obdConnected = false, statusMessage = "OBD-II stopped responding; reconnecting...")
+                            break
+                        }
+                    } else {
+                        consecutiveEmptyCycles = 0
+                    }
 
                     var coolant = currentTel.coolantTempC
                     var intake = currentTel.intakeAirTempC

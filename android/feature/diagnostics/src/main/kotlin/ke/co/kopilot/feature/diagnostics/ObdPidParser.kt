@@ -40,6 +40,16 @@ object ObdPidParser {
         return match.groupValues[1].toFloatOrNull()?.takeIf { it in 5f..32f }
     }
 
+    /**
+     * Parses PID `0101` (Monitor Status Since DTCs Cleared).
+     * Bit 7 of byte A indicates Malfunction Indicator Lamp (Check Engine Light) ON/OFF.
+     */
+    fun parseMilStatusOn(response: String): Boolean? {
+        val bytes = extractPayloadBytes(response, "41", "01") ?: return null
+        if (bytes.isEmpty()) return null
+        return (bytes[0] and 0x80) != 0
+    }
+
     fun parseFuelSystemStatus(response: String): String? {
         val bytes = extractPayloadBytes(response, "41", "03") ?: return null
         if (bytes.isEmpty()) return null

@@ -78,6 +78,7 @@ import ke.co.kopilot.feature.dashboard.DashboardScreen
 import ke.co.kopilot.feature.dashboard.DashboardViewModel
 import ke.co.kopilot.feature.dashboard.NavigationScreen
 import ke.co.kopilot.feature.dashboard.PerformanceThermalScreen
+import ke.co.kopilot.feature.dashboard.pretrip.PreTripStartupScreen
 import ke.co.kopilot.feature.diagnostics.ObdScreen
 import ke.co.kopilot.feature.sensors.DrivingIntelligenceScreen
 import ke.co.kopilot.feature.sensors.SensorsScreen
@@ -290,7 +291,7 @@ class MainActivity : ComponentActivity() {
                         containerColor = KoPilotClusterTokens.Background,
                         contentWindowInsets = WindowInsets(0, 0, 0, 0),
                         bottomBar = {
-                            if (!useRail) {
+                            if (!useRail && currentRoute != "pre_trip_wizard") {
                                 NavigationBar(
                                     containerColor = KoPilotClusterTokens.CardSurface,
                                     contentColor = KoPilotClusterTokens.PrimaryText,
@@ -334,7 +335,7 @@ class MainActivity : ComponentActivity() {
                                 .fillMaxSize()
                                 .padding(innerPadding),
                         ) {
-                            if (useRail) {
+                            if (useRail && currentRoute != "pre_trip_wizard") {
                                 NavigationRail(
                                     modifier = Modifier.fillMaxHeight(),
                                     containerColor = KoPilotClusterTokens.CardSurface,
@@ -375,11 +376,47 @@ class MainActivity : ComponentActivity() {
 
                             NavHost(
                                 navController = navController,
-                                startDestination = "dashboard",
+                                startDestination = "pre_trip_wizard",
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
                                 enterTransition = { fadeIn(animationSpec = tween(200)) },
                                 exitTransition = { fadeOut(animationSpec = tween(160)) },
                             ) {
+                                composable("pre_trip_wizard") {
+                                    val btGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                        hasPermission(Manifest.permission.BLUETOOTH_CONNECT) &&
+                                            hasPermission(Manifest.permission.BLUETOOTH_SCAN)
+                                    } else {
+                                        hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                                    }
+                                    PreTripStartupScreen(
+                                        cameraPermissionGranted = hasPermission(Manifest.permission.CAMERA),
+                                        locationPermissionGranted = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION),
+                                        bluetoothPermissionGranted = btGranted,
+                                        micPermissionGranted = hasPermission(Manifest.permission.RECORD_AUDIO),
+                                        onRequestPermissions = {
+                                            permissionLauncher.launch(requiredPermissions)
+                                        },
+                                        onStartTrip = {
+                                            dashboardViewModel.startDriving()
+                                            navController.navigate("dashboard") {
+                                                popUpTo("pre_trip_wizard") { inclusive = true }
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onSkipToDashboard = {
+                                            navController.navigate("dashboard") {
+                                                popUpTo("pre_trip_wizard") { inclusive = true }
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onOpenFullDiagnostics = {
+                                            navController.navigate("performance_thermal")
+                                        },
+                                        onOpenSmartwatchHealth = {
+                                            navController.navigate("smartwatch_health")
+                                        },
+                                    )
+                                }
                                 composable("dashboard") {
                                     DashboardScreen(
                                         onOpenSettings = { navigateTopLevel("settings") },
