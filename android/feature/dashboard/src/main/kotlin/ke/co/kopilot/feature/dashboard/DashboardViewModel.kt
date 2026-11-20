@@ -117,10 +117,13 @@ data class DashboardUiState(
     val smartwatchDiagnostics: SmartwatchDiagnosticsState = SmartwatchDiagnosticsState(),
     val heartRateState: HeartRateTelemetryState = HeartRateTelemetryState(),
     val sleepAnalyticsState: SleepAnalyticsUiState = SleepAnalyticsUiState(),
+    val currentRoadName: String? = null,
+    val tripBreadcrumbPoints: List<com.google.android.gms.maps.model.LatLng> = emptyList(),
 )
 
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
     private val prefsRepo: PreferencesRepository,
     val cameraController: CameraPerformanceController,
     val visionPipeline: RoadVisionPipeline,
@@ -233,6 +236,11 @@ class DashboardViewModel @Inject constructor(
 
     private var currentActiveTripId: String? = null
     private var lastLoggedHeartRateMs: Long = 0L
+    private val currentRoadNameFlow = MutableStateFlow<String?>(null)
+    private val tripBreadcrumbFlow = MutableStateFlow<List<com.google.android.gms.maps.model.LatLng>>(emptyList())
+    private var lastRoadLookupMs = 0L
+    private var lastAnnouncedRoadName: String? = null
+    private var twoMinuteRoadAnnounced = false
 
     private val wearableFlows = combine(
         smartwatchConnectionManager.diagnostics,
@@ -290,6 +298,8 @@ class DashboardViewModel @Inject constructor(
             smartwatchDiagnostics = watchDiag,
             heartRateState = hrState,
             sleepAnalyticsState = sleepState,
+            currentRoadName = currentRoadNameFlow.value,
+            tripBreadcrumbPoints = tripBreadcrumbFlow.value,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -545,11 +555,57 @@ class DashboardViewModel @Inject constructor(
                             lastTrackLat = fix.latitude
                             lastTrackLng = fix.longitude
                             lastTrackMs = now
+                            val pt = com.google.android.gms.maps.model.LatLng(fix.latitude, fix.longitude)
+                            tripBreadcrumbFlow.value = (tripBreadcrumbFlow.value + pt).takeLast(500)
                             tripActivityLogger.logActivity(
                                 type = "GPS_TRACK",
                                 details = "${"%.6f".format(java.util.Locale.US, fix.latitude)},${"%.6f".format(java.util.Locale.US, fix.longitude)}",
                                 timestampMillis = now,
                             )
+                        }
+
+                        // Resolve current road name every 15s during active drive;
+                        // speak road name 2 minutes after drive starts and every time the road changes
+                        if ((now - lastRoadLookupMs) >= 15_000L) {
+                            lastRoadLookupMs = now
+                            val startedMs = tripStartedAt.value ?: now
+                            val elapsedDriveMs = (now - startedMs).coerceAtLeast(0L)
+                            val road = resolveRoadNameForLocation(fix.latitude, fix.longitude)
+                            if (!road.isNullOrBlank()) {
+                                val prevRoad = currentRoadNameFlow.value
+                                currentRoadNameFlow.value = road
+                                val s = uiState.value.settings
+                                val isTwoMinTrigger = !twoMinuteRoadAnnounced && elapsedDriveMs >= 120_000L
+                                val isRoadChanged = lastAnnouncedRoadName != null &&
+                                    !road.equals(lastAnnouncedRoadName, ignoreCase = true) &&
+                                    !road.equals(prevRoad, ignoreCase = true)
+                                if (isTwoMinTrigger || isRoadChanged) {
+                                    if (isTwoMinTrigger) twoMinuteRoadAnnounced = true
+                                    lastAnnouncedRoadName = road
+                                    val headingDir = hub.compassReading.cardinal
+                                    val spoken = if (isTwoMinTrigger) {
+                                        "You are driving on $road, heading $headingDir."
+                                    } else {
+                                        "Now entering $road, heading $headingDir."
+                                    }
+                                    tripActivityLogger.logActivity("ROAD_ROUTE", spoken, now)
+                                    if (!s.alertsMuted && s.navVoiceGuidanceEnabled) {
+                                        alertCoordinator.submit(
+                                            alert = AlertMessage(
+                                                id = UUID.randomUUID().toString(),
+                                                priority = AlertPriority.NAVIGATION_INSTRUCTION,
+                                                spokenText = spoken,
+                                                displayText = "Road: $road ($headingDir)",
+                                                dedupKey = "road_name_${road.lowercase()}",
+                                                timestampMillis = now,
+                                            ),
+                                            speechRate = s.voiceSpeed,
+                                            language = s.language,
+                                            globalMute = s.alertsMuted,
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                     if (obdConnected) {
@@ -1244,6 +1300,10 @@ class DashboardViewModel @Inject constructor(
         val tripId = UUID.randomUUID().toString()
         currentActiveTripId = tripId
         lastLoggedHeartRateMs = 0L
+        lastRoadLookupMs = 0L
+        lastAnnouncedRoadName = null
+        twoMinuteRoadAnnounced = false
+        tripBreadcrumbFlow.value = emptyList()
         isDriving.value = true
         tripStartedAt.value = started
         maxSpeedObservedKmh = 0f
@@ -1308,10 +1368,7 @@ class DashboardViewModel @Inject constructor(
         if (s.sensorMotionEnabled) {
             sensorManagerRepo.startMonitoring(SensorSamplingProfile.DRIVING)
         }
-        // Automatically start 100% offline hands-free Voice AI when driving begins
-        if (s.sensorMicEnabled && voiceClient.state.value.micPermissionGranted) {
-            voiceClient.connect(language = s.language, voice = s.aiVoiceName, preferOffline = true)
-        }
+        // Voice AI is ready on-demand via the Voice AI button (avoids continuous SpeechRecognizer beep loop)
         if (isDriving.value) {
             val watchDiag = smartwatchConnectionManager.diagnostics.value
             val latestSleep = sleepAnalyticsRepository.state.value.latestSession
@@ -1637,6 +1694,21 @@ class DashboardViewModel @Inject constructor(
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             visionPipeline.runAcceleratorBenchmark()
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun resolveRoadNameForLocation(lat: Double, lng: Double): String? {
+        return runCatching {
+            if (!android.location.Geocoder.isPresent()) return null
+            val geocoder = android.location.Geocoder(appContext, java.util.Locale.getDefault())
+            val addresses = geocoder.getFromLocation(lat, lng, 1)
+            val addr = addresses?.firstOrNull() ?: return null
+            val road = addr.thoroughfare?.takeIf { it.isNotBlank() && !it.equals("Unnamed Road", ignoreCase = true) }
+                ?: addr.featureName?.takeIf { it.isNotBlank() && it.any { ch -> ch.isLetter() } && !it.equals("Unnamed Road", ignoreCase = true) }
+                ?: addr.subLocality?.takeIf { it.isNotBlank() }
+                ?: addr.locality?.takeIf { it.isNotBlank() }
+            road?.trim()
+        }.getOrNull()
     }
 
     val kenyanCityPresets get() = navigationRepo.kenyanCities

@@ -58,7 +58,7 @@ class LocalVoiceCommandEngine @Inject constructor(
 
     fun startListening(
         language: String,
-        continuous: Boolean = true,
+        continuous: Boolean = false,
         onListeningChanged: (Boolean) -> Unit,
         onResultSpoken: (transcript: String, responseText: String) -> Unit,
         onError: (String) -> Unit,
@@ -152,26 +152,26 @@ class LocalVoiceCommandEngine @Inject constructor(
 
                 override fun onError(error: Int) {
                     listeningCallback?.invoke(false)
-                    if (!continuousActive.get()) return
+                    if (!continuousActive.get()) {
+                        val msg = when (error) {
+                            SpeechRecognizer.ERROR_NO_MATCH,
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech heard. Tap Voice AI to speak."
+                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission required."
+                            else -> "Voice ready. Tap Voice AI to ask a question."
+                        }
+                        errorCallback?.invoke(msg)
+                        return
+                    }
 
                     when (error) {
-                        // Normal silence/timeout in hands-free driving mode -> silently re-arm microphone
                         SpeechRecognizer.ERROR_NO_MATCH,
                         SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
-                            consecutiveFatalErrors = 0
-                            scheduleRestart(600L)
-                        }
-
-                        // Temporary busy/audio error -> short backoff retry
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
-                        SpeechRecognizer.ERROR_AUDIO,
-                        SpeechRecognizer.ERROR_CLIENT -> {
                             consecutiveFatalErrors += 1
-                            if (consecutiveFatalErrors <= 6) {
+                            if (consecutiveFatalErrors <= 1) {
                                 scheduleRestart(1_200L)
                             } else {
                                 continuousActive.set(false)
-                                errorCallback?.invoke("Microphone recognizer busy (code $error). Tap Voice AI to restart.")
+                                errorCallback?.invoke("Voice standby. Tap Voice AI when ready to speak.")
                             }
                         }
 
@@ -181,14 +181,8 @@ class LocalVoiceCommandEngine @Inject constructor(
                         }
 
                         else -> {
-                            // Network/server error on devices without downloaded offline pack -> retry cleanly
-                            consecutiveFatalErrors += 1
-                            if (consecutiveFatalErrors <= 4) {
-                                scheduleRestart(1_800L)
-                            } else {
-                                continuousActive.set(false)
-                                errorCallback?.invoke("Offline speech pack unavailable (code $error). Tap Voice AI to retry.")
-                            }
+                            continuousActive.set(false)
+                            errorCallback?.invoke("Voice ready. Tap Voice AI to speak.")
                         }
                     }
                 }
@@ -202,18 +196,15 @@ class LocalVoiceCommandEngine @Inject constructor(
                         .trim()
 
                     if (spoken.isBlank()) {
-                        if (continuousActive.get()) scheduleRestart(600L)
+                        continuousActive.set(false)
+                        errorCallback?.invoke("Did not catch that. Tap Voice AI to try again.")
                         return
                     }
 
                     scope.launch {
                         val reply = handleSpokenCommand(spoken, activeLanguage)
+                        continuousActive.set(false)
                         resultCallback?.invoke(spoken, reply)
-                        // Estimate spoken reply duration so mic doesn't capture KoPilot's own TTS output
-                        val estimatedSpeechMs = (reply.length * 68L).coerceIn(2_000L, 9_500L)
-                        if (continuousActive.get()) {
-                            scheduleRestart(estimatedSpeechMs)
-                        }
                     }
                 }
 

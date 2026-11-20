@@ -1564,7 +1564,7 @@ private fun KoPilotCockpitLanding(
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // 1. Header: Steering icon + KoPilot / AI Driving Copilot + Bell & Settings
+        // 1. Header: Animated Menu Pill + KoPilot Brand + Settings
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1572,21 +1572,32 @@ private fun KoPilotCockpitLanding(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .background(KoPilotClusterTokens.ElevatedSurface, CircleShape)
-                        .border(1.5.dp, KoPilotClusterTokens.PrimaryAccent, CircleShape),
-                    contentAlignment = Alignment.Center,
+                Surface(
+                    onClick = onOpenMenu,
+                    color = KoPilotClusterTokens.GlassCardSurface,
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.55f)),
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.DirectionsCar,
-                        contentDescription = null,
-                        tint = KoPilotClusterTokens.PrimaryAccent,
-                        modifier = Modifier.size(22.dp),
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Menu,
+                            contentDescription = "Open Menu",
+                            tint = KoPilotClusterTokens.PrimaryAccent,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text(
+                            text = "Menu",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = KoPilotClusterTokens.PrimaryText,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
                 Column {
                     Text(
@@ -1604,14 +1615,14 @@ private fun KoPilotCockpitLanding(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                IconButton(onClick = onOpenMenu, modifier = Modifier.size(48.dp)) {
+                IconButton(onClick = onOpenLiveMap, modifier = Modifier.size(44.dp)) {
                     Icon(
-                        imageVector = Icons.Default.Notifications,
-                        contentDescription = "Alerts & Tools",
-                        tint = KoPilotClusterTokens.PrimaryText,
+                        imageVector = Icons.Default.Map,
+                        contentDescription = "Live Map",
+                        tint = KoPilotClusterTokens.SecondaryAccent,
                     )
                 }
-                IconButton(onClick = onOpenSettings, modifier = Modifier.size(48.dp)) {
+                IconButton(onClick = onOpenSettings, modifier = Modifier.size(44.dp)) {
                     Icon(
                         imageVector = Icons.Default.Settings,
                         contentDescription = "Settings",
@@ -2287,67 +2298,31 @@ private fun FullBleedArHudLanding(
             val useDetectedRoad = lane.lanesDetected || lane.roadSurfaceDetected
             val baseLeftBotX = (if (useDetectedRoad) lane.leftBottomX.coerceIn(0.10f, 0.38f) else 0.16f) * size.width
             val baseRightBotX = (if (useDetectedRoad) lane.rightBottomX.coerceIn(0.62f, 0.90f) else 0.84f) * size.width
-            val baseLeftTopX = (if (useDetectedRoad) lane.leftTopX.coerceIn(0.28f, 0.45f) else 0.37f) * size.width
-            val baseRightTopX = (if (useDetectedRoad) lane.rightTopX.coerceIn(0.55f, 0.72f) else 0.63f) * size.width
+            val baseLeftTopX = (if (useDetectedRoad) lane.leftTopX.coerceIn(0.40f, 0.48f) else 0.46f) * size.width
+            val baseRightTopX = (if (useDetectedRoad) lane.rightTopX.coerceIn(0.52f, 0.60f) else 0.54f) * size.width
 
-            val turnShiftPx = animatedTurnOffsetDp.dp.toPx()
-            val topLeftX = (baseLeftTopX + turnShiftPx).coerceIn(size.width * 0.06f, size.width * 0.78f)
-            val topRightX = (baseRightTopX + turnShiftPx).coerceIn(topLeftX + 36.dp.toPx(), size.width * 0.94f)
+            val turnShiftPx = animatedTurnOffsetDp.dp.toPx() * 1.4f
+            val topLeftX = (baseLeftTopX + turnShiftPx).coerceIn(size.width * 0.08f, size.width * 0.78f)
+            val topRightX = (baseRightTopX + turnShiftPx).coerceIn(topLeftX + 26.dp.toPx(), size.width * 0.92f)
             val midY = (bottomY + horizonY) * 0.50f
-            val ctrlLeftX = (baseLeftBotX + topLeftX) * 0.5f + turnShiftPx * 0.55f
-            val ctrlRightX = (baseRightBotX + topRightX) * 0.5f + turnShiftPx * 0.55f
+            val ctrlLeftX = (baseLeftBotX + topLeftX) * 0.5f + turnShiftPx * 0.45f
+            val ctrlRightX = (baseRightBotX + topRightX) * 0.5f + turnShiftPx * 0.45f
 
-            val hudBlue = Color(0xFF00B0FF)
-            val hudCyan = Color(0xFF18E2B8)
+            val hudTeal = Color(0xFF18E2B8)
             val isDeparting = lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_LEFT ||
                 lane.shiftEvent == LaneShiftEvent.LANE_DEPARTURE_RIGHT
-            val primaryLineColor = if (isDeparting) Color(0xFFFF5252) else hudBlue
+            val primaryLineColor = if (isDeparting) Color(0xFFFF5252) else hudTeal
 
-            // Translucent blue road lane corridor fill aligned between the left and right lane curves
-            val corridorPath = Path().apply {
-                moveTo(baseLeftBotX, bottomY)
-                quadraticTo(ctrlLeftX, midY, topLeftX, horizonY)
-                lineTo(topRightX, horizonY)
-                quadraticTo(ctrlRightX, midY, baseRightBotX, bottomY)
-                close()
-            }
-            drawPath(
-                path = corridorPath,
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        primaryLineColor.copy(alpha = 0.06f),
-                        primaryLineColor.copy(alpha = 0.20f),
-                    ),
-                    startY = horizonY,
-                    endY = bottomY,
-                ),
-            )
-
-            // Horizon guidance line
+            // Subtle dashed horizon line matching WhatsApp Image 2026-11-19 at 19.07.33
             drawLine(
-                color = hudCyan.copy(alpha = 0.35f),
+                color = hudTeal.copy(alpha = 0.30f),
                 start = Offset(24.dp.toPx(), horizonY),
                 end = Offset(size.width - 24.dp.toPx(), horizonY),
-                strokeWidth = 1.5.dp.toPx(),
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f)),
+                strokeWidth = 1.4.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 12f)),
             )
 
-            // Perspective distance rungs across the lane corridor that bend with the turn
-            for (t in listOf(0.28f, 0.55f, 0.82f)) {
-                val u = 1f - t
-                val rungY = u * u * bottomY + 2f * u * t * midY + t * t * horizonY
-                val rungLeftX = u * u * baseLeftBotX + 2f * u * t * ctrlLeftX + t * t * topLeftX
-                val rungRightX = u * u * baseRightBotX + 2f * u * t * ctrlRightX + t * t * topRightX
-                drawLine(
-                    color = hudBlue.copy(alpha = 0.28f),
-                    start = Offset(rungLeftX + 6.dp.toPx(), rungY),
-                    end = Offset(rungRightX - 6.dp.toPx(), rungY),
-                    strokeWidth = 1.5.dp.toPx(),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
-                )
-            }
-
-            // Left & Right Blue Road-Aligned HUD Lane Lines (curve right when turning right, left when turning left)
+            // Crisp Dashed Blue/Teal Perspective Lane Lines (bend right when turning right, left when turning left)
             val leftPath = Path().apply {
                 moveTo(baseLeftBotX, bottomY)
                 quadraticTo(ctrlLeftX, midY, topLeftX, horizonY)
@@ -2356,30 +2331,57 @@ private fun FullBleedArHudLanding(
                 moveTo(baseRightBotX, bottomY)
                 quadraticTo(ctrlRightX, midY, topRightX, horizonY)
             }
-            val dashEffect = if (lane.lanesDetected) null else PathEffect.dashPathEffect(floatArrayOf(22f, 12f))
+            val dashEffect = PathEffect.dashPathEffect(floatArrayOf(22f, 14f))
 
-            // Outer glow
             drawPath(
                 path = leftPath,
-                color = primaryLineColor.copy(alpha = 0.32f),
-                style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round),
+                color = primaryLineColor.copy(alpha = 0.92f),
+                style = Stroke(width = 3.2.dp.toPx(), pathEffect = dashEffect, cap = StrokeCap.Round),
             )
             drawPath(
                 path = rightPath,
-                color = primaryLineColor.copy(alpha = 0.32f),
-                style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round),
+                color = primaryLineColor.copy(alpha = 0.92f),
+                style = Stroke(width = 3.2.dp.toPx(), pathEffect = dashEffect, cap = StrokeCap.Round),
             )
-            // Crisp blue lane lines
-            drawPath(
-                path = leftPath,
-                color = primaryLineColor.copy(alpha = 0.95f),
-                style = Stroke(width = 3.5.dp.toPx(), pathEffect = dashEffect, cap = StrokeCap.Round),
-            )
-            drawPath(
-                path = rightPath,
-                color = primaryLineColor.copy(alpha = 0.95f),
-                style = Stroke(width = 3.5.dp.toPx(), pathEffect = dashEffect, cap = StrokeCap.Round),
-            )
+
+            // Dynamic Directional Turn Arrow pointing toward the turn direction when turning
+            val turnMagnitude = kotlin.math.abs(animatedTurnOffsetDp)
+            if (turnMagnitude >= 10f) {
+                val turningRight = animatedTurnOffsetDp > 0f
+                val arrowCenterX = ((topLeftX + topRightX) * 0.5f)
+                val arrowCenterY = horizonY + (bottomY - horizonY) * 0.24f
+                val arrowDir = if (turningRight) 1f else -1f
+                val arrowLen = 36.dp.toPx()
+                val headSize = 14.dp.toPx()
+
+                val startPt = Offset(arrowCenterX - arrowDir * (arrowLen * 0.5f), arrowCenterY)
+                val tipPt = Offset(arrowCenterX + arrowDir * (arrowLen * 0.5f), arrowCenterY)
+                val wingTop = Offset(tipPt.x - arrowDir * headSize, tipPt.y - headSize * 0.72f)
+                val wingBot = Offset(tipPt.x - arrowDir * headSize, tipPt.y + headSize * 0.72f)
+
+                val arrowColor = Color(0xFF00B0FF)
+                drawLine(
+                    color = arrowColor,
+                    start = startPt,
+                    end = tipPt,
+                    strokeWidth = 4.5.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+                drawLine(
+                    color = arrowColor,
+                    start = tipPt,
+                    end = wingTop,
+                    strokeWidth = 4.5.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+                drawLine(
+                    color = arrowColor,
+                    start = tipPt,
+                    end = wingBot,
+                    strokeWidth = 4.5.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            }
         }
 
         // 3. Floating HUD Foreground Layers
@@ -4075,56 +4077,175 @@ private fun DashboardToolsDialog(
         "Weather unavailable"
     }
     val destLine = state.navigationState.destinationName ?: "No destination set"
-    AlertDialog(
+
+    var visible by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        visible = true
+        // Auto-hide smoothly after 12 seconds of inactivity so the driver view stays unobstructed
+        kotlinx.coroutines.delay(12_000L)
+        onDismiss()
+    }
+
+    androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text("KoPilot Tools & Pages", fontWeight = FontWeight.Bold)
-        },
-        text = {
-            Column(
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0x99040A12))
+                .clickable(onClick = onDismiss),
+        ) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = visible,
+                enter = androidx.compose.animation.slideInHorizontally(
+                    initialOffsetX = { -it },
+                    animationSpec = androidx.compose.animation.core.tween(260),
+                ) + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220)),
+                exit = androidx.compose.animation.slideOutHorizontally(
+                    targetOffsetX = { -it },
+                    animationSpec = androidx.compose.animation.core.tween(220),
+                ) + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(180)),
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .align(Alignment.CenterStart)
+                    .fillMaxWidth(0.82f)
+                    .fillMaxHeight(),
             ) {
-                Text(
-                    text = "Destination: $destLine\n$weatherLine",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                Surface(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(enabled = false, onClick = {}),
+                    shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
+                    color = KoPilotClusterTokens.CardSurface,
+                    border = BorderStroke(1.dp, KoPilotClusterTokens.PrimaryAccent.copy(alpha = 0.35f)),
                 ) {
-                    OutlinedButton(onClick = onOpenRoadQuality) { Text("Road Quality") }
-                    OutlinedButton(onClick = onOpenDrivingBehaviour) { Text("Driving Behaviour") }
-                    OutlinedButton(onClick = onOpenDrivingIntelligence) { Text("Live Intelligence") }
-                    OutlinedButton(onClick = onOpenVehicleIntelligence) { Text("Ask Car AI") }
-                    OutlinedButton(onClick = onOpenSensors) { Text("Sensors Hub") }
-                    OutlinedButton(onClick = onOpenObd) { Text("OBD-II Gauges") }
-                    OutlinedButton(onClick = onOpenSoundStudio) { Text("Engine Sound Studio") }
-                    OutlinedButton(onClick = onOpenTrips) { Text("My Trips (.txt)") }
-                    OutlinedButton(onClick = onOpenSignsDb) { Text("Road Signs DB") }
-                    OutlinedButton(onClick = onOpenVisionDiag) { Text("Offline AI Diag") }
-                    OutlinedButton(onClick = onOpenPerformanceThermal) { Text("Performance & Thermal") }
-                    OutlinedButton(onClick = onOpenSmartwatchHealth) { Text("Smartwatch & Health") }
-                    OutlinedButton(onClick = onToggleMuteAlerts) {
-                        Text(if (state.settings.alertsMuted) "Unmute Alerts" else "Mute Alerts")
-                    }
-                    Button(
-                        onClick = onCallEmergency,
-                        colors = ButtonDefaults.buttonColors(containerColor = KoPilotColors.DangerRed),
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp, vertical = 20.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text("Emergency Call")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column {
+                                Text(
+                                    text = "KoPilot Menu",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = KoPilotClusterTokens.PrimaryText,
+                                    fontWeight = FontWeight.ExtraBold,
+                                )
+                                Text(
+                                    text = "$weatherLine • $destLine",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = KoPilotClusterTokens.SecondaryText,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            IconButton(onClick = onDismiss) {
+                                Icon(
+                                    imageVector = Icons.Default.CloseFullscreen,
+                                    contentDescription = "Close Menu",
+                                    tint = KoPilotClusterTokens.SecondaryText,
+                                )
+                            }
+                        }
+
+                        androidx.compose.material3.HorizontalDivider(color = KoPilotClusterTokens.ElevatedSurface)
+
+                        Text("VEHICLE & DRIVING", style = MaterialTheme.typography.labelSmall, color = KoPilotClusterTokens.PrimaryAccent, fontWeight = FontWeight.Bold)
+                        MenuDrawerItem("Road Quality", Icons.Default.Route, onOpenRoadQuality)
+                        MenuDrawerItem("Driving Behaviour", Icons.Default.DirectionsCar, onOpenDrivingBehaviour)
+                        MenuDrawerItem("Live Intelligence", Icons.Default.Explore, onOpenDrivingIntelligence)
+                        MenuDrawerItem("Ask Car AI", Icons.Default.DirectionsCar, onOpenVehicleIntelligence)
+                        MenuDrawerItem("OBD-II Gauges", Icons.Default.DirectionsCar, onOpenObd)
+                        MenuDrawerItem("Engine Sound Studio", Icons.AutoMirrored.Filled.VolumeUp, onOpenSoundStudio)
+
+                        androidx.compose.material3.HorizontalDivider(color = KoPilotClusterTokens.ElevatedSurface)
+
+                        Text("SENSORS, WATCH & VISION", style = MaterialTheme.typography.labelSmall, color = KoPilotClusterTokens.PrimaryAccent, fontWeight = FontWeight.Bold)
+                        MenuDrawerItem("Smartwatch & Health", Icons.Default.MyLocation, onOpenSmartwatchHealth)
+                        MenuDrawerItem("Sensors Hub", Icons.Default.Explore, onOpenSensors)
+                        MenuDrawerItem("Performance & Thermal", Icons.Default.Explore, onOpenPerformanceThermal)
+                        MenuDrawerItem("Offline AI Diagnostics", Icons.Default.Videocam, onOpenVisionDiag)
+                        MenuDrawerItem("Road Signs Database", Icons.Default.Map, onOpenSignsDb)
+                        MenuDrawerItem("My Trips (.txt Logs)", Icons.Default.Route, onOpenTrips)
+
+                        androidx.compose.material3.HorizontalDivider(color = KoPilotClusterTokens.ElevatedSurface)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = onToggleMuteAlerts,
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                Text(
+                                    text = if (state.settings.alertsMuted) "Unmute" else "Mute Alerts",
+                                    fontSize = 12.sp,
+                                    color = KoPilotClusterTokens.PrimaryText,
+                                )
+                            }
+                            Button(
+                                onClick = onCallEmergency,
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = KoPilotColors.DangerRed),
+                            ) {
+                                Text("Emergency", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                        }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
-        },
-    )
+        }
+    }
+}
+
+@Composable
+private fun MenuDrawerItem(
+    title: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = KoPilotClusterTokens.ElevatedSurface,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = KoPilotClusterTokens.PrimaryAccent,
+                modifier = Modifier.size(19.dp),
+            )
+            Text(
+                text = title,
+                color = KoPilotClusterTokens.PrimaryText,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                modifier = Modifier.weight(1f),
+            )
+            Text(">", color = KoPilotClusterTokens.SecondaryText, fontWeight = FontWeight.Bold)
+        }
+    }
 }
 
 @Composable

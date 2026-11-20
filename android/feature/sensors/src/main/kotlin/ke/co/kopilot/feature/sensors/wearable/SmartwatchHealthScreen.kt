@@ -280,7 +280,7 @@ fun SmartwatchHealthScreen(
                 ) {
                     WearableKpiTile(
                         label = "Last BLE Heart Rate",
-                        value = diag.lastMeasurementAtMillis?.let { timeFmt.format(Date(it)) } ?: "Never",
+                        value = (diag.lastMeasurementAtMillis ?: hr.lastMeasurementTimestampMillis)?.let { timeFmt.format(Date(it)) } ?: "Never",
                         accent = KoPilotClusterTokens.PrimaryText,
                         modifier = Modifier.weight(1f),
                     )
@@ -292,20 +292,27 @@ fun SmartwatchHealthScreen(
                     )
                 }
 
-                FlowRow(
+                // Clean, uniform 2-row action grid (replaces uneven wrapping pills)
+                val targetAddr = diag.connectedAddress ?: savedDevices.firstOrNull()?.deviceAddress
+                val targetName = diag.connectedName ?: savedDevices.firstOrNull()?.deviceName ?: "Smartwatch"
+
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (!bluetoothPermissionGranted) {
                         Button(
                             onClick = onRequestBluetoothPermissions,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = KoPilotClusterTokens.PrimaryAccent,
                                 contentColor = KoPilotClusterTokens.Background,
                             ),
                         ) {
-                            Text("Grant Bluetooth Permission", fontWeight = FontWeight.Bold)
+                            Text("Grant Bluetooth", fontWeight = FontWeight.Bold)
                         }
                     } else {
                         Button(
@@ -316,43 +323,68 @@ fun SmartwatchHealthScreen(
                                     viewModel.startBleScan(bluetoothPermissionGranted)
                                 }
                             },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = KoPilotClusterTokens.PrimaryAccent,
                                 contentColor = KoPilotClusterTokens.Background,
                             ),
                         ) {
                             Text(
-                                text = if (isScanning) "Stop Scan" else "Scan BLE Watches",
+                                text = if (isScanning) "Stop Scan" else "Scan Watches",
                                 fontWeight = FontWeight.Bold,
                             )
                         }
                     }
 
-                    val targetAddr = diag.connectedAddress ?: savedDevices.firstOrNull()?.deviceAddress
-                    val targetName = diag.connectedName ?: savedDevices.firstOrNull()?.deviceName ?: "Smartwatch"
-
-                    if (!isConnected && !targetAddr.isNullOrBlank() && bluetoothPermissionGranted) {
+                    if (isConnected || diag.connectionState == SmartwatchConnectionState.RECONNECTING) {
+                        OutlinedButton(
+                            onClick = { viewModel.disconnectWatch() },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Text("Disconnect", color = KoPilotClusterTokens.PrimaryText, fontWeight = FontWeight.SemiBold)
+                        }
+                    } else if (!targetAddr.isNullOrBlank() && bluetoothPermissionGranted) {
                         OutlinedButton(
                             onClick = { viewModel.connectWatch(targetAddr, targetName, bluetoothPermissionGranted) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            shape = RoundedCornerShape(12.dp),
                         ) {
-                            Text("Connect Saved", color = KoPilotClusterTokens.PrimaryAccent)
+                            Text("Reconnect", color = KoPilotClusterTokens.PrimaryAccent, fontWeight = FontWeight.SemiBold)
                         }
                     }
+                }
 
-                    if (isConnected || diag.connectionState == SmartwatchConnectionState.RECONNECTING) {
-                        OutlinedButton(onClick = { viewModel.disconnectWatch() }) {
-                            Text("Disconnect", color = KoPilotClusterTokens.PrimaryText)
-                        }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { viewModel.syncHealthConnectNow() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Text("Sync Sleep", color = KoPilotClusterTokens.SecondaryAccent, fontWeight = FontWeight.SemiBold)
                     }
-
                     if (!targetAddr.isNullOrBlank()) {
-                        OutlinedButton(onClick = { viewModel.forgetWatch(targetAddr) }) {
-                            Text("Forget Watch", color = KoPilotClusterTokens.VeryRough)
+                        OutlinedButton(
+                            onClick = { viewModel.forgetWatch(targetAddr) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Text("Forget Watch", color = KoPilotClusterTokens.VeryRough, fontWeight = FontWeight.SemiBold)
                         }
-                    }
-
-                    OutlinedButton(onClick = { viewModel.syncHealthConnectNow() }) {
-                        Text("Sync Sleep & Health", color = KoPilotClusterTokens.SecondaryAccent)
                     }
                 }
 

@@ -1,6 +1,11 @@
 package ke.co.kopilot.safety
 
+import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
+import android.graphics.Paint
+import android.graphics.Path as AndroidPath
+import android.graphics.drawable.BitmapDrawable
 import android.preference.PreferenceManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -101,6 +106,37 @@ fun LiveMapScreen(
         }
     }
 
+    val headingArrowDrawable = remember {
+        val sizePx = 76
+        val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+        val c = AndroidCanvas(bmp)
+        val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.argb(65, 0, 176, 255)
+            style = Paint.Style.FILL
+        }
+        c.drawCircle(sizePx / 2f, sizePx / 2f, sizePx * 0.46f, haloPaint)
+
+        val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.parseColor("#00B0FF")
+            style = Paint.Style.FILL
+        }
+        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 4.5f
+        }
+        val path = AndroidPath().apply {
+            moveTo(sizePx * 0.50f, sizePx * 0.12f)
+            lineTo(sizePx * 0.80f, sizePx * 0.78f)
+            lineTo(sizePx * 0.50f, sizePx * 0.64f)
+            lineTo(sizePx * 0.20f, sizePx * 0.78f)
+            close()
+        }
+        c.drawPath(path, fillPaint)
+        c.drawPath(path, borderPaint)
+        BitmapDrawable(context.resources, bmp)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -115,23 +151,43 @@ fun LiveMapScreen(
                     view.setTileSource(targetSource)
                 }
                 view.overlays.clear()
+
+                // 1. Active Navigation Route Polyline
                 val routePts: List<LatLng> = state.navigationState.decodedPoints
                 if (routePts.size >= 2) {
                     val line = Polyline(view).apply {
                         setPoints(routePts.map { GeoPoint(it.latitude, it.longitude) })
                         outlinePaint.color = AndroidColor.parseColor("#00DDB5")
-                        outlinePaint.strokeWidth = 12f
+                        outlinePaint.strokeWidth = 14f
                     }
                     view.overlays.add(line)
                 }
+
+                // 2. Recorded Driven Route Breadcrumb Polyline
+                val breadcrumbs = state.tripBreadcrumbPoints
+                if (breadcrumbs.size >= 2) {
+                    val trail = Polyline(view).apply {
+                        setPoints(breadcrumbs.map { GeoPoint(it.latitude, it.longitude) })
+                        outlinePaint.color = AndroidColor.parseColor("#00B0FF")
+                        outlinePaint.strokeWidth = 10f
+                    }
+                    view.overlays.add(trail)
+                }
+
+                // 3. Vehicle Directional Heading Chevron (always reflects live compass / GPS heading)
                 if (fix != null) {
                     val pos = GeoPoint(fix.latitude, fix.longitude)
+                    val headingDeg = if ((fix.speedKmh ?: 0f) >= 8f && fix.bearingDegrees != null) {
+                        fix.bearingDegrees!!
+                    } else {
+                        state.compassReading.degrees.toFloat()
+                    }
                     val marker = Marker(view).apply {
                         position = pos
-                        title = "Your Vehicle"
-                        if ((fix.speedKmh ?: 0f) >= 5f) {
-                            rotation = -state.compassReading.degrees.toFloat()
-                        }
+                        title = state.currentRoadName?.let { "On $it (${state.compassReading.cardinal})" }
+                            ?: "Heading ${state.compassReading.cardinal} ${state.compassReading.degrees} deg"
+                        icon = headingArrowDrawable
+                        rotation = -headingDeg
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                     }
                     view.overlays.add(marker)
@@ -252,9 +308,27 @@ fun LiveMapScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("Current Trip", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = state.currentRoadName ?: state.navigationState.destinationName ?: "Current Trip",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                        )
+                        Text(
+                            text = buildString {
+                                append("Heading ${state.compassReading.cardinal} (${state.compassReading.degrees} deg)")
+                                state.navigationState.activeRoute?.let { r ->
+                                    append(" • Route ${r.durationSeconds / 60} min")
+                                }
+                            },
+                            color = KoPilotClusterTokens.PrimaryAccent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                     Text(
-                        text = if (state.isDrivingSessionActive) "● Recording" else "Standby • ${mapStyles[mapStyleIndex].first}",
+                        text = if (state.isDrivingSessionActive) "Recording" else "Standby • ${mapStyles[mapStyleIndex].first}",
                         color = if (state.isDrivingSessionActive) KoPilotClusterTokens.SmoothRoad else KoPilotClusterTokens.SecondaryText,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,

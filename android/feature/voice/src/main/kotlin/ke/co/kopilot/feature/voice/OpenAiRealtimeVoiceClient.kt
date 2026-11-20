@@ -192,7 +192,7 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
         )
         localVoiceEngine.startListening(
             language = language,
-            continuous = true,
+            continuous = false,
             onListeningChanged = { listening ->
                 _state.value = _state.value.copy(
                     isListening = listening,
@@ -201,7 +201,8 @@ class OpenAiRealtimeVoiceClient @Inject constructor(
             },
             onResultSpoken = { spoken, reply ->
                 _state.value = _state.value.copy(
-                    connectionState = VoiceConnectionState.LOCAL_FALLBACK,
+                    connectionState = VoiceConnectionState.DISCONNECTED,
+                    isListening = false,
                     isSpeaking = true,
                     lastTranscript = "\"$spoken\" -> $reply",
                     statusMessage = "Answering: $spoken",
