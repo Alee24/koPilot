@@ -116,7 +116,7 @@ fun EmergencyCountdownScreen(
         )
 
         Text(
-            text = "POSSIBLE ACCIDENT\nDETECTED",
+            text = "Possible accident detected",
             color = Color.White,
             fontSize = 24.sp,
             lineHeight = 28.sp,
@@ -125,11 +125,39 @@ fun EmergencyCountdownScreen(
         )
 
         Text(
-            text = "KoPilot detected unusual impact or vehicle movement.",
+            text = "Checking your safety",
+            color = Color(0xFFFCA5A5),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+
+        Text(
+            text = if (assessment.isSimulation) {
+                "SIMULATION MODE — No real SMS will be sent ($remainingSeconds s)"
+            } else {
+                "Emergency contact will be notified in $remainingSeconds seconds"
+            },
             color = Color(0xFFD0DCE6),
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
         )
+
+        if (assessment.isFallbackWarning) {
+            Surface(
+                color = Color(0x33F59E0B),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, Color(0xFFF59E0B)),
+            ) {
+                Text(
+                    text = "Severe motion fallback: GPS/OBD/Watch unavailable. Tap I'm Safe if this is a false alert.",
+                    color = Color(0xFFFDE68A),
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
 
         // Prominent Circular Countdown Timer
         Box(
@@ -173,13 +201,13 @@ fun EmergencyCountdownScreen(
             onClick = onCancelAlert,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(54.dp),
+                .height(58.dp),
             shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626), contentColor = Color.White),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A), contentColor = Color.White),
         ) {
             Icon(Icons.Default.Close, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Cancel Alert", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text("I'm Safe — Cancel", fontWeight = FontWeight.Black, fontSize = 17.sp)
         }
 
         Button(
@@ -188,11 +216,11 @@ fun EmergencyCountdownScreen(
                 .fillMaxWidth()
                 .height(54.dp),
             shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A), contentColor = Color.White),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626), contentColor = Color.White),
         ) {
             Icon(Icons.Default.Send, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Send Alert Now", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text("Send SOS Now", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         }
 
         Surface(

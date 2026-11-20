@@ -125,8 +125,9 @@ class PhoneMountCalibrator {
         val dRoll = normalizeAngleDelta(rollDeg - refRollDeg)
         val dYaw = normalizeAngleDelta(yawDeg - refYawDeg)
 
-        // Check gravity-vector drift when car is nearly stationary to distinguish mount slip from driving
-        val currentGravityAngleDeg = if (rawMag in 8.0f..11.8f && linMag < 1.5f) {
+        // Check gravity-vector drift to distinguish mount slip / phone handling from genuine driving
+        // Even while moving, a phone picked up or rotated in hand shows >24° gravity drift with modest linear motion
+        val currentGravityAngleDeg = if (rawMag in 7.8f..12.2f && linMag < 5.5f) {
             val cosTheta = ((rawAx * refGravity[0] + rawAy * refGravity[1] + rawAz * refGravity[2]) / rawMag)
                 .coerceIn(-1f, 1f)
             Math.toDegrees(acos(cosTheta.toDouble())).toFloat()
@@ -134,7 +135,8 @@ class PhoneMountCalibrator {
             0f
         }
 
-        if (currentGravityAngleDeg > 22f && (gpsSpeedKmh ?: 0f) < 5f) {
+        val speedLow = (gpsSpeedKmh ?: 0f) < 5f
+        if ((speedLow && currentGravityAngleDeg > 20f) || (!speedLow && currentGravityAngleDeg > 28f && linMag < 4.0f)) {
             mountShiftSamples++
         } else if (currentGravityAngleDeg < 10f) {
             mountShiftSamples = (mountShiftSamples - 1).coerceAtLeast(0)
@@ -142,7 +144,7 @@ class PhoneMountCalibrator {
 
         lastStatus = when {
             !gyroAvailable && !hasGravityRef -> MountCalibrationStatus.SENSOR_UNAVAILABLE
-            mountShiftSamples >= 6 -> MountCalibrationStatus.MOUNT_MOVEMENT_SUSPECTED
+            mountShiftSamples >= 4 -> MountCalibrationStatus.MOUNT_MOVEMENT_SUSPECTED
             else -> MountCalibrationStatus.CALIBRATED
         }
 

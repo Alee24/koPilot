@@ -1,14 +1,21 @@
 package ke.co.kopilot.safety
 
 import android.Manifest
+import android.app.Activity
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.telephony.SmsManager
 import androidx.core.content.ContextCompat
 import ke.co.kopilot.feature.sensors.AccidentAssessment
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -33,7 +40,15 @@ data class EmergencyNotificationRecord(
 )
 
 object EmergencySmsManager {
+    private const val ACTION_SMS_SENT = "ke.co.kopilot.safety.ACTION_SMS_SENT"
     private val sentIncidentIds = mutableSetOf<String>()
+
+    private val _lastCarrierStatus = MutableStateFlow<String?>(null)
+    val lastCarrierStatus: StateFlow<String?> = _lastCarrierStatus.asStateFlow()
+
+    fun clearSentIncidentCacheForTests() {
+        sentIncidentIds.clear()
+    }
 
     fun parseContacts(rawJson: String): List<EmergencyContact> =
         runCatching {
@@ -133,15 +148,18 @@ object EmergencySmsManager {
     ): String {
         val timeStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(assessment.timestampMillis))
         val speedStr = assessment.preEventSpeedKmh?.let { "${it.toInt()} km/h" } ?: "unavailable"
+        val impactStr = "${"%.1f".format(Locale.US, assessment.peakImpactG)}g"
         val locStr = if (latitude != null && longitude != null) {
             val accStr = assessment.gpsAccuracyMeters?.let { " (±${it.toInt()}m)" } ?: ""
-            "https://www.google.com/maps?q=${"%.6f".format(Locale.US, latitude)},${"%.6f".format(Locale.US, longitude)}$accStr"
+            "Lat ${"%.5f".format(Locale.US, latitude)}, Lng ${"%.5f".format(Locale.US, longitude)}$accStr " +
+                "https://www.google.com/maps?q=${"%.6f".format(Locale.US, latitude)},${"%.6f".format(Locale.US, longitude)}"
         } else {
             "GPS location unavailable"
         }
-        val prefix = if (isTest) "KoPilot TEST Safety Alert" else "KoPilot Safety Alert"
-        return "$prefix: A possible vehicle accident (${assessment.eventClass.label.lowercase()}, ${assessment.confidencePercent}% confidence) was detected at $timeStr. " +
-            "Last recorded speed: $speedStr. Location: $locStr. Please contact the driver and check their safety."
+        val prefix = if (isTest || assessment.isSimulation) "KoPilot SIMULATION Safety Alert" else "KoPilot Safety Alert"
+        return "$prefix: A POSSIBLE accident was detected (not yet confirmed) at $timeStr. " +
+            "Motion peak: $impactStr, last speed: $speedStr. Location: $locStr. " +
+            "Please contact the driver immediately to check their safety."
     }
 
     fun hasSmsPermission(context: Context): Boolean =
@@ -152,6 +170,7 @@ object EmergencySmsManager {
         val statusLabel: String,
         val recipientCount: Int,
         val usedComposerFallback: Boolean = false,
+        val deliveryPendingConfirmation: Boolean = false,
     )
 
     fun sendEmergencySms(
@@ -160,15 +179,24 @@ object EmergencySmsManager {
         contacts: List<EmergencyContact>,
         message: String,
         autoSmsOptedIn: Boolean,
+        isSimulation: Boolean = false,
     ): SmsDispatchResult {
+        if (isSimulation) {
+            return SmsDispatchResult(
+                success = false,
+                statusLabel = "Simulation mode — real SMS strictly blocked",
+                recipientCount = 0,
+            )
+        }
         if (contacts.isEmpty()) {
             return SmsDispatchResult(false, "No emergency contacts configured", 0)
         }
         if (!autoSmsOptedIn) {
             return SmsDispatchResult(false, "Automatic SMS is disabled in Safety Settings", 0)
         }
-        if (sentIncidentIds.contains(incidentId)) {
-            return SmsDispatchResult(true, "Duplicate suppressed (already sent for incident)", contacts.size)
+        val safeIncidentId = incidentId.ifBlank { "inc_${System.currentTimeMillis() / 30_000L}" }
+        if (sentIncidentIds.contains(safeIncidentId)) {
+            return SmsDispatchResult(true, "Duplicate suppressed (already dispatched for incident $safeIncidentId)", contacts.size)
         }
 
         val ordered = contacts.sortedByDescending { it.isPrimary }.map { formatPhoneNumber(it.phone) }.filter { it.isNotBlank() }
@@ -180,7 +208,7 @@ object EmergencySmsManager {
             val launched = openSmsComposerFallback(context, ordered.first(), message)
             return SmsDispatchResult(
                 success = launched,
-                statusLabel = if (launched) "Opened SMS composer (SEND_SMS permission not granted)" else "SEND_SMS permission required",
+                statusLabel = if (launched) "Opened SMS composer (SEND_SMS permission not granted)" else "SEND_SMS permission required — use manual SOS",
                 recipientCount = 1,
                 usedComposerFallback = true,
             )
@@ -193,24 +221,83 @@ object EmergencySmsManager {
                 @Suppress("DEPRECATION")
                 SmsManager.getDefault()
             }
-            var sentCount = 0
-            for (phone in ordered) {
+            registerSentStatusReceiver(context.applicationContext, safeIncidentId)
+            var queuedCount = 0
+            for ((idx, phone) in ordered.withIndex()) {
                 val parts = smsManager.divideMessage(message)
-                smsManager.sendMultipartTextMessage(phone, null, parts, null, null)
-                sentCount++
+                val sentIntents = ArrayList<PendingIntent>(parts.size)
+                for (p in parts.indices) {
+                    val sentIntent = Intent(ACTION_SMS_SENT).apply {
+                        setPackage(context.packageName)
+                        putExtra("incidentId", safeIncidentId)
+                        putExtra("phone", phone)
+                    }
+                    sentIntents.add(
+                        PendingIntent.getBroadcast(
+                            context,
+                            (safeIncidentId.hashCode() + idx * 17 + p) and 0x7FFFFFFF,
+                            sentIntent,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                        ),
+                    )
+                }
+                smsManager.sendMultipartTextMessage(phone, null, parts, sentIntents, null)
+                queuedCount++
             }
-            sentIncidentIds.add(incidentId)
-            SmsDispatchResult(true, "Sent to $sentCount contact(s)", sentCount)
+            sentIncidentIds.add(safeIncidentId)
+            _lastCarrierStatus.value = "Queued to carrier for $queuedCount contact(s) — awaiting carrier confirmation"
+            SmsDispatchResult(
+                success = true,
+                statusLabel = "Queued to carrier for $queuedCount contact(s) (awaiting network confirmation)",
+                recipientCount = queuedCount,
+                deliveryPendingConfirmation = true,
+            )
         }.getOrElse { err ->
             val launched = openSmsComposerFallback(context, ordered.first(), message)
+            _lastCarrierStatus.value = "SMS dispatch failed (${err.localizedMessage ?: "no cellular/SIM"})"
             SmsDispatchResult(
                 success = false,
-                statusLabel = "SMS failed (${err.localizedMessage ?: "no cellular/SIM"}); ${if (launched) "opened SMS app" else "retry manually"}",
+                statusLabel = "SMS unavailable (${err.localizedMessage ?: "no cellular/SIM"}); ${if (launched) "opened SMS app" else "use manual SOS"}",
                 recipientCount = 0,
                 usedComposerFallback = launched,
             )
         }
     }
+
+    private fun registerSentStatusReceiver(appContext: Context, incidentId: String) {
+        runCatching {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(ctx: Context?, intent: Intent?) {
+                    if (intent?.getStringExtra("incidentId") != incidentId) return
+                    val resultText = when (resultCode) {
+                        Activity.RESULT_OK -> "Carrier confirmed SMS sent"
+                        SmsManager.RESULT_ERROR_NO_SERVICE -> "SMS failed: No cellular service"
+                        SmsManager.RESULT_ERROR_RADIO_OFF -> "SMS failed: Airplane mode / radio off"
+                        SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "SMS failed: Carrier rejected or no credit/SIM"
+                        else -> "SMS carrier error (code=$resultCode)"
+                    }
+                    _lastCarrierStatus.value = resultText
+                    runCatching { appContext.unregisterReceiver(this) }
+                }
+            }
+            val filter = IntentFilter(ACTION_SMS_SENT)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                appContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                appContext.registerReceiver(receiver, filter)
+            }
+        }
+    }
+
+    fun openEmergencyDialerFallback(context: Context, phone: String = "999"): Boolean =
+        runCatching {
+            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        }.getOrDefault(false)
 
     fun openSmsComposerFallback(context: Context, phone: String, message: String): Boolean =
         runCatching {

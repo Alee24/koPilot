@@ -443,6 +443,42 @@ fun TripsContent(
                             )
                         }
 
+                        val safetyEventLines = remember(logFile?.absolutePath, logFile?.length()) {
+                            runCatching {
+                                logFile?.takeIf { it.exists() }
+                                    ?.readLines()
+                                    ?.filter { it.contains("[SAFETY_EVENT]") || it.contains("ACCIDENT_") }
+                                    ?.takeLast(8)
+                                    .orEmpty()
+                            }.getOrDefault(emptyList())
+                        }
+                        if (safetyEventLines.isNotEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(
+                                        text = "Safety Events (${safetyEventLines.size})",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                    safetyEventLines.forEach { line ->
+                                        Text(
+                                            text = line.trim(),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         Surface(
                             shape = RoundedCornerShape(10.dp),
                             color = MaterialTheme.colorScheme.surface,

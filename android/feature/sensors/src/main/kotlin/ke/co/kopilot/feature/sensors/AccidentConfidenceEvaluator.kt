@@ -1,5 +1,7 @@
 package ke.co.kopilot.feature.sensors
 
+import kotlin.math.abs
+
 enum class AccidentEventClass(val label: String, val triggersCountdown: Boolean) {
     NORMAL_DRIVING("Normal driving", false),
     MINOR_ROAD_IMPACT("Minor road impact", false),
@@ -24,9 +26,9 @@ enum class AccidentSensitivityProfile(
     val rolloverAngleDeg: Float,
     val swerveLateralMps2: Float,
 ) {
-    LOW("Conservative", 22.0f, 30.0f, 52.0f, 7.5f),
-    STANDARD("Standard", 17.5f, 24.5f, 44.0f, 6.0f),
-    HIGH("Sensitive", 14.0f, 20.0f, 36.0f, 4.8f),
+    LOW("Conservative", 29.4f, 44.1f, 65.0f, 6.5f),
+    STANDARD("Standard", 24.5f, 39.2f, 60.0f, 5.5f),
+    HIGH("Sensitive", 21.6f, 35.3f, 55.0f, 4.8f),
 }
 
 data class AccidentAssessment(
@@ -43,11 +45,30 @@ data class AccidentAssessment(
     val triggeringMeasurements: List<String>,
     val missingEvidence: List<String>,
     val suppressedAsPhoneHandling: Boolean = false,
+    val incidentId: String = "",
+    val state: AccidentState = AccidentState.NORMAL,
+    val peakImpactG: Float = impactIntensityMps2 / AccidentThresholdConfig.GRAVITY_MPS2,
+    val evidenceGroups: List<EvidenceGroupStatus> = emptyList(),
+    val independentGroupCount: Int = 0,
+    val swerveCategory: SwerveBehaviorCategory = SwerveBehaviorCategory.NONE,
+    val sensorQuality: SensorQualitySnapshot = SensorQualitySnapshot(),
+    val isFallbackWarning: Boolean = false,
+    val isSimulation: Boolean = false,
+    val recalibrationRecommended: Boolean = false,
+    val configVersion: String = AccidentThresholdConfig.DEFAULT_CONFIG_VERSION,
 )
 
 /**
- * Evaluates multi-sensor accident evidence with explicit explainability and no single-threshold
- * blind triggers. Distinguishes phone drops/mount shifts from real vehicle collisions/rollovers.
+ * Multi-sensor independent evidence confirmation engine.
+ *
+ * Groups measurements strictly by independent hardware/signal source:
+ * - Group A: Phone Motion (IMU: accelerometer + gyroscope + rotation vector = ONE group)
+ * - Group B: Vehicle Movement (independent GPS speed drop, independent OBD speed drop, unexpected stop)
+ * - Group C: Vehicle Diagnostics (OBD RPM abrupt drop or ECU communication loss coinciding with impact)
+ * - Group D: Driver Wellness (fresh BLE smartwatch HR deviation from known personal baseline)
+ *
+ * Ordinary automatic escalation requires a primary Group A motion event AND corroboration from
+ * at least one genuinely independent group (B, C, or D).
  */
 class AccidentConfidenceEvaluator {
 
@@ -55,101 +76,322 @@ class AccidentConfidenceEvaluator {
         timestampMillis: Long,
         peakLinearAccelMps2: Float,
         horizontalImpulseMps2: Float,
-        preEventSpeedKmh: Float?,
-        postEventSpeedKmh: Float?,
+        verticalImpulseMps2: Float = 0f,
+        sustainedLongitudinalDecelMps2: Float = 0f,
+        sustainedImpactSamples: Int = 2,
+        sustainedSevereSamples: Int = 0,
+        motionEventDurationMs: Long = 100L,
+        preEventGpsSpeedKmh: Float?,
+        postEventGpsSpeedKmh: Float?,
+        preEventObdSpeedKmh: Float? = null,
+        postEventObdSpeedKmh: Float? = null,
+        preEventObdRpm: Int? = null,
+        postEventObdRpm: Int? = null,
+        obdEcuLostDuringEvent: Boolean = false,
+        watchHeartRateBpm: Int? = null,
+        watchBaselineBpm: Float? = null,
+        watchBaselineSampleCount: Int = 0,
+        watchReadingAgeMs: Long? = null,
+        watchSensorContact: Boolean? = null,
         rollChangeDeg: Float,
         pitchChangeDeg: Float,
+        sustainedAbnormalOrientationMs: Long = 0L,
         peakAngularVelDegPerSec: Float,
         postImpactStationarySec: Float,
+        postImpactStillnessSec: Float = 0f,
         mountCalibrationStatus: MountCalibrationStatus,
         gpsAccuracyMeters: Float?,
         accelAvailable: Boolean,
         gyroAvailable: Boolean,
         obdConnected: Boolean,
-        sensitivity: AccidentSensitivityProfile,
-        impactEnabled: Boolean,
-        rolloverEnabled: Boolean,
+        config: AccidentThresholdConfig = AccidentThresholdConfig(),
+        impactEnabled: Boolean = true,
+        rolloverEnabled: Boolean = true,
+        inVerificationWindow: Boolean = false,
+        incidentId: String = "",
+        sensorQuality: SensorQualitySnapshot = SensorQualitySnapshot(),
     ): AccidentAssessment {
-        val orientationDelta = maxOf(kotlin.math.abs(rollChangeDeg), kotlin.math.abs(pitchChangeDeg))
-        val speedDropKmh = if (preEventSpeedKmh != null && postEventSpeedKmh != null) {
-            (preEventSpeedKmh - postEventSpeedKmh).coerceAtLeast(0f)
+        val cfg = config.sanitized()
+        val peakG = peakLinearAccelMps2 / AccidentThresholdConfig.GRAVITY_MPS2
+        val orientationDelta = maxOf(abs(rollChangeDeg), abs(pitchChangeDeg))
+
+        // Keep GPS speed and OBD speed strictly separated — never treat one copied from the other as independent
+        val gpsReliable = preEventGpsSpeedKmh != null &&
+            postEventGpsSpeedKmh != null &&
+            (gpsAccuracyMeters == null || gpsAccuracyMeters <= 35f)
+        val gpsSpeedDrop = if (gpsReliable) {
+            (preEventGpsSpeedKmh!! - postEventGpsSpeedKmh!!).coerceAtLeast(0f)
         } else {
-            0f
+            null
         }
+        val obdSpeedAvailable = obdConnected && preEventObdSpeedKmh != null && postEventObdSpeedKmh != null
+        val obdSpeedDrop = if (obdSpeedAvailable) {
+            (preEventObdSpeedKmh!! - postEventObdSpeedKmh!!).coerceAtLeast(0f)
+        } else {
+            null
+        }
+
+        val bestPreSpeed = preEventGpsSpeedKmh ?: preEventObdSpeedKmh
+        val bestPostSpeed = postEventGpsSpeedKmh ?: postEventObdSpeedKmh
+        val bestSpeedDrop = maxOf(gpsSpeedDrop ?: 0f, obdSpeedDrop ?: 0f)
 
         val triggers = mutableListOf<String>()
         val missing = mutableListOf<String>()
 
         if (!gyroAvailable) missing.add("Gyroscope unavailable")
-        if (preEventSpeedKmh == null) missing.add("Pre-event speed unavailable")
-        if (gpsAccuracyMeters == null || gpsAccuracyMeters > 35f) missing.add("Low/missing GPS accuracy")
+        if (!gpsReliable) missing.add("Reliable GPS speed unavailable")
         if (!obdConnected) missing.add("OBD-II speed/RPM unavailable")
+        val watchFresh = watchHeartRateBpm != null &&
+            watchReadingAgeMs != null &&
+            watchReadingAgeMs <= 15_000L &&
+            watchSensorContact != false
+        if (!watchFresh) missing.add("Fresh smartwatch heart rate unavailable")
 
         val sensorReliability = when {
-            accelAvailable && gyroAvailable && preEventSpeedKmh != null -> "High"
-            accelAvailable && (gyroAvailable || preEventSpeedKmh != null) -> "Moderate"
+            accelAvailable && gyroAvailable && (gpsReliable || obdConnected) -> "High"
+            accelAvailable && (gyroAvailable || gpsReliable || obdConnected) -> "Moderate"
             else -> "Degraded"
         }
 
-        // Phone-handling / mount-slip guard: large orientation shift with low speed & no severe horizontal impulse
+        // ---- False-Positive Guards ----
+        val isVerticalRoadShock = verticalImpulseMps2 > horizontalImpulseMps2 * 1.45f &&
+            bestSpeedDrop < cfg.abruptSpeedLossKmh &&
+            orientationDelta < cfg.rolloverAngleDeg
+
+        val isHarshBrakingOnly = sustainedLongitudinalDecelMps2 <= cfg.harshBrakingMps2 &&
+            peakLinearAccelMps2 < cfg.strongImpactMps2 &&
+            orientationDelta < cfg.rolloverAngleDeg
+
+        val isSingleSampleSpike = sustainedImpactSamples < 2 && motionEventDurationMs < cfg.minImpactDurationMs
+
+        val isStationaryPhoneRotation = (bestPreSpeed ?: 0f) < 8f &&
+            (bestPostSpeed ?: 0f) < 8f &&
+            (orientationDelta >= 28f || peakAngularVelDegPerSec >= 75f) &&
+            horizontalImpulseMps2 < cfg.strongImpactMps2
+
+        val isMovingPhoneHandling = (bestPreSpeed ?: 0f) >= 8f &&
+            bestSpeedDrop < 10f &&
+            (orientationDelta >= 32f || peakAngularVelDegPerSec >= 100f) &&
+            horizontalImpulseMps2 < cfg.strongImpactMps2 * 0.8f
+
         val likelyPhoneHandling = mountCalibrationStatus == MountCalibrationStatus.MOUNT_MOVEMENT_SUSPECTED ||
-            ((orientationDelta >= 35f) &&
-                (preEventSpeedKmh != null && preEventSpeedKmh < 8f) &&
-                horizontalImpulseMps2 < sensitivity.impactThresholdMps2 * 0.75f)
+            isStationaryPhoneRotation ||
+            isMovingPhoneHandling
 
-        var score = 0
-        if (impactEnabled && peakLinearAccelMps2 >= sensitivity.impactThresholdMps2) {
-            score += 30
-            triggers.add("Peak impact ${"%.1f".format(peakLinearAccelMps2)} m/s²")
+        // ---- GROUP A: Phone Motion (IMU) — accel + gyro + rotation vector are ONE group ----
+        val groupADetails = mutableListOf<String>()
+        val strongImpact = impactEnabled &&
+            !isSingleSampleSpike &&
+            !isVerticalRoadShock &&
+            peakLinearAccelMps2 >= cfg.strongImpactMps2
+        val severeImpact = impactEnabled &&
+            !isSingleSampleSpike &&
+            !isVerticalRoadShock &&
+            peakLinearAccelMps2 >= cfg.severeImpactMps2
+        val rolloverTriggered = rolloverEnabled &&
+            !likelyPhoneHandling &&
+            orientationDelta >= cfg.rolloverAngleDeg &&
+            (sustainedAbnormalOrientationMs >= 400L || peakAngularVelDegPerSec >= 90f) &&
+            ((bestPreSpeed ?: 0f) >= 12f || peakLinearAccelMps2 >= cfg.strongImpactMps2 * 0.85f)
+
+        if (severeImpact) {
+            groupADetails.add("Severe sustained impact ${"%.2f".format(peakG)}g (${"%.1f".format(peakLinearAccelMps2)} m/s², ${motionEventDurationMs}ms)")
+        } else if (strongImpact) {
+            groupADetails.add("Strong sustained impact ${"%.2f".format(peakG)}g (${"%.1f".format(peakLinearAccelMps2)} m/s², ${motionEventDurationMs}ms)")
         }
-        if (impactEnabled && horizontalImpulseMps2 >= sensitivity.severeImpactThresholdMps2) {
-            score += 25
-            triggers.add("Severe horizontal impulse ${"%.1f".format(horizontalImpulseMps2)} m/s²")
+        if (rolloverTriggered) {
+            groupADetails.add("Vehicle-relative tilt ${"%.0f".format(orientationDelta)}° (${"%.0f".format(peakAngularVelDegPerSec)}°/s)")
         }
-        if (speedDropKmh >= 18f && (preEventSpeedKmh ?: 0f) >= 22f) {
-            score += 25
-            triggers.add("Rapid speed drop ${"%.0f".format(speedDropKmh)} km/h")
+        val groupACorroborated = !likelyPhoneHandling && (strongImpact || severeImpact || rolloverTriggered)
+        val groupA = EvidenceGroupStatus(
+            group = EvidenceGroup.GROUP_A_PHONE_MOTION,
+            corroborated = groupACorroborated,
+            available = accelAvailable,
+            stale = false,
+            details = groupADetails.ifEmpty {
+                when {
+                    likelyPhoneHandling -> listOf("Suppressed: phone handling or mount shift detected")
+                    isSingleSampleSpike -> listOf("Ignored: transient single-sample spike (${motionEventDurationMs}ms)")
+                    isVerticalRoadShock -> listOf("Classified as road bump/pothole (vertical shock)")
+                    isHarshBrakingOnly -> listOf("Classified as harsh braking (${"%.1f".format(sustainedLongitudinalDecelMps2)} m/s²)")
+                    else -> listOf("Normal motion (${"%.2f".format(peakG)}g)")
+                }
+            },
+        )
+
+        // ---- GROUP B: Vehicle Movement (GPS speed / OBD speed / unexpected stop) ----
+        val groupBDetails = mutableListOf<String>()
+        val groupBAvailable = gpsReliable || obdSpeedAvailable
+        var groupBCorroborated = false
+        if (gpsSpeedDrop != null && gpsSpeedDrop >= cfg.abruptSpeedLossKmh && (preEventGpsSpeedKmh ?: 0f) >= cfg.abruptSpeedLossKmh) {
+            groupBCorroborated = true
+            groupBDetails.add("GPS abrupt speed loss -${"%.0f".format(gpsSpeedDrop)} km/h (${preEventGpsSpeedKmh?.toInt()}→${postEventGpsSpeedKmh?.toInt()} km/h)")
         }
-        if (rolloverEnabled && orientationDelta >= sensitivity.rolloverAngleDeg && peakAngularVelDegPerSec >= 90f) {
-            score += 35
-            triggers.add("Roll/pitch shift ${"%.0f".format(orientationDelta)}° at ${"%.0f".format(peakAngularVelDegPerSec)}°/s")
+        if (obdSpeedDrop != null && obdSpeedDrop >= cfg.abruptSpeedLossKmh && (preEventObdSpeedKmh ?: 0f) >= cfg.abruptSpeedLossKmh) {
+            groupBCorroborated = true
+            groupBDetails.add("OBD abrupt speed loss -${"%.0f".format(obdSpeedDrop)} km/h (${preEventObdSpeedKmh?.toInt()}→${postEventObdSpeedKmh?.toInt()} km/h)")
         }
-        if (postImpactStationarySec >= 3.0f && (preEventSpeedKmh ?: 0f) >= 15f) {
-            score += 15
-            triggers.add("Vehicle stationary ${"%.1f".format(postImpactStationarySec)}s post-event")
+        if (postImpactStationarySec >= 2.5f && (bestPreSpeed ?: 0f) >= 20f && (bestPostSpeed ?: 99f) < 3f) {
+            groupBCorroborated = true
+            groupBDetails.add("Vehicle stopped unexpectedly for ${"%.1f".format(postImpactStationarySec)}s")
+        }
+        val groupB = EvidenceGroupStatus(
+            group = EvidenceGroup.GROUP_B_VEHICLE_MOVEMENT,
+            corroborated = groupBCorroborated,
+            available = groupBAvailable,
+            stale = !groupBAvailable,
+            details = groupBDetails.ifEmpty {
+                listOf(if (groupBAvailable) "No abrupt vehicle speed loss" else "GPS/OBD speed unavailable")
+            },
+        )
+
+        // ---- GROUP C: Vehicle Diagnostics (OBD RPM abrupt drop or ECU loss coinciding with impact) ----
+        val groupCDetails = mutableListOf<String>()
+        val groupCAvailable = obdConnected || obdEcuLostDuringEvent
+        var groupCCorroborated = false
+        if (obdConnected && preEventObdRpm != null && postEventObdRpm != null) {
+            val rpmDrop = preEventObdRpm - postEventObdRpm
+            if ((preEventObdRpm >= 1100 && postEventObdRpm <= 250) || rpmDrop >= 1400) {
+                groupCCorroborated = true
+                groupCDetails.add("Abrupt OBD RPM drop ($preEventObdRpm→$postEventObdRpm RPM)")
+            }
+        }
+        if (obdEcuLostDuringEvent && groupACorroborated) {
+            groupCCorroborated = true
+            groupCDetails.add("ECU communication lost during impact window")
+        }
+        val groupC = EvidenceGroupStatus(
+            group = EvidenceGroup.GROUP_C_VEHICLE_DIAGNOSTICS,
+            corroborated = groupCCorroborated,
+            available = groupCAvailable,
+            stale = !groupCAvailable,
+            details = groupCDetails.ifEmpty {
+                listOf(if (obdConnected) "ECU telemetry nominal" else "OBD-II diagnostics unavailable")
+            },
+        )
+
+        // ---- GROUP D: Driver Wellness (Fresh Smartwatch HR deviation from known personal baseline) ----
+        val groupDDetails = mutableListOf<String>()
+        val baselineValid = watchBaselineBpm != null && watchBaselineSampleCount >= 10
+        var groupDCorroborated = false
+        if (watchFresh && baselineValid) {
+            val deltaBpm = abs(watchHeartRateBpm!! - watchBaselineBpm!!)
+            val thresholdBpm = maxOf(25f, watchBaselineBpm * 0.25f)
+            if (deltaBpm >= thresholdBpm) {
+                groupDCorroborated = true
+                groupDDetails.add("Watch HR deviation: ${watchHeartRateBpm} BPM vs ${watchBaselineBpm.toInt()} BPM baseline")
+            }
+        }
+        val groupD = EvidenceGroupStatus(
+            group = EvidenceGroup.GROUP_D_DRIVER_WELLNESS,
+            corroborated = groupDCorroborated,
+            available = watchFresh,
+            stale = !watchFresh,
+            details = groupDDetails.ifEmpty {
+                when {
+                    !watchFresh -> listOf("Fresh smartwatch heart rate unavailable (non-blocking)")
+                    !baselineValid -> listOf("Watch HR ${watchHeartRateBpm} BPM (baseline calibrating)")
+                    else -> listOf("Watch HR ${watchHeartRateBpm} BPM within personal baseline")
+                }
+            },
+        )
+
+        val allGroups = listOf(groupA, groupB, groupC, groupD)
+        val independentCorroboratingCount = listOf(groupB, groupC, groupD).count { it.corroborated }
+        val allIndependentUnavailable = !groupB.available && !groupC.available && !groupD.available
+
+        // Conservative SEVERE_EVENT_FALLBACK when ALL independent sensors are unavailable:
+        // Requires calibrated mount, sustained multi-sample severe impact >= 4.0g over >= 120ms,
+        // and post-impact stillness >= 2.0s. Never fires on a single spike or uncalibrated mount.
+        val severeFallbackQualified = groupACorroborated &&
+            allIndependentUnavailable &&
+            mountCalibrationStatus == MountCalibrationStatus.CALIBRATED &&
+            severeImpact &&
+            sustainedSevereSamples >= 2 &&
+            motionEventDurationMs >= 120L &&
+            postImpactStillnessSec >= 2.0f
+
+        // Collect explainable trigger reasons
+        allGroups.filter { it.corroborated }.forEach { g ->
+            triggers.addAll(g.details)
+        }
+        if (severeFallbackQualified) {
+            triggers.add("Fallback: calibrated mount + sustained severe impact (>=${cfg.severeImpactG}g) + ${"%.1f".format(postImpactStillnessSec)}s post-impact stillness (independent sensors unavailable)")
         }
 
-        if (likelyPhoneHandling) {
-            score = (score - 45).coerceAtLeast(0)
-        }
+        // Compute deterministic state & event class
+        val finalState: AccidentState
+        val finalClass: AccidentEventClass
+        var confidence = 0
 
-        val eventClass = when {
-            likelyPhoneHandling -> AccidentEventClass.MINOR_ROAD_IMPACT
-            rolloverEnabled &&
-                orientationDelta >= sensitivity.rolloverAngleDeg &&
-                peakAngularVelDegPerSec >= 95f &&
-                (peakLinearAccelMps2 >= sensitivity.impactThresholdMps2 * 0.8f || (preEventSpeedKmh ?: 0f) >= 15f) ->
-                if (score >= 80) AccidentEventClass.HIGH_CONFIDENCE_POSSIBLE_ACCIDENT else AccidentEventClass.SUSPECTED_ROLLOVER
-            score >= 75 -> AccidentEventClass.HIGH_CONFIDENCE_POSSIBLE_ACCIDENT
-            score >= 55 && triggers.size >= 2 -> AccidentEventClass.SUSPECTED_COLLISION
-            impactEnabled && peakLinearAccelMps2 >= sensitivity.impactThresholdMps2 -> AccidentEventClass.SIGNIFICANT_IMPACT
-            impactEnabled && peakLinearAccelMps2 >= 9.5f -> AccidentEventClass.MINOR_ROAD_IMPACT
-            else -> AccidentEventClass.NORMAL_DRIVING
+        when {
+            likelyPhoneHandling -> {
+                finalState = AccidentState.DRIVING_EVENT_ONLY
+                finalClass = AccidentEventClass.MINOR_ROAD_IMPACT
+                confidence = 10
+            }
+            groupACorroborated && independentCorroboratingCount >= 1 -> {
+                finalState = AccidentState.POSSIBLE_ACCIDENT
+                confidence = (55 + (if (severeImpact) 20 else 10) + independentCorroboratingCount * 15).coerceIn(60, 98)
+                finalClass = when {
+                    rolloverTriggered -> if (confidence >= 85) AccidentEventClass.HIGH_CONFIDENCE_POSSIBLE_ACCIDENT else AccidentEventClass.SUSPECTED_ROLLOVER
+                    confidence >= 85 -> AccidentEventClass.HIGH_CONFIDENCE_POSSIBLE_ACCIDENT
+                    else -> AccidentEventClass.SUSPECTED_COLLISION
+                }
+            }
+            severeFallbackQualified -> {
+                finalState = AccidentState.SEVERE_EVENT_FALLBACK
+                finalClass = AccidentEventClass.SUSPECTED_COLLISION
+                confidence = 68
+            }
+            groupACorroborated && inVerificationWindow -> {
+                finalState = AccidentState.VERIFYING
+                finalClass = AccidentEventClass.SIGNIFICANT_IMPACT
+                confidence = 40
+            }
+            isHarshBrakingOnly || isVerticalRoadShock || groupACorroborated -> {
+                finalState = AccidentState.DRIVING_EVENT_ONLY
+                finalClass = if (peakLinearAccelMps2 >= cfg.strongImpactMps2 * 0.6f) {
+                    AccidentEventClass.SIGNIFICANT_IMPACT
+                } else {
+                    AccidentEventClass.MINOR_ROAD_IMPACT
+                }
+                confidence = if (groupACorroborated) 35 else 18
+            }
+            peakLinearAccelMps2 >= cfg.minorMovementMps2 * 2f -> {
+                finalState = AccidentState.NORMAL
+                finalClass = AccidentEventClass.MINOR_ROAD_IMPACT
+                confidence = 8
+            }
+            else -> {
+                finalState = AccidentState.NORMAL
+                finalClass = AccidentEventClass.NORMAL_DRIVING
+                confidence = 0
+            }
         }
 
         return AccidentAssessment(
-            eventClass = eventClass,
-            confidencePercent = score.coerceIn(0, 99),
+            eventClass = finalClass,
+            confidencePercent = confidence,
             timestampMillis = timestampMillis,
-            preEventSpeedKmh = preEventSpeedKmh,
-            postEventSpeedKmh = postEventSpeedKmh,
+            preEventSpeedKmh = bestPreSpeed,
+            postEventSpeedKmh = bestPostSpeed,
             impactIntensityMps2 = peakLinearAccelMps2,
             orientationChangeDeg = orientationDelta,
             gpsAccuracyMeters = gpsAccuracyMeters,
             sensorReliability = sensorReliability,
-            triggeringMeasurements = triggers.ifEmpty { listOf("Within normal driving envelope") },
+            triggeringMeasurements = triggers.ifEmpty { groupA.details },
             missingEvidence = missing,
             suppressedAsPhoneHandling = likelyPhoneHandling,
+            incidentId = incidentId,
+            state = finalState,
+            peakImpactG = peakG,
+            evidenceGroups = allGroups,
+            independentGroupCount = independentCorroboratingCount,
+            sensorQuality = sensorQuality,
+            isFallbackWarning = severeFallbackQualified,
+            recalibrationRecommended = likelyPhoneHandling || mountCalibrationStatus == MountCalibrationStatus.MOUNT_MOVEMENT_SUSPECTED,
+            configVersion = cfg.configVersion,
         )
     }
 }

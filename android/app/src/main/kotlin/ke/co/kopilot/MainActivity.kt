@@ -92,6 +92,7 @@ import ke.co.kopilot.feature.soundstudio.SoundStudioScreen
 import ke.co.kopilot.feature.soundstudio.SoundStudioViewModel
 import ke.co.kopilot.feature.trips.TripsScreen
 import ke.co.kopilot.intelligence.VehicleIntelligenceScreen
+import ke.co.kopilot.safety.AccidentDiagnosticsScreen
 import ke.co.kopilot.safety.DrivingSafetyMonitoringService
 import ke.co.kopilot.safety.EmergencyContactsScreen
 import ke.co.kopilot.safety.EmergencyCountdownScreen
@@ -177,13 +178,20 @@ class MainActivity : ComponentActivity() {
                             assessment = assessment,
                             latitude = fix?.latitude,
                             longitude = fix?.longitude,
+                            isTest = assessment.isSimulation,
                         )
                         val res = EmergencySmsManager.sendEmergencySms(
                             context = this@MainActivity,
-                            incidentId = triggerId,
+                            incidentId = assessment.incidentId.ifBlank { triggerId },
                             contacts = contacts,
                             message = msg,
                             autoSmsOptedIn = settings.emergencySmsEnabled,
+                            isSimulation = assessment.isSimulation,
+                        )
+                        dashboardViewModel.recordSafetySmsOutcome(
+                            incidentId = assessment.incidentId.ifBlank { triggerId },
+                            smsAttempted = !assessment.isSimulation && settings.emergencySmsEnabled,
+                            statusLabel = res.statusLabel,
                         )
                         val existingHistory = EmergencySmsManager.parseHistory(settings.emergencyHistoryJson)
                         val record = EmergencyNotificationRecord(
@@ -555,6 +563,16 @@ class MainActivity : ComponentActivity() {
                                         onRecalibrateMount = { dashboardViewModel.recalibratePhoneMount() },
                                         onTestEmergencyWorkflow = { dashboardViewModel.triggerTestEmergencyWorkflow() },
                                         onOpenContacts = { navController.navigate("emergency_contacts") },
+                                        onOpenAccidentDiagnostics = { navController.navigate("accident_diagnostics") },
+                                        onBack = { navController.popBackStack() },
+                                    )
+                                }
+                                composable("accident_diagnostics") {
+                                    AccidentDiagnosticsScreen(
+                                        state = dashState,
+                                        onUpdateThresholdConfig = { dashboardViewModel.updateAccidentThresholdConfig(it) },
+                                        onRunSimulation = { dashboardViewModel.runSafeAccidentSimulation(it) },
+                                        onRecalibrateMount = { dashboardViewModel.recalibratePhoneMount() },
                                         onBack = { navController.popBackStack() },
                                     )
                                 }

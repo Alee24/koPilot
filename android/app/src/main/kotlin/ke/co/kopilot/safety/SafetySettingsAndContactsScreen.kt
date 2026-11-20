@@ -82,6 +82,7 @@ fun SafetyAndEmergencyScreen(
     onRecalibrateMount: () -> Unit,
     onTestEmergencyWorkflow: () -> Unit,
     onOpenContacts: () -> Unit,
+    onOpenAccidentDiagnostics: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -243,6 +244,13 @@ fun SafetyAndEmergencyScreen(
                     ) {
                         Text("Test Countdown", fontWeight = FontWeight.Bold)
                     }
+                }
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = onOpenAccidentDiagnostics,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Accident Detection Diagnostics & Safe Replay Lab")
                 }
             }
 
