@@ -42,6 +42,7 @@ import ke.co.kopilot.feature.location.SpeedEvaluation
 import ke.co.kopilot.feature.location.SpeedZone
 import ke.co.kopilot.feature.location.SpeedZoneMonitor
 import ke.co.kopilot.feature.sensors.AccidentAssessment
+import ke.co.kopilot.feature.sensors.CompassHeadingEstimator
 import ke.co.kopilot.feature.sensors.AccidentDetectionEngine
 import ke.co.kopilot.feature.sensors.AccidentEventClass
 import ke.co.kopilot.feature.sensors.AccidentSensitivityProfile
@@ -285,6 +286,8 @@ class DashboardViewModel @Inject constructor(
     private val ecuEngine = EcuPerformanceEngine()
     private val ecuSamplesFlow = MutableStateFlow<List<EcuSample>>(emptyList())
     private var lastEcuSampleMs = 0L
+    private var tripStartAreaLabel: String? = null
+    private var watchConnectedAnnounced = false
     private val tripFuelUsedFlow = MutableStateFlow<Double?>(null)
     private var lastObdSpeedIntegrateMs = 0L
     private var lastFuelIntegrateMs = 0L
@@ -411,6 +414,45 @@ class DashboardViewModel @Inject constructor(
                 }
             }
         }
+        // Smartwatch Connection Beep, Live Data Pull, Heart-Rate Check & Voice Alert
+        viewModelScope.launch {
+            smartwatchConnectionManager.diagnostics.collect { diag ->
+                val isConnected = diag.connectionState == ke.co.kopilot.feature.sensors.wearable.SmartwatchConnectionState.SUBSCRIBED_LIVE ||
+                    diag.connectionState == ke.co.kopilot.feature.sensors.wearable.SmartwatchConnectionState.CONNECTED_NO_HR_SERVICE
+                if (!isConnected) {
+                    watchConnectedAnnounced = false
+                    return@collect
+                }
+                if (!watchConnectedAnnounced) {
+                    watchConnectedAnnounced = true
+                    (speechSink as? AndroidTtsSpeechSink)?.playConnectionBeep()
+                    smartwatchConnectionManager.refreshLiveTelemetryAndHeartRate()
+                    kotlinx.coroutines.delay(700L)
+                    val hrBpm = heartRateRepository.state.value.currentBpm
+                    val spokenMsg = if (hrBpm != null && hrBpm > 0) {
+                        "Smartwatch connected. Heart rate is $hrBpm beats per minute."
+                    } else {
+                        "Smartwatch connected. Checking heart rate."
+                    }
+                    val s = uiState.value.settings
+                    if (!s.alertsMuted) {
+                        alertCoordinator.submit(
+                            alert = AlertMessage(
+                                id = UUID.randomUUID().toString(),
+                                priority = AlertPriority.VEHICLE_DIAGNOSTIC,
+                                spokenText = spokenMsg,
+                                displayText = hrBpm?.let { "Smartwatch connected • $it BPM" } ?: "Smartwatch connected",
+                                dedupKey = "watch_connected_${System.currentTimeMillis() / 10000L}",
+                                timestampMillis = System.currentTimeMillis(),
+                            ),
+                            speechRate = s.voiceSpeed,
+                            language = s.language,
+                            globalMute = s.alertsMuted,
+                        )
+                    }
+                }
+            }
+        }
         // OBD Connection Beep, Persistence & Pre-Flight Voice Check
         viewModelScope.launch {
             obdManager.state.collect { obdState ->
@@ -482,7 +524,7 @@ class DashboardViewModel @Inject constructor(
                         "Diagnostic code ${dtcs.first()} found. Systems check complete, ready to start."
                     }
                     val fullMsg = listOf(
-                        "OBD connected.",
+                        "Car connected.",
                         voltText,
                         mafText,
                         coolantText,
@@ -882,6 +924,9 @@ class DashboardViewModel @Inject constructor(
                         }
 
                         // Resolve current road name every 15s during active drive;
+                        if (tripStartAreaLabel == null) {
+                            tripStartAreaLabel = resolveGeneralPlaceName(fix.latitude, fix.longitude)
+                        }
                         // speak road name 2 minutes after drive starts and every time the road changes
                         if ((now - lastRoadLookupMs) >= 15_000L) {
                             lastRoadLookupMs = now
@@ -899,7 +944,7 @@ class DashboardViewModel @Inject constructor(
                                 if (isTwoMinTrigger || isRoadChanged) {
                                     if (isTwoMinTrigger) twoMinuteRoadAnnounced = true
                                     lastAnnouncedRoadName = road
-                                    val headingDir = hub.compassReading.cardinal
+                                    val headingDir = CompassHeadingEstimator.toFullDirectionName(hub.compassReading.cardinal)
                                     val spoken = if (isTwoMinTrigger) {
                                         "You are driving on $road, heading $headingDir."
                                     } else {
@@ -1998,9 +2043,10 @@ class DashboardViewModel @Inject constructor(
 
         val fix = locationTracker.state.value.currentFix
         val dest = navigationRepo.state.value.destinationName
+        tripStartAreaLabel = fix?.let { resolveGeneralPlaceName(it.latitude, it.longitude) }
         tripActivityLogger.startTripLog(
             startedAtMillis = started,
-            originLabel = "Current Location",
+            originLabel = tripStartAreaLabel ?: "Start Location",
             destinationLabel = dest,
             latitude = fix?.latitude,
             longitude = fix?.longitude,
@@ -2154,6 +2200,13 @@ class DashboardViewModel @Inject constructor(
             val finalDistKm = if (gpsKm >= 0.02) gpsKm else obdTripDistanceFlow.value
             val capturedEcuSamples = ecuSamplesFlow.value
             val prevBaseline = EcuPerformanceEngine.parseBaseline(uiState.value.settings.ecuBaselineJson)
+            val endFix = locationTracker.state.value.currentFix
+            val capturedOrigin = tripStartAreaLabel
+            val resolvedEndArea = endFix?.let { resolveGeneralPlaceName(it.latitude, it.longitude) }
+            val resolvedDest = navigationRepo.state.value.destinationName
+                ?.takeIf { it.isNotBlank() && !it.equals("Local Drive", ignoreCase = true) }
+                ?: resolvedEndArea
+                ?: "Local Drive"
             viewModelScope.launch {
                 prefsRepo.setLastTripDistanceKm(finalDistKm)
                 if (capturedEcuSamples.size >= 5) {
@@ -2168,8 +2221,8 @@ class DashboardViewModel @Inject constructor(
                 }
                 tripRepo.saveCompletedTrip(
                     tripId = tripId,
-                    originLabel = "Current Location",
-                    destinationLabel = destLabel,
+                    originLabel = capturedOrigin ?: "Start Location",
+                    destinationLabel = resolvedDest,
                     startedAtMillis = started,
                     endedAtMillis = ended,
                     distanceKm = distanceKm,
@@ -2381,6 +2434,50 @@ class DashboardViewModel @Inject constructor(
                 ?: addr.locality?.takeIf { it.isNotBlank() }
             road?.trim()
         }.getOrNull()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun resolveGeneralPlaceName(lat: Double, lng: Double): String? {
+        val geocoded = runCatching {
+            if (!android.location.Geocoder.isPresent()) return@runCatching null
+            val geocoder = android.location.Geocoder(appContext, java.util.Locale.getDefault())
+            val addr = geocoder.getFromLocation(lat, lng, 1)?.firstOrNull() ?: return@runCatching null
+            val area = addr.subLocality?.takeIf { it.isNotBlank() }
+                ?: addr.locality?.takeIf { it.isNotBlank() }
+                ?: addr.subAdminArea?.takeIf { it.isNotBlank() }
+                ?: addr.thoroughfare?.takeIf { it.isNotBlank() && !it.equals("Unnamed Road", ignoreCase = true) }
+            area?.trim()
+        }.getOrNull()
+        if (!geocoded.isNullOrBlank()) return geocoded
+
+        // Offline Kenyan locality fallback based on nearest known zone
+        val knownZones = listOf(
+            Triple("Nairobi West", -1.3095, 36.8240),
+            Triple("Lang'ata", -1.3450, 36.7660),
+            Triple("Karen", -1.3192, 36.7073),
+            Triple("Kilimani", -1.2925, 36.7830),
+            Triple("Westlands", -1.2676, 36.8110),
+            Triple("Nairobi CBD", -1.2864, 36.8172),
+            Triple("Upper Hill", -1.2980, 36.8140),
+            Triple("Kasarani", -1.2219, 36.8965),
+            Triple("Ruiru", -1.1489, 36.9614),
+            Triple("Thika", -1.0332, 37.0693),
+            Triple("Kiambu", -1.1714, 36.8356),
+            Triple("Mombasa", -4.0435, 39.6682),
+            Triple("Nakuru", -0.3031, 36.0800),
+            Triple("Kisumu", -0.0917, 34.7680),
+            Triple("Eldoret", 0.5143, 35.2698),
+        )
+        var bestName: String? = null
+        var bestDistDeg = Double.MAX_VALUE
+        for ((name, zLat, zLng) in knownZones) {
+            val d = kotlin.math.hypot(lat - zLat, lng - zLng)
+            if (d < bestDistDeg) {
+                bestDistDeg = d
+                bestName = name
+            }
+        }
+        return if (bestDistDeg <= 0.18) bestName else null
     }
 
     val kenyanCityPresets get() = navigationRepo.kenyanCities

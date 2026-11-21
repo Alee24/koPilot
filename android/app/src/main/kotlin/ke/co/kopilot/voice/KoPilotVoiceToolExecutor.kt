@@ -227,7 +227,8 @@ class KoPilotVoiceToolExecutor @Inject constructor(
 
             val summary = buildString {
                 val speedKmh = fix?.speedKmh?.toInt() ?: tel.vehicleSpeedKmh
-                append("Heading ${compass.cardinal} at ${compass.degrees} degrees. ")
+                val fullCompassDir = ke.co.kopilot.feature.sensors.CompassHeadingEstimator.toFullDirectionName(compass.cardinal)
+                append("Heading $fullCompassDir at ${compass.degrees} degrees. ")
                 if (speedKmh != null) append("Speed $speedKmh kilometres per hour. ")
                 append("Road surface score is ${stats.averageRoadScore} out of 100 with ${stats.potholeBumpCount} bumps detected. ")
                 append("Driving safety score is ${intel.safetyScore}, fuel efficiency score is ${intel.fuelEfficiencyScore}. ")

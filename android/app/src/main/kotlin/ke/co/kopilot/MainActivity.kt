@@ -96,6 +96,7 @@ import ke.co.kopilot.intelligence.VehicleIntelligenceScreen
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import ke.co.kopilot.ecu.EcuPerformanceDashboardScreen
+import ke.co.kopilot.ecu.FuelEfficiencyAnalysisScreen
 import ke.co.kopilot.maintenance.VehicleMaintenanceScreen
 import ke.co.kopilot.safety.AccidentDiagnosticsScreen
 import ke.co.kopilot.safety.DrivingSafetyMonitoringService
@@ -454,6 +455,7 @@ class MainActivity : ComponentActivity() {
                                         onOpenSmartwatchHealth = { navController.navigate("smartwatch_health") },
                                         onOpenSystemStatus = { navController.navigate("system_status") },
                                         onOpenMaintenance = { navController.navigate("vehicle_maintenance") },
+                                        onOpenFuelEfficiency = { navController.navigate("fuel_efficiency") },
                                         onCallEmergency = { phone ->
                                             startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
                                         },
@@ -551,6 +553,13 @@ class MainActivity : ComponentActivity() {
                                             }
                                             startActivity(Intent.createChooser(share, "Export Vehicle Health Report"))
                                         },
+                                    )
+                                }
+                                composable("fuel_efficiency") {
+                                    FuelEfficiencyAnalysisScreen(
+                                        state = dashState,
+                                        onOpenEcuPerformance = { navController.navigate("ecu_performance") },
+                                        onBack = { navController.popBackStack() },
                                     )
                                 }
                                 composable("ecu_performance") {

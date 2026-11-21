@@ -900,6 +900,25 @@ class SmartwatchConnectionManager @Inject constructor(
         }
     }
 
+    @SuppressLint("MissingPermission")
+    fun refreshLiveTelemetryAndHeartRate() {
+        val gatt = activeGatt ?: return
+        runCatching {
+            val hrChar = gatt.getService(UUID_HEART_RATE_SERVICE)
+                ?.getCharacteristic(UUID_HEART_RATE_MEASUREMENT)
+            if (hrChar != null && !_diagnostics.value.heartRateNotificationsSubscribed) {
+                subscribeToHeartRateNotifications(gatt, hrChar)
+            }
+            val batteryChar = gatt.getService(UUID_BATTERY_SERVICE)
+                ?.getCharacteristic(UUID_BATTERY_LEVEL)
+            if (batteryChar != null) {
+                pendingReadQueue.addLast(batteryChar)
+                drainNextCharacteristicRead(gatt)
+            }
+            gatt.readRemoteRssi()
+        }
+    }
+
     private fun persistDiscoveredDeviceMetadata(
         address: String,
         name: String,

@@ -166,6 +166,7 @@ fun DashboardScreen(
     onOpenSmartwatchHealth: () -> Unit = {},
     onOpenSystemStatus: () -> Unit = {},
     onOpenMaintenance: () -> Unit = {},
+    onOpenFuelEfficiency: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -403,6 +404,7 @@ fun DashboardScreen(
                 onOpenNavigation = onOpenNavigation,
                 onOpenSmartwatchHealth = onOpenSmartwatchHealth,
                 onOpenMaintenance = onOpenMaintenance,
+                onOpenFuelEfficiency = onOpenFuelEfficiency,
                 onToggleFullscreenCamera = { isCameraFullscreen = true },
             )
         } else {
@@ -428,6 +430,7 @@ fun DashboardScreen(
                 onOpenLiveMap = onOpenLiveMap,
                 onOpenSmartwatchHealth = onOpenSmartwatchHealth,
                 onOpenMaintenance = onOpenMaintenance,
+                onOpenFuelEfficiency = onOpenFuelEfficiency,
                 onToggleFullscreenCamera = { isCameraFullscreen = true },
             )
         }
@@ -1527,6 +1530,7 @@ private fun KoPilotCockpitLanding(
     onOpenLiveMap: () -> Unit,
     onOpenSmartwatchHealth: () -> Unit = {},
     onOpenMaintenance: () -> Unit = {},
+    onOpenFuelEfficiency: () -> Unit = {},
     onToggleFullscreenCamera: () -> Unit,
 ) {
     val intel = state.intelligenceState
@@ -1931,7 +1935,7 @@ private fun KoPilotCockpitLanding(
                 }
 
                 Surface(
-                    onClick = onOpenDrivingIntelligence,
+                    onClick = onOpenFuelEfficiency,
                     shape = RoundedCornerShape(12.dp),
                     color = KoPilotClusterTokens.GlassCardSurface,
                     border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
@@ -2271,6 +2275,7 @@ private fun FullBleedArHudLanding(
     onOpenNavigation: () -> Unit,
     onOpenSmartwatchHealth: () -> Unit = {},
     onOpenMaintenance: () -> Unit = {},
+    onOpenFuelEfficiency: () -> Unit = {},
     onToggleFullscreenCamera: () -> Unit,
 ) {
     val hudGlassBg = Color(0xCC071019)
@@ -3029,7 +3034,9 @@ private fun FullBleedArHudLanding(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Row(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onOpenFuelEfficiency() },
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
@@ -3073,7 +3080,9 @@ private fun FullBleedArHudLanding(
                         Spacer(Modifier.width(10.dp))
 
                         Row(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onOpenFuelEfficiency() },
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {

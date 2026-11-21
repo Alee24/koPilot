@@ -210,8 +210,25 @@ fun TripsContent(
                             currentLng = details.routePoints.firstOrNull()?.longitude,
                             routePoints = details.routePoints,
                             destinationLatLng = details.routePoints.lastOrNull(),
-                            destinationName = trip.destinationLabel ?: "Trip End",
+                            originName = "Start: ${trip.originLabel ?: "Start Location"}",
+                            destinationName = "End: ${trip.destinationLabel ?: "Trip End"}",
                             hasLocationPermission = details.routePoints.isNotEmpty(),
+                        )
+                    }
+                    val startPt = details.routePoints.firstOrNull()
+                    val endPt = details.routePoints.lastOrNull()
+                    if (startPt != null) {
+                        Text(
+                            text = "Pinned Start GPS: ${"%.5f".format(startPt.latitude)}, ${"%.5f".format(startPt.longitude)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    if (endPt != null) {
+                        Text(
+                            text = "Pinned End GPS: ${"%.5f".format(endPt.latitude)}, ${"%.5f".format(endPt.longitude)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary,
                         )
                     }
                     Text(
@@ -388,7 +405,8 @@ fun TripsContent(
                                     currentLng = details.routePoints.first().longitude,
                                     routePoints = details.routePoints,
                                     destinationLatLng = details.routePoints.last(),
-                                    destinationName = trip.destinationLabel ?: "Trip End",
+                                    originName = "Start: ${trip.originLabel ?: "Start Location"}",
+                                    destinationName = "End: ${trip.destinationLabel ?: "Trip End"}",
                                     hasLocationPermission = true,
                                 )
                                 IconButton(

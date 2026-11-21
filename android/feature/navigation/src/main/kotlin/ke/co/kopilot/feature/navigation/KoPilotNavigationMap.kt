@@ -43,6 +43,7 @@ fun KoPilotNavigationMap(
     destinationName: String?,
     hasLocationPermission: Boolean,
     modifier: Modifier = Modifier,
+    originName: String? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -105,7 +106,7 @@ fun KoPilotNavigationMap(
                 if (currentGeo != null && hasLocationPermission) {
                     val currentMarker = Marker(view).apply {
                         position = currentGeo
-                        title = "Your Vehicle"
+                        title = originName ?: "Your Vehicle"
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
                     }
                     view.overlays.add(currentMarker)
