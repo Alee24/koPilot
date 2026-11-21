@@ -716,9 +716,45 @@ class DashboardViewModel @Inject constructor(
                             tripBreadcrumbFlow.value = (tripBreadcrumbFlow.value + pt).takeLast(500)
                             tripActivityLogger.logActivity(
                                 type = "GPS_TRACK",
-                                details = "${"%.6f".format(java.util.Locale.US, fix.latitude)},${"%.6f".format(java.util.Locale.US, fix.longitude)}",
+                                details = buildString {
+                                    append("${"%.6f".format(java.util.Locale.US, fix.latitude)},${"%.6f".format(java.util.Locale.US, fix.longitude)}")
+                                    fix.speedKmh?.let { append(" spd=${"%.1f".format(java.util.Locale.US, it)}") }
+                                    fix.horizontalAccuracyMeters?.let { append(" acc=${"%.1f".format(java.util.Locale.US, it)}") }
+                                    fix.bearingDegrees?.let { append(" brg=${"%.0f".format(java.util.Locale.US, it)}") }
+                                },
                                 timestampMillis = now,
                             )
+                            if (obdConnected) {
+                                tripActivityLogger.logActivity(
+                                    type = "OBD_SAMPLE",
+                                    details = buildString {
+                                        tel.engineRpm?.let { append("RPM=$it ") }
+                                        tel.vehicleSpeedKmh?.let { append("SPD=$it ") }
+                                        tel.coolantTempC?.let { append("CLT=$it ") }
+                                        tel.mafGramsPerSec?.let { append("MAF=${"%.2f".format(java.util.Locale.US, it)} ") }
+                                        (tel.controlModuleVoltageV ?: tel.adapterVoltageV)?.let { append("VOLT=${"%.1f".format(java.util.Locale.US, it)} ") }
+                                        tel.engineLoadPct?.let { append("LOAD=${"%.0f".format(java.util.Locale.US, it)} ") }
+                                        tel.throttlePositionPct?.let { append("THR=${"%.0f".format(java.util.Locale.US, it)} ") }
+                                        tel.intakeAirTempC?.let { append("IAT=$it") }
+                                    }.trim(),
+                                    timestampMillis = now,
+                                )
+                            }
+                            heartRateRepository.state.value.currentBpm?.let { bpm ->
+                                tripActivityLogger.logActivity(
+                                    type = "HR_SAMPLE",
+                                    details = "BPM=$bpm",
+                                    timestampMillis = now,
+                                )
+                            }
+                            val w = weatherRepo.state.value
+                            if (w.available) {
+                                tripActivityLogger.logActivity(
+                                    type = "WEATHER",
+                                    details = "Cond=${w.conditionSummary} | Temp=${w.temperatureC?.toInt() ?: "--"}°C | Source=${if (w.isStaleOfflineCache) "Cached" else "Open-Meteo"}",
+                                    timestampMillis = now,
+                                )
+                            }
                         }
 
                         // Resolve current road name every 15s during active drive;

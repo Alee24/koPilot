@@ -163,6 +163,15 @@ fun TripsContent(
     val activeLineCount by viewModel.activeLineCount.collectAsStateWithLifecycle()
     var viewingFile by remember { mutableStateOf<File?>(null) }
     var fullMapTrip by remember { mutableStateOf<Pair<TripEntity, ParsedTripDetails>?>(null) }
+    var activeReport by remember { mutableStateOf<TripIntelligenceReport?>(null) }
+
+    activeReport?.let { rep ->
+        TripIntelligenceReportScreen(
+            report = rep,
+            onBack = { activeReport = null },
+        )
+        return
+    }
 
     val dateFormatter = remember { SimpleDateFormat("EEE, dd MMM yyyy • HH:mm", Locale.getDefault()) }
 
@@ -492,8 +501,14 @@ fun TripsContent(
                             )
                         }
 
-                        if (logFile != null) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(onClick = { activeReport = TripReportBuilder.build(trip, logFile) }) {
+                                Text("Intelligence Report")
+                            }
+                            if (logFile != null) {
                                 if (details.routePoints.isNotEmpty()) {
                                     OutlinedButton(onClick = { fullMapTrip = trip to details }) {
                                         Text("Full Map")
@@ -502,7 +517,7 @@ fun TripsContent(
                                 OutlinedButton(onClick = { viewingFile = logFile }) {
                                     Text("View Log")
                                 }
-                                Button(onClick = { shareLogFile(logFile) }) {
+                                OutlinedButton(onClick = { shareLogFile(logFile) }) {
                                     Text("Share")
                                 }
                             }
