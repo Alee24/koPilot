@@ -169,6 +169,7 @@ fun DashboardScreen(
     onOpenMaintenance: () -> Unit = {},
     onOpenFuelEfficiency: () -> Unit = {},
     onOpenSensorFusion: () -> Unit = {},
+    onOpenEcuPerformance: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -355,6 +356,22 @@ fun DashboardScreen(
             onOpenSystemStatus = {
                 showToolsDialog = false
                 onOpenSystemStatus()
+            },
+            onOpenEcuPerformance = {
+                showToolsDialog = false
+                onOpenEcuPerformance()
+            },
+            onOpenFuelEfficiency = {
+                showToolsDialog = false
+                onOpenFuelEfficiency()
+            },
+            onOpenSensorFusion = {
+                showToolsDialog = false
+                onOpenSensorFusion()
+            },
+            onOpenMaintenance = {
+                showToolsDialog = false
+                onOpenMaintenance()
             },
             onToggleMuteAlerts = viewModel::toggleAlertsMute,
             onCallEmergency = {
@@ -4172,6 +4189,10 @@ private fun DashboardToolsDialog(
     onOpenPerformanceThermal: () -> Unit = {},
     onOpenSmartwatchHealth: () -> Unit = {},
     onOpenSystemStatus: () -> Unit = {},
+    onOpenEcuPerformance: () -> Unit = {},
+    onOpenFuelEfficiency: () -> Unit = {},
+    onOpenSensorFusion: () -> Unit = {},
+    onOpenMaintenance: () -> Unit = {},
     onToggleMuteAlerts: () -> Unit,
     onCallEmergency: () -> Unit,
 ) {
@@ -4271,6 +4292,9 @@ private fun DashboardToolsDialog(
                         MenuDrawerItem("Live Intelligence", Icons.Default.Explore, onOpenDrivingIntelligence)
                         MenuDrawerItem("Ask Car AI", Icons.Default.DirectionsCar, onOpenVehicleIntelligence)
                         MenuDrawerItem("OBD-II Gauges", Icons.Default.DirectionsCar, onOpenObd)
+                        MenuDrawerItem("ECU Performance Intelligence", Icons.Default.Explore, onOpenEcuPerformance)
+                        MenuDrawerItem("Fuel Efficiency Analysis", Icons.Default.LocalGasStation, onOpenFuelEfficiency)
+                        MenuDrawerItem("Vehicle Maintenance & Service", Icons.Default.DirectionsCar, onOpenMaintenance)
                         MenuDrawerItem("Engine Sound Studio", Icons.AutoMirrored.Filled.VolumeUp, onOpenSoundStudio)
 
                         androidx.compose.material3.HorizontalDivider(color = KoPilotClusterTokens.ElevatedSurface)
@@ -4279,6 +4303,7 @@ private fun DashboardToolsDialog(
                         MenuDrawerItem("System Status & Briefing", Icons.Default.FactCheck, onOpenSystemStatus)
                         MenuDrawerItem("Smartwatch & Health", Icons.Default.MyLocation, onOpenSmartwatchHealth)
                         MenuDrawerItem("Sensors Hub", Icons.Default.Explore, onOpenSensors)
+                        MenuDrawerItem("Sensor Fusion & Terrain", Icons.Default.Terrain, onOpenSensorFusion)
                         MenuDrawerItem("Performance & Thermal", Icons.Default.Explore, onOpenPerformanceThermal)
                         MenuDrawerItem("Offline AI Diagnostics", Icons.Default.Videocam, onOpenVisionDiag)
                         MenuDrawerItem("Road Signs Database", Icons.Default.Map, onOpenSignsDb)

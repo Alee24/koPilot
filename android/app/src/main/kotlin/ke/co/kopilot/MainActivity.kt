@@ -458,6 +458,7 @@ class MainActivity : ComponentActivity() {
                                         onOpenMaintenance = { navController.navigate("vehicle_maintenance") },
                                         onOpenFuelEfficiency = { navController.navigate("fuel_efficiency") },
                                         onOpenSensorFusion = { navController.navigate("sensor_fusion") },
+                                        onOpenEcuPerformance = { navController.navigate("ecu_performance") },
                                         onCallEmergency = { phone ->
                                             startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
                                         },

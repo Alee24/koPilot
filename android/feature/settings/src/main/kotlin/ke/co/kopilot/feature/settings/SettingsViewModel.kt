@@ -116,6 +116,9 @@ class SettingsViewModel @Inject constructor(
     fun setAlertWeatherEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertWeatherEnabled(enabled) }
     fun setAlertNumberPlatesEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertNumberPlatesEnabled(enabled) }
     fun setAlertRoadQualityEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertRoadQualityEnabled(enabled) }
+    fun setAlertSmartwatchEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertSmartwatchEnabled(enabled) }
+    fun setAlertTerrainEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertTerrainEnabled(enabled) }
+    fun setAlertEcuEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setAlertEcuEnabled(enabled) }
     fun addWatchedPlate(plate: String) = viewModelScope.launch { prefsRepo.addWatchedPlate(plate) }
     fun removeWatchedPlate(plate: String) = viewModelScope.launch { prefsRepo.removeWatchedPlate(plate) }
     fun setSensorCameraEnabled(enabled: Boolean) = viewModelScope.launch { prefsRepo.setSensorCameraEnabled(enabled) }

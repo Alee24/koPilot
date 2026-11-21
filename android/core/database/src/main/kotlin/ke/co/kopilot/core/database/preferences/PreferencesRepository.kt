@@ -61,6 +61,9 @@ data class KoPilotSettings(
     val alertWeatherEnabled: Boolean = true,
     val alertNumberPlatesEnabled: Boolean = true,
     val alertRoadQualityEnabled: Boolean = true,
+    val alertSmartwatchEnabled: Boolean = true,
+    val alertTerrainEnabled: Boolean = true,
+    val alertEcuEnabled: Boolean = true,
     val watchedPlatesCsv: String = "",
     // Sensors (activated only when Start Driving is pressed)
     val sensorCameraEnabled: Boolean = true,
@@ -153,6 +156,9 @@ class PreferencesRepository @Inject constructor(
             alertWeatherEnabled = prefs[KEY_ALERT_WEATHER] ?: true,
             alertNumberPlatesEnabled = prefs[KEY_ALERT_NUMBER_PLATES] ?: true,
             alertRoadQualityEnabled = prefs[KEY_ALERT_ROAD_QUALITY] ?: true,
+            alertSmartwatchEnabled = prefs[KEY_ALERT_SMARTWATCH] ?: true,
+            alertTerrainEnabled = prefs[KEY_ALERT_TERRAIN] ?: true,
+            alertEcuEnabled = prefs[KEY_ALERT_ECU] ?: true,
             watchedPlatesCsv = prefs[KEY_WATCHED_PLATES] ?: "",
             sensorCameraEnabled = prefs[KEY_SENSOR_CAMERA] ?: true,
             sensorGpsEnabled = prefs[KEY_SENSOR_GPS] ?: true,
@@ -240,6 +246,9 @@ class PreferencesRepository @Inject constructor(
     suspend fun setTripHistoryEnabled(enabled: Boolean) = edit { it[KEY_TRIP_HISTORY] = enabled }
     suspend fun setAlertNumberPlatesEnabled(enabled: Boolean) = edit { it[KEY_ALERT_NUMBER_PLATES] = enabled }
     suspend fun setAlertRoadQualityEnabled(enabled: Boolean) = edit { it[KEY_ALERT_ROAD_QUALITY] = enabled }
+    suspend fun setAlertSmartwatchEnabled(enabled: Boolean) = edit { it[KEY_ALERT_SMARTWATCH] = enabled }
+    suspend fun setAlertTerrainEnabled(enabled: Boolean) = edit { it[KEY_ALERT_TERRAIN] = enabled }
+    suspend fun setAlertEcuEnabled(enabled: Boolean) = edit { it[KEY_ALERT_ECU] = enabled }
     suspend fun addWatchedPlate(rawPlate: String) = edit { prefs ->
         val clean = rawPlate.uppercase().replace(Regex("[^A-Z0-9\\s]"), "").replace(Regex("\\s+"), " ").trim()
         if (clean.length < 4) return@edit
@@ -371,5 +380,8 @@ class PreferencesRepository @Inject constructor(
         val KEY_SERVICE_HISTORY = stringPreferencesKey("service_history_json")
         val KEY_SERVICE_THRESHOLDS = stringPreferencesKey("service_reminder_thresholds_csv")
         val KEY_ECU_BASELINE = stringPreferencesKey("ecu_baseline_json")
+        val KEY_ALERT_SMARTWATCH = booleanPreferencesKey("alert_smartwatch_enabled")
+        val KEY_ALERT_TERRAIN = booleanPreferencesKey("alert_terrain_enabled")
+        val KEY_ALERT_ECU = booleanPreferencesKey("alert_ecu_enabled")
     }
 }

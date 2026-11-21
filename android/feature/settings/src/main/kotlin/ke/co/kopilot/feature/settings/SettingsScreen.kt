@@ -326,6 +326,9 @@ fun SettingsScreen(
                 SettingSwitch("Overspeed & Speed Limit Alerts", settings.alertSpeedLimitEnabled, viewModel::setAlertSpeedLimitEnabled)
                 SettingSwitch("Weather & Headlight Advisories", settings.alertWeatherEnabled, viewModel::setAlertWeatherEnabled)
                 SettingSwitch("Road Bump & Rough Road Alerts", settings.alertRoadQualityEnabled, viewModel::setAlertRoadQualityEnabled)
+                SettingSwitch("Smartwatch Connection & Heart Rate Alerts", settings.alertSmartwatchEnabled, viewModel::setAlertSmartwatchEnabled)
+                SettingSwitch("Terrain & Uphill/Downhill Voice Alerts", settings.alertTerrainEnabled, viewModel::setAlertTerrainEnabled)
+                SettingSwitch("ECU Performance & Fuel Alerts", settings.alertEcuEnabled, viewModel::setAlertEcuEnabled)
                 SettingSwitch("Play Chime Before Alerts", settings.alertChimeEnabled, viewModel::setAlertChimeEnabled)
             }
 

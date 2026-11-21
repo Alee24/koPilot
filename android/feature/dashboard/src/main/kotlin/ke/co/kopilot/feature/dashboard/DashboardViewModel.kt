@@ -294,6 +294,7 @@ class DashboardViewModel @Inject constructor(
     private var lastEcuSampleMs = 0L
     private var tripStartAreaLabel: String? = null
     private var watchConnectedAnnounced = false
+    private var lastWatchConnectedAlertMs = 0L
     private val sensorFusionEngine = SensorFusionEngine()
     private val sensorFusionFlow = MutableStateFlow(SensorFusionSnapshot())
     private var lastTerrainVoiceAnnouncementMs = 0L
@@ -436,24 +437,26 @@ class DashboardViewModel @Inject constructor(
                 }
                 if (!watchConnectedAnnounced) {
                     watchConnectedAnnounced = true
-                    (speechSink as? AndroidTtsSpeechSink)?.playConnectionBeep()
                     smartwatchConnectionManager.refreshLiveTelemetryAndHeartRate()
-                    kotlinx.coroutines.delay(700L)
-                    val hrBpm = heartRateRepository.state.value.currentBpm
-                    val spokenMsg = if (hrBpm != null && hrBpm > 0) {
-                        "Smartwatch connected. Heart rate is $hrBpm beats per minute."
-                    } else {
-                        "Smartwatch connected. Checking heart rate."
-                    }
+                    val nowWatchMs = System.currentTimeMillis()
                     val s = uiState.value.settings
-                    if (!s.alertsMuted) {
+                    if (s.alertSmartwatchEnabled && !s.alertsMuted && (nowWatchMs - lastWatchConnectedAlertMs) >= 120_000L) {
+                        lastWatchConnectedAlertMs = nowWatchMs
+                        (speechSink as? AndroidTtsSpeechSink)?.playConnectionBeep()
+                        kotlinx.coroutines.delay(700L)
+                        val hrBpm = heartRateRepository.state.value.currentBpm
+                        val spokenMsg = if (hrBpm != null && hrBpm > 0) {
+                            "Smartwatch connected. Heart rate is $hrBpm beats per minute."
+                        } else {
+                            "Smartwatch connected. Heart rate monitor active."
+                        }
                         alertCoordinator.submit(
                             alert = AlertMessage(
                                 id = UUID.randomUUID().toString(),
                                 priority = AlertPriority.VEHICLE_DIAGNOSTIC,
                                 spokenText = spokenMsg,
                                 displayText = hrBpm?.let { "Smartwatch connected • $it BPM" } ?: "Smartwatch connected",
-                                dedupKey = "watch_connected_${System.currentTimeMillis() / 10000L}",
+                                dedupKey = "watch_connected_${diag.connectedAddress ?: "watch"}",
                                 timestampMillis = System.currentTimeMillis(),
                             ),
                             speechRate = s.voiceSpeed,
@@ -666,6 +669,7 @@ class DashboardViewModel @Inject constructor(
 
                     val sTerrain = uiState.value.settings
                     if (isDriving.value &&
+                        sTerrain.alertTerrainEnabled &&
                         !sTerrain.alertsMuted &&
                         pendingAccidentState.value == null &&
                         (now - lastTerrainVoiceAnnouncementMs) >= 45_000L &&
@@ -1150,6 +1154,7 @@ class DashboardViewModel @Inject constructor(
             obdManager.liveTelemetry.collect { tel ->
                 if (!obdManager.state.value.obdConnected) return@collect
                 val s = uiState.value.settings
+                if (!s.alertEcuEnabled) return@collect
                 val now = System.currentTimeMillis()
                 if ((now - lastEcuAlertMs) < 25_000L) return@collect
 
