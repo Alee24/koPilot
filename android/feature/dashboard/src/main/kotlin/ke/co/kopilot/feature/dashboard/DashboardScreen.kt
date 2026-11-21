@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LocalGasStation
+import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
@@ -167,6 +168,7 @@ fun DashboardScreen(
     onOpenSystemStatus: () -> Unit = {},
     onOpenMaintenance: () -> Unit = {},
     onOpenFuelEfficiency: () -> Unit = {},
+    onOpenSensorFusion: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -405,6 +407,7 @@ fun DashboardScreen(
                 onOpenSmartwatchHealth = onOpenSmartwatchHealth,
                 onOpenMaintenance = onOpenMaintenance,
                 onOpenFuelEfficiency = onOpenFuelEfficiency,
+                onOpenSensorFusion = onOpenSensorFusion,
                 onToggleFullscreenCamera = { isCameraFullscreen = true },
             )
         } else {
@@ -431,6 +434,7 @@ fun DashboardScreen(
                 onOpenSmartwatchHealth = onOpenSmartwatchHealth,
                 onOpenMaintenance = onOpenMaintenance,
                 onOpenFuelEfficiency = onOpenFuelEfficiency,
+                onOpenSensorFusion = onOpenSensorFusion,
                 onToggleFullscreenCamera = { isCameraFullscreen = true },
             )
         }
@@ -1531,6 +1535,7 @@ private fun KoPilotCockpitLanding(
     onOpenSmartwatchHealth: () -> Unit = {},
     onOpenMaintenance: () -> Unit = {},
     onOpenFuelEfficiency: () -> Unit = {},
+    onOpenSensorFusion: () -> Unit = {},
     onToggleFullscreenCamera: () -> Unit,
 ) {
     val intel = state.intelligenceState
@@ -1838,16 +1843,20 @@ private fun KoPilotCockpitLanding(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Left Circular Speedometer
-            Surface(
-                onClick = {
-                    if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
-                },
-                shape = RoundedCornerShape(14.dp),
-                color = KoPilotClusterTokens.GlassCardSurface,
-                border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
-                modifier = Modifier.size(104.dp),
+            // Left Circular Speedometer + Always-Visible Terrain Indicator
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                Surface(
+                    onClick = {
+                        if (state.isDrivingSessionActive) viewModel.endTrip() else viewModel.startDriving()
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    color = KoPilotClusterTokens.GlassCardSurface,
+                    border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+                    modifier = Modifier.size(104.dp),
+                ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                     Canvas(modifier = Modifier.fillMaxSize().padding(10.dp)) {
                         val stroke = 8.dp.toPx()
@@ -1887,6 +1896,12 @@ private fun KoPilotCockpitLanding(
                         )
                     }
                 }
+            }
+            CompactTerrainPill(
+                snapshot = state.sensorFusionSnapshot,
+                isStopped = speedKmh < 3,
+                onClick = onOpenSensorFusion,
+            )
             }
 
             // Right Stacked Vehicle Health + Fuel Cards
@@ -2276,6 +2291,7 @@ private fun FullBleedArHudLanding(
     onOpenSmartwatchHealth: () -> Unit = {},
     onOpenMaintenance: () -> Unit = {},
     onOpenFuelEfficiency: () -> Unit = {},
+    onOpenSensorFusion: () -> Unit = {},
     onToggleFullscreenCamera: () -> Unit,
 ) {
     val hudGlassBg = Color(0xCC071019)
@@ -2991,6 +3007,12 @@ private fun FullBleedArHudLanding(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = KoPilotClusterTokens.PrimaryAccent,
                                 fontWeight = FontWeight.Bold,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            CompactTerrainPill(
+                                snapshot = state.sensorFusionSnapshot,
+                                isStopped = speedKmh < 3,
+                                onClick = onOpenSensorFusion,
                             )
                         }
                     }
@@ -3737,6 +3759,8 @@ private fun TripsHistoryDialog(
     )
 }
 
+
+
 @Composable
 private fun TripLogViewerDialog(
     file: File,
@@ -3860,6 +3884,8 @@ private fun DestinationPickerDialog(
         },
     )
 }
+
+
 
 @Composable
 private fun VisionDiagnosticsDialog(
@@ -4033,6 +4059,8 @@ private fun VisionDiagnosticsDialog(
     )
 }
 
+
+
 @Composable
 private fun ObdLiveDashboardDialog(
     connectionStateName: String,
@@ -4122,6 +4150,8 @@ private fun ObdLiveDashboardDialog(
         },
     )
 }
+
+
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -4385,4 +4415,52 @@ private fun RoadSignsDatabaseDialog(
             TextButton(onClick = onDismiss) { Text("Close") }
         },
     )
+}
+
+@Composable
+private fun CompactTerrainPill(
+    snapshot: ke.co.kopilot.feature.sensors.fusion.SensorFusionSnapshot,
+    isStopped: Boolean,
+    onClick: () -> Unit,
+) {
+    val (label, tint) = when (snapshot.terrainCategory) {
+        ke.co.kopilot.feature.sensors.fusion.TerrainCategory.FLAT ->
+            "Flat" to KoPilotClusterTokens.SmoothRoad
+        ke.co.kopilot.feature.sensors.fusion.TerrainCategory.MILD_UPHILL ->
+            "Mild Uphill" to KoPilotClusterTokens.SecondaryAccent
+        ke.co.kopilot.feature.sensors.fusion.TerrainCategory.STEEP_UPHILL ->
+            "Steep Uphill" to KoPilotClusterTokens.ModerateRoad
+        ke.co.kopilot.feature.sensors.fusion.TerrainCategory.MILD_DOWNHILL ->
+            "Mild Downhill" to KoPilotClusterTokens.SecondaryAccent
+        ke.co.kopilot.feature.sensors.fusion.TerrainCategory.STEEP_DOWNHILL ->
+            "Steep Downhill" to KoPilotClusterTokens.ModerateRoad
+        ke.co.kopilot.feature.sensors.fusion.TerrainCategory.UNCERTAIN ->
+            "Terrain Uncertain" to KoPilotClusterTokens.SecondaryText
+    }
+    Surface(
+        onClick = { if (isStopped) onClick() },
+        shape = RoundedCornerShape(8.dp),
+        color = KoPilotClusterTokens.GlassCardSurface,
+        border = BorderStroke(1.dp, tint.copy(alpha = 0.45f)),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.Terrain,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(13.dp),
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = tint,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        }
+    }
 }

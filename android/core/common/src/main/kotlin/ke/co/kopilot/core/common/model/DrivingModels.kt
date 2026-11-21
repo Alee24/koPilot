@@ -15,6 +15,9 @@ data class GpsFix(
     val bearingDegrees: Float?,
     val timestampMillis: Long,
     val isStale: Boolean = false,
+    val altitudeMeters: Double? = null,
+    val verticalAccuracyMeters: Float? = null,
+    val monotonicMillis: Long = 0L,
 ) {
     val speedKmh: Float?
         get() = speedMps?.times(3.6f)

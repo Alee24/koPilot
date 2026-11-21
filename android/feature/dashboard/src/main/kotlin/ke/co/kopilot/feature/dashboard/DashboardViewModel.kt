@@ -43,6 +43,11 @@ import ke.co.kopilot.feature.location.SpeedZone
 import ke.co.kopilot.feature.location.SpeedZoneMonitor
 import ke.co.kopilot.feature.sensors.AccidentAssessment
 import ke.co.kopilot.feature.sensors.CompassHeadingEstimator
+import ke.co.kopilot.feature.sensors.fusion.FusionAlertSeverity
+import ke.co.kopilot.feature.sensors.fusion.SensorFusionEngine
+import ke.co.kopilot.feature.sensors.fusion.SensorFusionInput
+import ke.co.kopilot.feature.sensors.fusion.SensorFusionSnapshot
+import ke.co.kopilot.feature.sensors.fusion.TerrainCategory
 import ke.co.kopilot.feature.sensors.AccidentDetectionEngine
 import ke.co.kopilot.feature.sensors.AccidentEventClass
 import ke.co.kopilot.feature.sensors.AccidentSensitivityProfile
@@ -151,6 +156,7 @@ data class DashboardUiState(
     val ecuSamples: List<EcuSample> = emptyList(),
     val ecuPerformanceAnalysis: EcuPerformanceAnalysis = EcuPerformanceEngine().analyze(emptyList(), 0.0),
     val ecuBaseline: EcuVehicleBaseline = EcuVehicleBaseline(),
+    val sensorFusionSnapshot: SensorFusionSnapshot = SensorFusionSnapshot(),
 )
 
 @HiltViewModel
@@ -288,6 +294,10 @@ class DashboardViewModel @Inject constructor(
     private var lastEcuSampleMs = 0L
     private var tripStartAreaLabel: String? = null
     private var watchConnectedAnnounced = false
+    private val sensorFusionEngine = SensorFusionEngine()
+    private val sensorFusionFlow = MutableStateFlow(SensorFusionSnapshot())
+    private var lastTerrainVoiceAnnouncementMs = 0L
+    private var lastAnnouncedTerrainCategory: TerrainCategory? = null
     private val tripFuelUsedFlow = MutableStateFlow<Double?>(null)
     private var lastObdSpeedIntegrateMs = 0L
     private var lastFuelIntegrateMs = 0L
@@ -385,6 +395,7 @@ class DashboardViewModel @Inject constructor(
             ecuSamples = ecuSamplesFlow.value,
             ecuPerformanceAnalysis = ecuAnalysis,
             ecuBaseline = ecuBaseline,
+            sensorFusionSnapshot = sensorFusionFlow.value,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -612,6 +623,87 @@ class DashboardViewModel @Inject constructor(
                         )
                         val cur = ecuSamplesFlow.value
                         ecuSamplesFlow.value = if (cur.size >= 7200) cur.drop(1) + sample else cur + sample
+                    }
+                }
+                // Central Multi-Sensor Fusion & Terrain Intelligence update
+                run {
+                    val monoNow = android.os.SystemClock.elapsedRealtime()
+                    val accelAvail = hub.physicalSensors.any { it.typeName == "Accelerometer" && it.isAvailable }
+                    val gyroAvail = hub.physicalSensors.any { it.typeName == "Gyroscope" && it.isAvailable }
+                    val fusionSnap = sensorFusionEngine.process(
+                        SensorFusionInput(
+                            timestampMillis = now,
+                            monotonicMillis = monoNow,
+                            isTripActive = isDriving.value,
+                            gpsLatitude = fix?.latitude,
+                            gpsLongitude = fix?.longitude,
+                            gpsAltitudeMeters = fix?.altitudeMeters,
+                            gpsHorizontalAccuracyMeters = fix?.horizontalAccuracyMeters,
+                            gpsVerticalAccuracyMeters = fix?.verticalAccuracyMeters,
+                            gpsSpeedKmh = fix?.speedKmh,
+                            gpsTimestampMillis = fix?.timestampMillis,
+                            baroPressureHpa = hub.barometerPressureHpa,
+                            baroTimestampMillis = hub.barometerTimestampMillis,
+                            calibratedPitchDeg = hub.vehicleAxesSample.pitchDeltaDeg,
+                            mountCalibrationStatus = hub.mountCalibrationStatus,
+                            phoneMovedInMount = hub.motionAnalysis.phoneMovementDetected,
+                            verticalVibrationRmsMps2 = hub.motionAnalysis.verticalVibrationRmsMps2,
+                            accelAvailable = accelAvail,
+                            gyroAvailable = gyroAvail,
+                            obdConnected = obdConnected,
+                            obdRpm = tel.engineRpm,
+                            obdLoadPct = tel.engineLoadPct,
+                            obdThrottlePct = tel.throttlePositionPct,
+                            obdSpeedKmh = tel.vehicleSpeedKmh?.toFloat(),
+                            obdCoolantTempC = tel.coolantTempC,
+                            obdMafGps = tel.mafGramsPerSec,
+                            obdMapKpa = tel.mapKpa,
+                            obdTimestampMillis = if (obdConnected) now else null,
+                            isCvtVehicle = true,
+                        ),
+                    )
+                    sensorFusionFlow.value = fusionSnap
+
+                    val sTerrain = uiState.value.settings
+                    if (isDriving.value &&
+                        !sTerrain.alertsMuted &&
+                        pendingAccidentState.value == null &&
+                        (now - lastTerrainVoiceAnnouncementMs) >= 45_000L &&
+                        fusionSnap.terrainCategory != lastAnnouncedTerrainCategory
+                    ) {
+                        val spokenTerrain: String? = when {
+                            fusionSnap.terrainCategory == TerrainCategory.STEEP_UPHILL &&
+                                fusionSnap.supportingSources.size >= 2 ->
+                                if ((fusionSnap.obdLoadPct ?: 0f) >= 65f) {
+                                    "Steep uphill detected. Engine load is elevated."
+                                } else {
+                                    "Steep uphill detected."
+                                }
+                            fusionSnap.terrainCategory == TerrainCategory.STEEP_DOWNHILL &&
+                                fusionSnap.supportingSources.size >= 2 ->
+                                "Descending a sustained slope. Maintain a safe speed."
+                            fusionSnap.terrainCategory == TerrainCategory.UNCERTAIN &&
+                                fusionSnap.conflictingSources.isNotEmpty() ->
+                                "Terrain measurements are temporarily unreliable."
+                            else -> null
+                        }
+                        if (spokenTerrain != null) {
+                            lastTerrainVoiceAnnouncementMs = now
+                            lastAnnouncedTerrainCategory = fusionSnap.terrainCategory
+                            alertCoordinator.submit(
+                                alert = AlertMessage(
+                                    id = UUID.randomUUID().toString(),
+                                    priority = AlertPriority.ROAD_OBSERVATION,
+                                    spokenText = spokenTerrain,
+                                    displayText = "${fusionSnap.terrainCategory.label} • ${fusionSnap.confidence}",
+                                    dedupKey = "terrain_${fusionSnap.terrainCategory.name}",
+                                    timestampMillis = now,
+                                ),
+                                speechRate = sTerrain.voiceSpeed,
+                                language = sTerrain.language,
+                                globalMute = sTerrain.alertsMuted,
+                            )
+                        }
                     }
                 }
                 val signLimit = visionPipeline.state.value.lastObservation?.category?.speedLimitKmh
@@ -2057,6 +2149,9 @@ class DashboardViewModel @Inject constructor(
         obdTripDistanceFlow.value = 0.0
         ecuSamplesFlow.value = emptyList()
         lastEcuSampleMs = 0L
+        sensorFusionEngine.reset()
+        sensorFusionFlow.value = SensorFusionSnapshot()
+        lastAnnouncedTerrainCategory = null
         tripFuelUsedFlow.value = null
         lastObdSpeedIntegrateMs = started
         lastFuelIntegrateMs = started
@@ -2175,6 +2270,12 @@ class DashboardViewModel @Inject constructor(
             timestampMillis = ended,
         )
 
+        val fusionSnap = sensorFusionFlow.value
+        tripActivityLogger.logActivity(
+            type = "TERRAIN_FUSION",
+            details = "Terrain=${fusionSnap.terrainCategory.label} | Gain=${"%.0f".format(fusionSnap.elevationGainMeters)}m Loss=${"%.0f".format(fusionSnap.elevationLossMeters)}m | Uphill=${"%.2f".format(fusionSnap.uphillDistanceKm)}km (${fusionSnap.uphillDurationSec}s) | Downhill=${"%.2f".format(fusionSnap.downhillDistanceKm)}km (${fusionSnap.downhillDurationSec}s) | Confirmed=${fusionSnap.confirmedAdvisoriesCount} Suppressed=${fusionSnap.suppressedAlertsCount}",
+            timestampMillis = ended,
+        )
         tripActivityLogger.endTripLog(
             endedAtMillis = ended,
             distanceKm = distanceKm,

@@ -97,6 +97,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import ke.co.kopilot.ecu.EcuPerformanceDashboardScreen
 import ke.co.kopilot.ecu.FuelEfficiencyAnalysisScreen
+import ke.co.kopilot.fusion.SensorFusionDiagnosticsScreen
 import ke.co.kopilot.maintenance.VehicleMaintenanceScreen
 import ke.co.kopilot.safety.AccidentDiagnosticsScreen
 import ke.co.kopilot.safety.DrivingSafetyMonitoringService
@@ -456,6 +457,7 @@ class MainActivity : ComponentActivity() {
                                         onOpenSystemStatus = { navController.navigate("system_status") },
                                         onOpenMaintenance = { navController.navigate("vehicle_maintenance") },
                                         onOpenFuelEfficiency = { navController.navigate("fuel_efficiency") },
+                                        onOpenSensorFusion = { navController.navigate("sensor_fusion") },
                                         onCallEmergency = { phone ->
                                             startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
                                         },
@@ -553,6 +555,13 @@ class MainActivity : ComponentActivity() {
                                             }
                                             startActivity(Intent.createChooser(share, "Export Vehicle Health Report"))
                                         },
+                                    )
+                                }
+                                composable("sensor_fusion") {
+                                    SensorFusionDiagnosticsScreen(
+                                        snapshot = dashState.sensorFusionSnapshot,
+                                        onCalibrateMount = { dashboardViewModel.recalibratePhoneMount() },
+                                        onBack = { navController.popBackStack() },
                                     )
                                 }
                                 composable("fuel_efficiency") {

@@ -35,6 +35,8 @@ data class SensorHubState(
     val mountCalibratedAtMillis: Long = 0L,
     val vehicleAxesSample: VehicleAxesSample = VehicleAxesSample(0f, 0f, 0f, 0f, 0f, 0f, 1f, MountCalibrationStatus.CALIBRATION_REQUIRED),
     val compassReading: CompassReading = CompassReading(),
+    val barometerPressureHpa: Float? = null,
+    val barometerTimestampMillis: Long? = null,
 )
 
 @Singleton
@@ -61,6 +63,8 @@ class SensorManagerRepository @Inject constructor(
     private var latestGyro = floatArrayOf(0f, 0f, 0f)
     private var latestOrientationDeg = floatArrayOf(0f, 0f, 0f)
     private var latestMagneticUt: Float? = null
+    private var latestPressureHpa: Float? = null
+    private var latestPressureTsMs: Long? = null
     private val mountCalibrator = PhoneMountCalibrator()
     private val compassEstimator = CompassHeadingEstimator()
     private val rotationMatrix = FloatArray(9)
@@ -274,6 +278,12 @@ class SensorManagerRepository @Inject constructor(
                     Math.toDegrees(orientationAngles[2].toDouble()).toFloat(),
                 )
             }
+            Sensor.TYPE_PRESSURE -> {
+                if (event.values.isNotEmpty() && event.values[0] in 300f..1100f) {
+                    latestPressureHpa = event.values[0]
+                    latestPressureTsMs = nowMs
+                }
+            }
         }
 
         readingsByType[type]?.let { existing ->
@@ -333,6 +343,8 @@ class SensorManagerRepository @Inject constructor(
                     mountCalibratedAtMillis = mountCalibrator.getCalibratedAtMillis(),
                     vehicleAxesSample = axesSample,
                     compassReading = compass,
+                    barometerPressureHpa = latestPressureHpa,
+                    barometerTimestampMillis = latestPressureTsMs,
                 )
             }
         }

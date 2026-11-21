@@ -157,6 +157,13 @@ class LocationTracker @Inject constructor(
             null
         }
 
+        val verticalAcc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && loc.hasVerticalAccuracy()) {
+            loc.verticalAccuracyMeters
+        } else {
+            null
+        }
+        val monotonicMs = loc.elapsedRealtimeNanos / 1_000_000L
+
         val fix = GpsFix(
             latitude = loc.latitude,
             longitude = loc.longitude,
@@ -166,6 +173,9 @@ class LocationTracker @Inject constructor(
             bearingDegrees = if (loc.hasBearing()) loc.bearing else null,
             timestampMillis = loc.time,
             isStale = false,
+            altitudeMeters = if (loc.hasAltitude()) loc.altitude else null,
+            verticalAccuracyMeters = verticalAcc,
+            monotonicMillis = monotonicMs,
         )
 
         _state.value = _state.value.copy(
