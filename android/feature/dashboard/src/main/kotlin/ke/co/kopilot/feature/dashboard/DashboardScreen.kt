@@ -165,6 +165,7 @@ fun DashboardScreen(
     onOpenPerformanceThermal: () -> Unit = {},
     onOpenSmartwatchHealth: () -> Unit = {},
     onOpenSystemStatus: () -> Unit = {},
+    onOpenMaintenance: () -> Unit = {},
     onCallEmergency: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
@@ -401,6 +402,7 @@ fun DashboardScreen(
                 onOpenDrivingIntelligence = onOpenDrivingIntelligence,
                 onOpenNavigation = onOpenNavigation,
                 onOpenSmartwatchHealth = onOpenSmartwatchHealth,
+                onOpenMaintenance = onOpenMaintenance,
                 onToggleFullscreenCamera = { isCameraFullscreen = true },
             )
         } else {
@@ -425,6 +427,7 @@ fun DashboardScreen(
                 onOpenSafetySettings = onOpenSafetySettings,
                 onOpenLiveMap = onOpenLiveMap,
                 onOpenSmartwatchHealth = onOpenSmartwatchHealth,
+                onOpenMaintenance = onOpenMaintenance,
                 onToggleFullscreenCamera = { isCameraFullscreen = true },
             )
         }
@@ -1523,6 +1526,7 @@ private fun KoPilotCockpitLanding(
     onOpenSafetySettings: () -> Unit,
     onOpenLiveMap: () -> Unit,
     onOpenSmartwatchHealth: () -> Unit = {},
+    onOpenMaintenance: () -> Unit = {},
     onToggleFullscreenCamera: () -> Unit,
 ) {
     val intel = state.intelligenceState
@@ -2064,6 +2068,58 @@ private fun KoPilotCockpitLanding(
             LandingActionTile("Sound Studio", Icons.Default.GraphicEq, KoPilotClusterTokens.PrimaryAccent, onOpenSoundStudio, Modifier.weight(1f))
         }
 
+        // 6b. Vehicle Mileage & Maintenance Summary Card
+        Surface(
+            onClick = onOpenMaintenance,
+            shape = RoundedCornerShape(12.dp),
+            color = KoPilotClusterTokens.GlassCardSurface,
+            border = BorderStroke(1.dp, KoPilotClusterTokens.SubtleGlassBorder),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            val s = state.settings
+            val odoStr = s.officialOdometerKm?.let { "%,d km".format(java.util.Locale.US, it.toInt()) } ?: "Not Set"
+            val odoSource = when (s.officialOdometerSource) {
+                "ECU" -> "ECU"
+                "MANUAL" -> "Manual"
+                else -> "Unset"
+            }
+            val currentTripKm = (state.locationState.distanceTraveledMeters / 1000.0).takeIf { state.isDrivingSessionActive }
+                ?: s.lastTripDistanceKm
+            val nextSvc = state.evaluatedServices.firstOrNull()
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Odometer: $odoStr ($odoSource) • ${if (state.isDrivingSessionActive) "Trip" else "Last"}: ${"%.1f".format(java.util.Locale.US, currentTripKm)} km",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = KoPilotClusterTokens.PrimaryText,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = nextSvc?.let {
+                            val remStr = it.kmRemaining?.let { km -> "${km.toInt()} km" } ?: "${it.daysRemaining}d"
+                            "Next: ${it.schedule.title} ($remStr left • ${it.urgency.label})"
+                        } ?: "Tap to configure service schedule",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = KoPilotClusterTokens.SecondaryText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    text = "Service ›",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = KoPilotClusterTokens.PrimaryAccent,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+
         // Quick Drive / Navigate / Voice Control Row
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -2214,6 +2270,7 @@ private fun FullBleedArHudLanding(
     onOpenDrivingIntelligence: () -> Unit,
     onOpenNavigation: () -> Unit,
     onOpenSmartwatchHealth: () -> Unit = {},
+    onOpenMaintenance: () -> Unit = {},
     onToggleFullscreenCamera: () -> Unit,
 ) {
     val hudGlassBg = Color(0xCC071019)

@@ -229,6 +229,17 @@ class ObdBluetoothManager @Inject constructor(
                 if ("0160" in supportedPids) {
                     supportedPids.addAll(ObdPidParser.parseSupportedPidsBitmap(connectionManager.sendCommand("0160"), 0x60))
                 }
+                if ("0180" in supportedPids) {
+                    supportedPids.addAll(ObdPidParser.parseSupportedPidsBitmap(connectionManager.sendCommand("0180"), 0x80))
+                }
+                if ("01A0" in supportedPids) {
+                    supportedPids.addAll(ObdPidParser.parseSupportedPidsBitmap(connectionManager.sendCommand("01A0"), 0xA0))
+                }
+                val odometerSupported = "01A6" in supportedPids
+                val initOdometerKm = if (odometerSupported) {
+                    ObdPidParser.parseOdometerKm(connectionManager.sendCommand("01A6"))
+                } else null
+                val initOdometerTs = if (initOdometerKm != null) System.currentTimeMillis() else null
 
                 // Phase 2 Stage 3: Verify at least one genuine live vehicle parameter before claiming OBD operational
                 connectionManager.setState(ObdConnectionState.ECU_CONNECTING, "Reading engine data...")
@@ -329,6 +340,14 @@ class ObdBluetoothManager @Inject constructor(
                     var ambient = currentTel.ambientAirTempC
                     var oilTemp = currentTel.engineOilTempC
                     var fuelRate = currentTel.engineFuelRateLph
+                    var ecuOdometer = currentTel.ecuOdometerKm
+                    var ecuOdometerTs = currentTel.ecuOdometerTimestampMillis
+                    if (odometerSupported && cycle % 15 == 0) {
+                        ObdPidParser.parseOdometerKm(connectionManager.sendCommand("01A6"))?.let {
+                            ecuOdometer = it
+                            ecuOdometerTs = System.currentTimeMillis()
+                        }
+                    }
                     var dtcs = _state.value.dtcCodes
                     var pendingDtcs = currentTel.pendingDtcCodes
                     var permanentDtcs = currentTel.permanentDtcCodes
@@ -424,6 +443,9 @@ class ObdBluetoothManager @Inject constructor(
                         ambientAirTempC = ambient,
                         engineOilTempC = oilTemp,
                         engineFuelRateLph = fuelRate,
+                        ecuOdometerKm = ecuOdometer ?: initOdometerKm,
+                        ecuOdometerTimestampMillis = ecuOdometerTs ?: initOdometerTs,
+                        odometerPidSupported = odometerSupported,
                         pendingDtcCodes = pendingDtcs,
                         permanentDtcCodes = permanentDtcs,
                         dtcScanCompleted = dtcScanCompleted,

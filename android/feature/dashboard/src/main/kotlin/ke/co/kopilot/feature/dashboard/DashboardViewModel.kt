@@ -10,6 +10,11 @@ import ke.co.kopilot.core.common.model.SpeedAlertDecision
 import ke.co.kopilot.core.common.model.TrafficSignObservation
 import ke.co.kopilot.core.common.model.VehicleDiagnosticsState
 import ke.co.kopilot.core.database.entity.TripEntity
+import ke.co.kopilot.core.database.maintenance.EvaluatedServiceItem
+import ke.co.kopilot.core.database.maintenance.MaintenanceCalculator
+import ke.co.kopilot.core.database.maintenance.MaintenanceCategory
+import ke.co.kopilot.core.database.maintenance.MaintenanceScheduleItem
+import ke.co.kopilot.core.database.maintenance.ServiceRecord
 import ke.co.kopilot.core.database.preferences.DetectionQuality
 import ke.co.kopilot.core.database.preferences.KoPilotSettings
 import ke.co.kopilot.core.common.model.TrafficSignCategory
@@ -135,6 +140,9 @@ data class DashboardUiState(
     val lastSystemStatusReport: SystemStatusReport? = null,
     val isSystemCheckRunning: Boolean = false,
     val isVoiceBriefingSpeaking: Boolean = false,
+    val obdTripDistanceKm: Double = 0.0,
+    val tripFuelUsedLiters: Double? = null,
+    val evaluatedServices: List<EvaluatedServiceItem> = emptyList(),
 )
 
 @HiltViewModel
@@ -266,6 +274,11 @@ class DashboardViewModel @Inject constructor(
     private var lastRoadLookupMs = 0L
     private var lastAnnouncedRoadName: String? = null
     private var twoMinuteRoadAnnounced = false
+    private val obdTripDistanceFlow = MutableStateFlow(0.0)
+    private val tripFuelUsedFlow = MutableStateFlow<Double?>(null)
+    private var lastObdSpeedIntegrateMs = 0L
+    private var lastFuelIntegrateMs = 0L
+    private var lastSavedEcuOdometerKm: Double? = null
 
     private val wearableFlows = combine(
         smartwatchConnectionManager.diagnostics,
@@ -283,6 +296,17 @@ class DashboardViewModel @Inject constructor(
         tripRepo.trips,
     ) { core, sensor, alertsIntelWearable, obd, trips ->
         val (alerts, intel, wearable) = alertsIntelWearable
+        val schedules = MaintenanceCalculator.parseSchedules(core.settings.maintenanceSchedulesJson).ifEmpty {
+            MaintenanceCalculator.defaultSchedules(core.settings.officialOdometerKm ?: 0.0)
+        }
+        val thresholds = core.settings.serviceReminderThresholdsCsv.split(",").mapNotNull { it.trim().toIntOrNull() }
+            .ifEmpty { listOf(1000, 500, 100) }
+        val evaluatedServices = MaintenanceCalculator.evaluate(
+            schedules = schedules,
+            currentOdometerKm = core.settings.officialOdometerKm,
+            nowMillis = System.currentTimeMillis(),
+            thresholdsKm = thresholds,
+        )
         val (watchDiag, hrState, sleepState) = wearable
         val speedEval = speedAlertEngine.evaluate(
             fix = sensor.location.currentFix,
@@ -332,6 +356,9 @@ class DashboardViewModel @Inject constructor(
             lastSystemStatusReport = lastSystemStatusReportState.value,
             isSystemCheckRunning = isSystemCheckRunningState.value,
             isVoiceBriefingSpeaking = isVoiceBriefingSpeakingState.value,
+            obdTripDistanceKm = obdTripDistanceFlow.value,
+            tripFuelUsedLiters = tripFuelUsedFlow.value,
+            evaluatedServices = evaluatedServices,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -409,6 +436,22 @@ class DashboardViewModel @Inject constructor(
                         else -> "Mass airflow check: standby."
                     }
                     val coolantText = t.coolantTempC?.let { "Coolant temperature $it degrees." } ?: ""
+                    val odoKm = t.ecuOdometerKm ?: s.officialOdometerKm
+                    val odoSource = if (t.ecuOdometerKm != null) "ECU" else s.officialOdometerSource
+                    val odoText = when {
+                        odoKm != null && odoSource == "ECU" -> "Vehicle odometer: ${odoKm.toInt()} kilometers."
+                        odoKm != null && odoSource == "MANUAL" -> "Recorded manual odometer: ${odoKm.toInt()} kilometers."
+                        else -> ""
+                    }
+                    val nextService = uiState.value.evaluatedServices.firstOrNull { it.kmRemaining != null }
+                    val serviceText = if (nextService != null) {
+                        val rem = nextService.kmRemaining!!.toInt()
+                        if (rem <= 0) {
+                            "Your ${nextService.schedule.title} service is due now."
+                        } else {
+                            "Your next ${nextService.schedule.title} service is due at ${nextService.schedule.nextServiceOdometerKm.toInt()} kilometers. You have $rem kilometers remaining."
+                        }
+                    } else ""
                     val dtcs = obdManager.state.value.dtcCodes
                     val readiness = if (dtcs.isEmpty()) {
                         "All systems check, ready to start."
@@ -420,6 +463,8 @@ class DashboardViewModel @Inject constructor(
                         voltText,
                         mafText,
                         coolantText,
+                        odoText,
+                        serviceText,
                         readiness,
                     ).filter { it.isNotBlank() }.joinToString(" ")
                     if (!s.alertsMuted) {
@@ -448,6 +493,35 @@ class DashboardViewModel @Inject constructor(
                 val fix = locationTracker.state.value.currentFix
                 val obdConnected = obdManager.state.value.obdConnected
                 val tel = obdManager.liveTelemetry.value
+                val ecuOdo = tel.ecuOdometerKm
+                if (obdConnected && ecuOdo != null && ecuOdo != lastSavedEcuOdometerKm) {
+                    lastSavedEcuOdometerKm = ecuOdo
+                    viewModelScope.launch {
+                        prefsRepo.setOfficialOdometer(
+                            km = ecuOdo,
+                            source = "ECU",
+                            timestampMillis = tel.ecuOdometerTimestampMillis ?: now,
+                        )
+                    }
+                }
+                if (isDriving.value && obdConnected) {
+                    tel.vehicleSpeedKmh?.let { obdSpd ->
+                        if (lastObdSpeedIntegrateMs > 0L && obdSpd in 1..220) {
+                            val dtH = ((now - lastObdSpeedIntegrateMs).coerceIn(0L, 5_000L)) / 3_600_000.0
+                            obdTripDistanceFlow.value += obdSpd * dtH
+                        }
+                        lastObdSpeedIntegrateMs = now
+                    }
+                    val lph = tel.engineFuelRateLph?.toDouble()
+                        ?: tel.mafGramsPerSec?.takeIf { it > 0f }?.let { (it * 3600.0) / (14.7 * 745.0) }
+                    if (lph != null) {
+                        if (lastFuelIntegrateMs > 0L) {
+                            val dtH = ((now - lastFuelIntegrateMs).coerceIn(0L, 5_000L)) / 3_600_000.0
+                            tripFuelUsedFlow.value = (tripFuelUsedFlow.value ?: 0.0) + (lph * dtH)
+                        }
+                        lastFuelIntegrateMs = now
+                    }
+                }
                 val signLimit = visionPipeline.state.value.lastObservation?.category?.speedLimitKmh
                 val effectiveSpeedKmh = maxOf(fix?.speedKmh ?: 0f, tel.vehicleSpeedKmh?.toFloat() ?: 0f)
                 val isSensorMotion = !hub.motionAnalysis.phoneMovementDetected &&
@@ -1637,6 +1711,62 @@ class DashboardViewModel @Inject constructor(
         accidentThresholdConfigState.value = config.sanitized()
     }
 
+    fun updateManualOdometer(km: Double) = viewModelScope.launch {
+        if (km >= 0.0) {
+            prefsRepo.setOfficialOdometer(km = km, source = "MANUAL", timestampMillis = System.currentTimeMillis())
+        }
+    }
+
+    fun addServiceRecord(
+        category: MaintenanceCategory,
+        customTitle: String,
+        odometerKm: Double,
+        serviceDateMillis: Long,
+        intervalKm: Int,
+        intervalMonths: Int,
+        costKes: Double?,
+        notes: String,
+    ) = viewModelScope.launch {
+        val s = uiState.value.settings
+        val existingHist = MaintenanceCalculator.parseServiceHistory(s.serviceHistoryJson)
+        val record = ServiceRecord(
+            id = UUID.randomUUID().toString(),
+            category = category,
+            title = if (category == MaintenanceCategory.CUSTOM && customTitle.isNotBlank()) customTitle else category.displayName,
+            serviceDateMillis = serviceDateMillis,
+            odometerKm = odometerKm,
+            costKes = costKes,
+            notes = notes,
+        )
+        prefsRepo.setServiceHistoryJson(MaintenanceCalculator.encodeServiceHistory(listOf(record) + existingHist))
+
+        val schedules = MaintenanceCalculator.parseSchedules(s.maintenanceSchedulesJson).ifEmpty {
+            MaintenanceCalculator.defaultSchedules(s.officialOdometerKm ?: odometerKm)
+        }.toMutableList()
+        val idx = schedules.indexOfFirst {
+            it.category == category && (category != MaintenanceCategory.CUSTOM || it.customTitle.equals(customTitle, ignoreCase = true))
+        }
+        val updatedItem = MaintenanceScheduleItem(
+            id = if (idx >= 0) schedules[idx].id else "sched_${UUID.randomUUID().toString().take(8)}",
+            category = category,
+            customTitle = customTitle,
+            lastServiceOdometerKm = odometerKm,
+            lastServiceDateMillis = serviceDateMillis,
+            intervalKm = intervalKm.coerceAtLeast(500),
+            intervalMonths = intervalMonths.coerceAtLeast(1),
+        )
+        if (idx >= 0) schedules[idx] = updatedItem else schedules.add(updatedItem)
+        prefsRepo.setMaintenanceSchedulesJson(MaintenanceCalculator.encodeSchedules(schedules))
+
+        if (s.officialOdometerKm == null || odometerKm > s.officialOdometerKm!!) {
+            prefsRepo.setOfficialOdometer(km = odometerKm, source = "MANUAL", timestampMillis = System.currentTimeMillis())
+        }
+    }
+
+    fun updateServiceReminderThresholds(csv: String) = viewModelScope.launch {
+        prefsRepo.setServiceReminderThresholdsCsv(csv)
+    }
+
     private fun appendSafetyEventRecord(record: SafetyEventRecord) {
         safetyEventHistoryState.value = (listOf(record) + safetyEventHistoryState.value).take(50)
     }
@@ -1828,6 +1958,15 @@ class DashboardViewModel @Inject constructor(
 
         val s = uiState.value.settings
         locationTracker.resetTripDistance()
+        obdTripDistanceFlow.value = 0.0
+        tripFuelUsedFlow.value = null
+        lastObdSpeedIntegrateMs = started
+        lastFuelIntegrateMs = started
+        tripActivityLogger.logActivity(
+            type = "ODOMETER_START",
+            details = "Odometer=${s.officialOdometerKm?.let { "%.1f".format(java.util.Locale.US, it) } ?: "Unavailable"} | Source=${s.officialOdometerSource}",
+            timestampMillis = started,
+        )
         if (s.sensorGpsEnabled) {
             locationTracker.startTracking(highAccuracy = true)
         }
@@ -1959,7 +2098,10 @@ class DashboardViewModel @Inject constructor(
         currentSpeedZone.value = SpeedZone.NORMAL
 
         if (started != null && uiState.value.settings.tripHistoryEnabled) {
+            val gpsKm = locationTracker.state.value.distanceTraveledMeters / 1000.0
+            val finalDistKm = if (gpsKm >= 0.02) gpsKm else obdTripDistanceFlow.value
             viewModelScope.launch {
+                prefsRepo.setLastTripDistanceKm(finalDistKm)
                 tripRepo.saveCompletedTrip(
                     tripId = tripId,
                     originLabel = "Current Location",

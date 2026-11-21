@@ -4,9 +4,11 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -93,6 +95,14 @@ data class KoPilotSettings(
     val weatherHudEnabled: Boolean = true,
     val emergencyContactsJson: String = "[]",
     val emergencyHistoryJson: String = "[]",
+    // Official Vehicle Odometer & Maintenance Schedule
+    val officialOdometerKm: Double? = null,
+    val officialOdometerSource: String = "UNSET",
+    val officialOdometerTimestampMillis: Long = 0L,
+    val lastTripDistanceKm: Double = 0.0,
+    val maintenanceSchedulesJson: String = "",
+    val serviceHistoryJson: String = "[]",
+    val serviceReminderThresholdsCsv: String = "1000,500,100",
 ) {
     fun watchedPlatesList(): List<String> =
         watchedPlatesCsv.split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }
@@ -171,6 +181,13 @@ class PreferencesRepository @Inject constructor(
             weatherHudEnabled = prefs[KEY_WEATHER_HUD] ?: true,
             emergencyContactsJson = prefs[KEY_EMERGENCY_CONTACTS] ?: "[]",
             emergencyHistoryJson = prefs[KEY_EMERGENCY_HISTORY] ?: "[]",
+            officialOdometerKm = prefs[KEY_OFFICIAL_ODOMETER_KM],
+            officialOdometerSource = prefs[KEY_OFFICIAL_ODOMETER_SOURCE] ?: "UNSET",
+            officialOdometerTimestampMillis = prefs[KEY_OFFICIAL_ODOMETER_TS] ?: 0L,
+            lastTripDistanceKm = prefs[KEY_LAST_TRIP_DISTANCE_KM] ?: 0.0,
+            maintenanceSchedulesJson = prefs[KEY_MAINTENANCE_SCHEDULES] ?: "",
+            serviceHistoryJson = prefs[KEY_SERVICE_HISTORY] ?: "[]",
+            serviceReminderThresholdsCsv = prefs[KEY_SERVICE_THRESHOLDS] ?: "1000,500,100",
         )
     }
 
@@ -265,6 +282,15 @@ class PreferencesRepository @Inject constructor(
     suspend fun setWeatherHudEnabled(enabled: Boolean) = edit { it[KEY_WEATHER_HUD] = enabled }
     suspend fun setEmergencyContactsJson(json: String) = edit { it[KEY_EMERGENCY_CONTACTS] = json }
     suspend fun setEmergencyHistoryJson(json: String) = edit { it[KEY_EMERGENCY_HISTORY] = json }
+    suspend fun setOfficialOdometer(km: Double, source: String, timestampMillis: Long = System.currentTimeMillis()) = edit {
+        it[KEY_OFFICIAL_ODOMETER_KM] = km
+        it[KEY_OFFICIAL_ODOMETER_SOURCE] = source
+        it[KEY_OFFICIAL_ODOMETER_TS] = timestampMillis
+    }
+    suspend fun setLastTripDistanceKm(km: Double) = edit { it[KEY_LAST_TRIP_DISTANCE_KM] = km }
+    suspend fun setMaintenanceSchedulesJson(json: String) = edit { it[KEY_MAINTENANCE_SCHEDULES] = json }
+    suspend fun setServiceHistoryJson(json: String) = edit { it[KEY_SERVICE_HISTORY] = json }
+    suspend fun setServiceReminderThresholdsCsv(csv: String) = edit { it[KEY_SERVICE_THRESHOLDS] = csv }
 
     suspend fun clearAll() {
         context.dataStore.edit { it.clear() }
@@ -334,5 +360,12 @@ class PreferencesRepository @Inject constructor(
         val KEY_WEATHER_HUD = booleanPreferencesKey("weather_hud")
         val KEY_EMERGENCY_CONTACTS = stringPreferencesKey("emergency_contacts_json")
         val KEY_EMERGENCY_HISTORY = stringPreferencesKey("emergency_history_json")
+        val KEY_OFFICIAL_ODOMETER_KM = doublePreferencesKey("official_odometer_km")
+        val KEY_OFFICIAL_ODOMETER_SOURCE = stringPreferencesKey("official_odometer_source")
+        val KEY_OFFICIAL_ODOMETER_TS = longPreferencesKey("official_odometer_ts")
+        val KEY_LAST_TRIP_DISTANCE_KM = doublePreferencesKey("last_trip_distance_km")
+        val KEY_MAINTENANCE_SCHEDULES = stringPreferencesKey("maintenance_schedules_json")
+        val KEY_SERVICE_HISTORY = stringPreferencesKey("service_history_json")
+        val KEY_SERVICE_THRESHOLDS = stringPreferencesKey("service_reminder_thresholds_csv")
     }
 }

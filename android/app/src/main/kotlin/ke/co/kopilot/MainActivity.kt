@@ -93,6 +93,7 @@ import ke.co.kopilot.feature.soundstudio.SoundStudioScreen
 import ke.co.kopilot.feature.soundstudio.SoundStudioViewModel
 import ke.co.kopilot.feature.trips.TripsScreen
 import ke.co.kopilot.intelligence.VehicleIntelligenceScreen
+import ke.co.kopilot.maintenance.VehicleMaintenanceScreen
 import ke.co.kopilot.safety.AccidentDiagnosticsScreen
 import ke.co.kopilot.safety.DrivingSafetyMonitoringService
 import ke.co.kopilot.safety.EmergencyContactsScreen
@@ -449,6 +450,7 @@ class MainActivity : ComponentActivity() {
                                         onOpenPerformanceThermal = { navController.navigate("performance_thermal") },
                                         onOpenSmartwatchHealth = { navController.navigate("smartwatch_health") },
                                         onOpenSystemStatus = { navController.navigate("system_status") },
+                                        onOpenMaintenance = { navController.navigate("vehicle_maintenance") },
                                         onCallEmergency = { phone ->
                                             startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
                                         },
@@ -569,6 +571,17 @@ class MainActivity : ComponentActivity() {
                                             }
                                             startActivity(Intent.createChooser(share, "Export KoPilot Trips"))
                                         },
+                                    )
+                                }
+                                composable("vehicle_maintenance") {
+                                    VehicleMaintenanceScreen(
+                                        state = dashState,
+                                        onUpdateManualOdometer = { km -> dashboardViewModel.updateManualOdometer(km) },
+                                        onAddServiceRecord = { cat, title, odo, dt, iKm, iMo, cost, notes ->
+                                            dashboardViewModel.addServiceRecord(cat, title, odo, dt, iKm, iMo, cost, notes)
+                                        },
+                                        onUpdateThresholds = { csv -> dashboardViewModel.updateServiceReminderThresholds(csv) },
+                                        onBack = { navController.popBackStack() },
                                     )
                                 }
                                 composable("live_map") {

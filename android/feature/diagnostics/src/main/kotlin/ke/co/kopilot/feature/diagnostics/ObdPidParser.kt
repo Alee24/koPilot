@@ -206,6 +206,20 @@ object ObdPidParser {
         return ((bytes[0] * 256) + bytes[1]) / 20f
     }
 
+    /**
+     * Parses SAE J1979 Mode 01 PID A6 (Odometer) in 0.1 km increments:
+     * ((A * 2^24) + (B * 2^16) + (C * 2^8) + D) / 10.0
+     */
+    fun parseOdometerKm(response: String): Double? {
+        val bytes = extractPayloadBytes(response, "41", "A6") ?: return null
+        if (bytes.size < 4) return null
+        val raw = ((bytes[0].toLong() and 0xFFL) shl 24) or
+            ((bytes[1].toLong() and 0xFFL) shl 16) or
+            ((bytes[2].toLong() and 0xFFL) shl 8) or
+            (bytes[3].toLong() and 0xFFL)
+        return raw / 10.0
+    }
+
     fun parseDtcCodes(response: String, expectedResponseMode: String = "43"): List<String> {
         if (isAdapterError(response)) return emptyList()
         val clean = response.replace("\\s+".toRegex(), "").uppercase()
