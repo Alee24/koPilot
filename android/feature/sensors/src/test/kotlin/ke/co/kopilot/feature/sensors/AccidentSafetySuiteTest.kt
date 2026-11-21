@@ -257,8 +257,20 @@ class AccidentSafetySuiteTest {
             gyroAvailable = true,
             obdConnected = true,
         )
-        val crashOut = engine.processFrame(
+        // During the 5-second verification window, engine stays in VERIFYING and does NOT fire SMS prematurely
+        val verifyingOut = engine.processFrame(
             frame(t = 5150L, fwd = -34f, lat = 8f, mag = 35.1f, gyro = 92f, gpsSpeed = 2f, obdSpeed = 0f, rpm = 0),
+            mountStatus = MountCalibrationStatus.CALIBRATED,
+            accelAvailable = true,
+            gyroAvailable = true,
+            obdConnected = true,
+        )
+        assertFalse(verifyingOut.assessment.eventClass.triggersCountdown)
+        assertEquals(AccidentState.VERIFYING, verifyingOut.assessment.state)
+
+        // After 5s verification window with vehicle still stationary -> escalates to POSSIBLE_ACCIDENT
+        val crashOut = engine.processFrame(
+            frame(t = 10200L, mag = 0.2f, gyro = 1f, gpsSpeed = 0f, obdSpeed = 0f, rpm = 0),
             mountStatus = MountCalibrationStatus.CALIBRATED,
             accelAvailable = true,
             gyroAvailable = true,
@@ -270,11 +282,11 @@ class AccidentSafetySuiteTest {
         assertTrue(crashOut.assessment.incidentId.isNotBlank())
 
         // Driver cancels -> state transitions to CANCELED and immediately suppresses retriggering
-        engine.markCanceled(crashOut.assessment.incidentId, 5300L)
+        engine.markCanceled(crashOut.assessment.incidentId, 10500L)
         assertEquals(AccidentState.CANCELED, engine.getCurrentState())
 
         val afterCancel = engine.processFrame(
-            frame(t = 6000L, fwd = -30f, mag = 30.5f, gyro = 60f, gpsSpeed = 0f, obdSpeed = 0f, rpm = 0),
+            frame(t = 11000L, fwd = -30f, mag = 30.5f, gyro = 60f, gpsSpeed = 0f, obdSpeed = 0f, rpm = 0),
             mountStatus = MountCalibrationStatus.CALIBRATED,
             accelAvailable = true,
             gyroAvailable = true,
@@ -369,6 +381,58 @@ class AccidentSafetySuiteTest {
                 frame(1000L, mag = 0.5f, gpsSpeed = 65f, obdSpeed = 65f, rpm = 2200, watchBpm = null, watchAgeMs = null),
                 frame(3000L, fwd = -30f, mag = 31f, gyro = 80f, gpsSpeed = 18f, obdSpeed = 16f, rpm = 300, watchBpm = null, watchAgeMs = null),
                 frame(3150L, fwd = -32f, mag = 33f, gyro = 85f, gpsSpeed = 0f, obdSpeed = 0f, rpm = 0, watchBpm = null, watchAgeMs = null),
+                frame(8200L, mag = 0.2f, gyro = 1f, gpsSpeed = 0f, obdSpeed = 0f, rpm = 0, watchBpm = null, watchAgeMs = null),
+            ),
+        )
+        assertTrue(out.assessment.eventClass.triggersCountdown)
+        assertEquals(AccidentState.POSSIBLE_ACCIDENT, out.assessment.state)
+    }
+
+    @Test
+    fun `rough gravel road with recurring vertical peaks is classified as ROUGH_ROAD with zero false alarms`() {
+        val out = feed(
+            AccidentDetectionEngine(),
+            listOf(
+                frame(1000L, vert = 9.5f, fwd = 1.0f, mag = 9.6f, gpsSpeed = 35f, obdSpeed = 35f),
+                frame(1400L, vert = -11.2f, fwd = 1.2f, mag = 11.3f, gpsSpeed = 34f, obdSpeed = 34f),
+                frame(1800L, vert = 12.8f, fwd = 1.5f, mag = 12.9f, gpsSpeed = 34f, obdSpeed = 34f),
+                frame(2300L, vert = -10.5f, fwd = 1.1f, mag = 10.6f, gpsSpeed = 33f, obdSpeed = 33f),
+                frame(2800L, vert = 8.9f, fwd = 0.9f, mag = 9.0f, gpsSpeed = 33f, obdSpeed = 33f),
+            ),
+        )
+        assertFalse(out.assessment.eventClass.triggersCountdown)
+        assertEquals(RoadEventClassification.ROUGH_ROAD, out.assessment.roadClassification)
+    }
+
+    @Test
+    fun `5-second verification dismisses impact candidate when vehicle continues moving normally`() {
+        val out = feed(
+            AccidentDetectionEngine(),
+            listOf(
+                frame(1000L, mag = 0.6f, gpsSpeed = 45f, obdSpeed = 45f, rpm = 1800),
+                // Strong bump/pothole candidate at 3000ms
+                frame(3000L, fwd = 4f, lat = 3f, vert = 25f, mag = 25.5f, gyro = 18f, gpsSpeed = 42f, obdSpeed = 42f, rpm = 1750),
+                frame(3150L, fwd = 3f, lat = 2f, vert = 24f, mag = 24.3f, gyro = 15f, gpsSpeed = 41f, obdSpeed = 41f, rpm = 1720),
+                // Vehicle continues driving normally over the 5s window
+                frame(6500L, mag = 0.8f, gpsSpeed = 43f, obdSpeed = 43f, rpm = 1800),
+                frame(8200L, mag = 0.7f, gpsSpeed = 44f, obdSpeed = 44f, rpm = 1820),
+            ),
+        )
+        assertFalse(out.assessment.eventClass.triggersCountdown)
+        assertEquals(AccidentState.DISMISSED_ROAD_EVENT, out.assessment.state)
+    }
+
+    @Test
+    fun `severe collision is retained after 5s verification even if vehicle keeps rolling`() {
+        val out = feed(
+            AccidentDetectionEngine(),
+            listOf(
+                frame(1000L, mag = 0.6f, gpsSpeed = 75f, obdSpeed = 75f, rpm = 2500),
+                frame(3000L, fwd = -39f, lat = 10f, mag = 40.3f, gyro = 75f, gpsSpeed = 30f, obdSpeed = 28f, rpm = 600),
+                frame(3150L, fwd = -40f, lat = 9f, mag = 41.0f, gyro = 78f, gpsSpeed = 20f, obdSpeed = 19f, rpm = 500),
+                // Vehicle still rolling slowly at 16 km/h after 5s
+                frame(7000L, mag = 0.5f, gpsSpeed = 16f, obdSpeed = 16f, rpm = 450),
+                frame(8200L, mag = 0.4f, gpsSpeed = 15f, obdSpeed = 15f, rpm = 450),
             ),
         )
         assertTrue(out.assessment.eventClass.triggersCountdown)

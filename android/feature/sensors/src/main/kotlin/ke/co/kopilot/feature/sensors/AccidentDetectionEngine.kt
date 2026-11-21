@@ -53,6 +53,7 @@ class AccidentDetectionEngine(
     private val confidenceEvaluator: AccidentConfidenceEvaluator = AccidentConfidenceEvaluator(),
     private val swervingDetector: SwervingDetector = SwervingDetector(),
     private val evidenceRecorder: IncidentEvidenceRecorder = IncidentEvidenceRecorder(),
+    private val roughRoadClassifier: RoughRoadClassifier = RoughRoadClassifier(),
 ) {
     private val buffer = ArrayDeque<SensorFrame>()
     private var currentState: AccidentState = AccidentState.NORMAL
@@ -167,7 +168,12 @@ class AccidentDetectionEngine(
             buffer.removeFirst()
         }
 
-        val recent5s = buffer.filter { it.monotonicMillis >= mono - 5_000L }
+        val windowStart = if (suspiciousStartMonotonicMs > 0L) {
+            minOf(mono - 5_000L, suspiciousStartMonotonicMs - 200L)
+        } else {
+            mono - 5_000L
+        }
+        val recent5s = buffer.filter { it.monotonicMillis >= windowStart }
         val recentImpactWindow = buffer.filter { it.monotonicMillis >= mono - 1_500L }
         val preWindow = buffer.filter {
             it.monotonicMillis in (mono - 6_000L)..(mono - 1_200L)
@@ -303,8 +309,36 @@ class AccidentDetectionEngine(
             motionEventDurationMs = motionEventDurationMs,
         )
 
+        val verificationElapsedMs = if (suspiciousStartMonotonicMs > 0L) {
+            (mono - suspiciousStartMonotonicMs).coerceAtLeast(0L)
+        } else {
+            0L
+        }
         val inVerificationWindow = suspiciousStartMonotonicMs > 0L &&
-            (mono - suspiciousStartMonotonicMs) <= VERIFICATION_WINDOW_MS
+            verificationElapsedMs < VERIFICATION_WINDOW_MS
+
+        // Multi-sample post-impact movement check over the last 2s (avoids GPS jitter / single reading)
+        val recent2s = buffer.filter { it.monotonicMillis >= mono - 2_000L }
+        val recentSpeeds = recent2s.mapNotNull { it.bestIndependentSpeedKmh() }.sorted()
+        val medianPostSpeed = if (recentSpeeds.isNotEmpty()) recentSpeeds[recentSpeeds.size / 2] else 0f
+        val secondaryHorizCollisionInLast2s = recent2s.any {
+            sqrt(it.forwardAccelMps2 * it.forwardAccelMps2 + it.lateralAccelMps2 * it.lateralAccelMps2) >= cfg.strongImpactMps2
+        }
+        val vehicleContinuedMovingNormally = recentSpeeds.size >= 2 &&
+            medianPostSpeed >= 12.0f &&
+            maxOf(maxRollDelta, maxPitchDelta) < cfg.rolloverAngleDeg &&
+            (!secondaryHorizCollisionInLast2s || verificationElapsedMs >= VERIFICATION_WINDOW_MS)
+
+        val roadResult = roughRoadClassifier.classify(
+            frames = recent5s,
+            cfg = cfg,
+            orientationDeltaDeg = maxOf(maxRollDelta, maxPitchDelta),
+            abruptSpeedDropKmh = maxOf(
+                (preGpsSpeed ?: 0f) - (frame.gpsSpeedKmh ?: preGpsSpeed ?: 0f),
+                (preObdSpeed ?: 0f) - (frame.obdSpeedKmh ?: preObdSpeed ?: 0f),
+            ).coerceAtLeast(0f),
+            vehicleStillMoving = medianPostSpeed >= 12.0f,
+        )
 
         val candidateIncidentId = activeIncidentId ?: "inc_${significantImpactMonotonicMs.takeIf { it > 0L } ?: mono}"
 
@@ -317,11 +351,11 @@ class AccidentDetectionEngine(
             sustainedImpactSamples = impactFrames.size,
             sustainedSevereSamples = severeFrames.size,
             motionEventDurationMs = motionEventDurationMs,
-            preEventGpsSpeedKmh = preGpsSpeed,
+            preEventGpsSpeedKmh = preImpactGpsSpeedKmh ?: preGpsSpeed,
             postEventGpsSpeedKmh = frame.gpsSpeedKmh,
-            preEventObdSpeedKmh = preObdSpeed,
+            preEventObdSpeedKmh = preImpactObdSpeedKmh ?: preObdSpeed,
             postEventObdSpeedKmh = frame.obdSpeedKmh,
-            preEventObdRpm = preObdRpm,
+            preEventObdRpm = preImpactObdRpm ?: preObdRpm,
             postEventObdRpm = frame.obdRpm,
             obdEcuLostDuringEvent = obdEcuLostDuringEvent,
             watchHeartRateBpm = frame.watchHeartRateBpm,
@@ -344,6 +378,9 @@ class AccidentDetectionEngine(
             impactEnabled = impactEnabled,
             rolloverEnabled = rolloverEnabled,
             inVerificationWindow = inVerificationWindow,
+            verificationElapsedMs = verificationElapsedMs,
+            vehicleContinuedMovingNormally = vehicleContinuedMovingNormally,
+            roadResult = roadResult,
             incidentId = candidateIncidentId,
             sensorQuality = qualitySnapshot,
         ).copy(
@@ -359,11 +396,17 @@ class AccidentDetectionEngine(
 
         var capturedEvidence: IncidentEvidenceSnapshot? = null
 
-        if (assessment.eventClass.triggersCountdown) {
-            if (withinCancelCooldown || withinTriggerCooldown) {
+        if (withinCancelCooldown) {
+            assessment = assessment.copy(
+                eventClass = if (assessment.eventClass.triggersCountdown) AccidentEventClass.SIGNIFICANT_IMPACT else assessment.eventClass,
+                state = AccidentState.CANCELED,
+            )
+            currentState = AccidentState.CANCELED
+        } else if (assessment.eventClass.triggersCountdown) {
+            if (withinTriggerCooldown) {
                 assessment = assessment.copy(
                     eventClass = AccidentEventClass.SIGNIFICANT_IMPACT,
-                    state = if (withinCancelCooldown) AccidentState.CANCELED else AccidentState.DRIVING_EVENT_ONLY,
+                    state = AccidentState.DRIVING_EVENT_ONLY,
                 )
             } else {
                 val incidentId = UUID.randomUUID().toString().take(12)
@@ -404,6 +447,14 @@ class AccidentDetectionEngine(
             }
         }
 
+        if (assessment.state == AccidentState.DISMISSED_ROAD_EVENT) {
+            significantImpactMonotonicMs = 0L
+            suspiciousStartMonotonicMs = 0L
+            preImpactGpsSpeedKmh = null
+            preImpactObdSpeedKmh = null
+            preImpactObdRpm = null
+        }
+
         val postActive = significantImpactMonotonicMs > 0L &&
             (mono - significantImpactMonotonicMs) <= POST_IMPACT_WINDOW_MS
         if (!postActive && (effectiveFrame.bestIndependentSpeedKmh() ?: 0f) > 12f) {
@@ -427,7 +478,7 @@ class AccidentDetectionEngine(
 
     companion object {
         const val BUFFER_WINDOW_MS = 30_000L
-        const val VERIFICATION_WINDOW_MS = 2_500L
+        const val VERIFICATION_WINDOW_MS = 5_000L
         const val COOLDOWN_MS = 30_000L
         const val CANCEL_SUPPRESSION_MS = 45_000L
         const val SWERVE_EVIDENCE_COOLDOWN_MS = 20_000L

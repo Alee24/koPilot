@@ -585,6 +585,7 @@ class MainActivity : ComponentActivity() {
                                         onTestEmergencyWorkflow = { dashboardViewModel.triggerTestEmergencyWorkflow() },
                                         onOpenContacts = { navController.navigate("emergency_contacts") },
                                         onOpenAccidentDiagnostics = { navController.navigate("accident_diagnostics") },
+                                        onMarkFalseAlarm = { id -> dashboardViewModel.markSafetyEventAsFalseAlarm(id) },
                                         onBack = { navController.popBackStack() },
                                     )
                                 }

@@ -647,6 +647,9 @@ class DashboardViewModel @Inject constructor(
                             cameraEvidenceRef = safetyOut.evidenceSnapshot?.evidenceFilePath ?: safetyOut.evidenceSnapshot?.limitationNote,
                             confirmationOutcome = a.state.label,
                             configVersion = a.configVersion,
+                            roadClassification = a.roadClassification.label,
+                            fiveSecondMotionObservation = a.fiveSecondMotionObservation,
+                            dismissalOrEscalationReason = a.triggeringMeasurements.joinToString("; "),
                         )
                         appendSafetyEventRecord(record)
                         tripActivityLogger.logActivity(
@@ -655,6 +658,40 @@ class DashboardViewModel @Inject constructor(
                             timestampMillis = now,
                         )
                         startEmergencyCountdown(a)
+                    } else if (safetyOut.assessment.state == ke.co.kopilot.feature.sensors.AccidentState.DISMISSED_ROAD_EVENT) {
+                        val a = safetyOut.assessment
+                        val dismissedRecord = SafetyEventRecord(
+                            incidentId = a.incidentId.ifBlank { "road_${now}" },
+                            timestampMillis = now,
+                            category = a.roadClassification.label,
+                            severity = "Dismissed (Road Disturbance)",
+                            state = a.state,
+                            peakLinearG = a.peakImpactG,
+                            pitchRollMaxDeg = a.orientationChangeDeg,
+                            peakGyroDegPerSec = kotlin.math.abs(Math.toDegrees(hub.motionAnalysis.yawRateRadPerSec.toDouble()).toFloat()),
+                            gpsSpeedKmh = fix?.speedKmh,
+                            obdSpeedKmh = tel.vehicleSpeedKmh?.toFloat(),
+                            obdRpm = tel.engineRpm,
+                            obdConnected = obdConnected,
+                            watchBpm = hrSnap.currentBpm,
+                            watchFresh = watchAgeMs != null && watchAgeMs <= 15_000L,
+                            latitude = fix?.latitude,
+                            longitude = fix?.longitude,
+                            activeEvidenceGroups = a.evidenceGroups.filter { it.corroborated }.map { "${it.group.code}: ${it.group.label}" },
+                            confirmationReasons = a.triggeringMeasurements,
+                            cameraEvidenceRef = null,
+                            confirmationOutcome = "Dismissed after 5s verification",
+                            configVersion = a.configVersion,
+                            roadClassification = a.roadClassification.label,
+                            fiveSecondMotionObservation = a.fiveSecondMotionObservation,
+                            dismissalOrEscalationReason = a.triggeringMeasurements.joinToString("; "),
+                        )
+                        appendSafetyEventRecord(dismissedRecord)
+                        tripActivityLogger.logActivity(
+                            type = "ROAD_DISMISSED",
+                            details = "${a.roadClassification.label} | ${a.fiveSecondMotionObservation} | ${a.triggeringMeasurements.joinToString("; ")}",
+                            timestampMillis = now,
+                        )
                     }
                 }
 
@@ -1566,6 +1603,22 @@ class DashboardViewModel @Inject constructor(
 
     private fun appendSafetyEventRecord(record: SafetyEventRecord) {
         safetyEventHistoryState.value = (listOf(record) + safetyEventHistoryState.value).take(50)
+    }
+
+    fun markSafetyEventAsFalseAlarm(incidentId: String) {
+        safetyEventHistoryState.value = safetyEventHistoryState.value.map { rec ->
+            if (rec.incidentId == incidentId) {
+                rec.copy(
+                    markedFalseAlarm = true,
+                    confirmationOutcome = "${rec.confirmationOutcome} • Marked False Alarm by Driver",
+                )
+            } else rec
+        }
+        tripActivityLogger.logActivity(
+            type = "FALSE_ALARM_MARKED",
+            details = "Driver marked safety event $incidentId as False Alarm",
+            timestampMillis = System.currentTimeMillis(),
+        )
     }
 
     /**

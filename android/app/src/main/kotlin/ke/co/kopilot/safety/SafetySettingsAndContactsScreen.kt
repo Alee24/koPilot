@@ -83,6 +83,7 @@ fun SafetyAndEmergencyScreen(
     onTestEmergencyWorkflow: () -> Unit,
     onOpenContacts: () -> Unit,
     onOpenAccidentDiagnostics: () -> Unit = {},
+    onMarkFalseAlarm: (String) -> Unit = {},
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -277,6 +278,47 @@ fun SafetyAndEmergencyScreen(
                 }
                 SafetySwitchRow("Compass Heading (HUD)", s.compassHudEnabled) { v ->
                     scope.launch { prefsRepo.setCompassHudEnabled(v) }
+                }
+            }
+
+            // Internal Safety & Road Event Log (with False-Alarm marking)
+            SafetyCard(title = "Safety & Road Event Log (${state.safetyEventHistory.size})") {
+                if (state.safetyEventHistory.isEmpty()) {
+                    Text(
+                        "No safety or rough-road events logged in this session.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = KoPilotClusterTokens.SecondaryText,
+                    )
+                } else {
+                    val fmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                    state.safetyEventHistory.take(10).forEach { ev ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${fmt.format(Date(ev.timestampMillis))} • ${ev.category} (${"%.1f".format(ev.peakLinearG)}g)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = KoPilotClusterTokens.PrimaryText,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    text = "${ev.confirmationOutcome}${if (ev.fiveSecondMotionObservation.isNotBlank()) " | ${ev.fiveSecondMotionObservation}" else ""}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = KoPilotClusterTokens.SecondaryText,
+                                )
+                            }
+                            if (!ev.markedFalseAlarm) {
+                                TextButton(onClick = { onMarkFalseAlarm(ev.incidentId) }) {
+                                    Text("False Alarm", fontSize = 11.sp, color = KoPilotClusterTokens.ModerateRoad)
+                                }
+                            } else {
+                                Text("Marked False", fontSize = 11.sp, color = KoPilotClusterTokens.SecondaryText)
+                            }
+                        }
+                    }
                 }
             }
 

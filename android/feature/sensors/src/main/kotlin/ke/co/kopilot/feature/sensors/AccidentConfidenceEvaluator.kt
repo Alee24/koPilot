@@ -56,6 +56,8 @@ data class AccidentAssessment(
     val isSimulation: Boolean = false,
     val recalibrationRecommended: Boolean = false,
     val configVersion: String = AccidentThresholdConfig.DEFAULT_CONFIG_VERSION,
+    val roadClassification: RoadEventClassification = RoadEventClassification.SMOOTH_DRIVING,
+    val fiveSecondMotionObservation: String = "",
 )
 
 /**
@@ -108,6 +110,9 @@ class AccidentConfidenceEvaluator {
         impactEnabled: Boolean = true,
         rolloverEnabled: Boolean = true,
         inVerificationWindow: Boolean = false,
+        verificationElapsedMs: Long = 0L,
+        vehicleContinuedMovingNormally: Boolean = false,
+        roadResult: RoughRoadResult = RoughRoadResult(RoadEventClassification.SMOOTH_DRIVING, 0, 1f, ""),
         incidentId: String = "",
         sensorQuality: SensorQualitySnapshot = SensorQualitySnapshot(),
     ): AccidentAssessment {
@@ -154,7 +159,7 @@ class AccidentConfidenceEvaluator {
         }
 
         // ---- False-Positive Guards ----
-        val isVerticalRoadShock = verticalImpulseMps2 > horizontalImpulseMps2 * 1.45f &&
+        val isVerticalRoadShock = (verticalImpulseMps2 > horizontalImpulseMps2 * 1.25f || roadResult.classification.isRoadDisturbance) &&
             bestSpeedDrop < cfg.abruptSpeedLossKmh &&
             orientationDelta < cfg.rolloverAngleDeg
 
@@ -324,11 +329,38 @@ class AccidentConfidenceEvaluator {
         val finalClass: AccidentEventClass
         var confidence = 0
 
+        val observationText = when {
+            inVerificationWindow -> "Verifying (${verificationElapsedMs / 1000L}s/5s): ${roadResult.classification.label}"
+            vehicleContinuedMovingNormally -> "Vehicle continued moving normally (${"%.0f".format(bestPostSpeed ?: 0f)} km/h); ${roadResult.classification.label}"
+            postImpactStationarySec > 0f -> "Stationary ${"%.1f".format(postImpactStationarySec)}s post-event; ${roadResult.classification.label}"
+            else -> roadResult.classification.label
+        }
+
+        val severeImmediateRollover = rolloverTriggered &&
+            sustainedAbnormalOrientationMs >= 600L &&
+            peakLinearAccelMps2 >= cfg.severeImpactMps2
+
         when {
             likelyPhoneHandling -> {
                 finalState = AccidentState.DRIVING_EVENT_ONLY
                 finalClass = AccidentEventClass.MINOR_ROAD_IMPACT
                 confidence = 10
+            }
+            severeFallbackQualified -> {
+                finalState = AccidentState.SEVERE_EVENT_FALLBACK
+                finalClass = AccidentEventClass.SUSPECTED_COLLISION
+                confidence = 68
+            }
+            inVerificationWindow && !severeImmediateRollover -> {
+                finalState = AccidentState.VERIFYING
+                finalClass = AccidentEventClass.SIGNIFICANT_IMPACT
+                confidence = if (groupACorroborated) 42 else 22
+            }
+            verificationElapsedMs >= 5_000L && vehicleContinuedMovingNormally && !rolloverTriggered && !(severeImpact && independentCorroboratingCount >= 1) -> {
+                finalState = AccidentState.DISMISSED_ROAD_EVENT
+                finalClass = AccidentEventClass.MINOR_ROAD_IMPACT
+                confidence = 15
+                triggers.add("Dismissed after 5s verification: vehicle continued moving normally (${roadResult.classification.label})")
             }
             groupACorroborated && independentCorroboratingCount >= 1 -> {
                 finalState = AccidentState.POSSIBLE_ACCIDENT
@@ -338,16 +370,6 @@ class AccidentConfidenceEvaluator {
                     confidence >= 85 -> AccidentEventClass.HIGH_CONFIDENCE_POSSIBLE_ACCIDENT
                     else -> AccidentEventClass.SUSPECTED_COLLISION
                 }
-            }
-            severeFallbackQualified -> {
-                finalState = AccidentState.SEVERE_EVENT_FALLBACK
-                finalClass = AccidentEventClass.SUSPECTED_COLLISION
-                confidence = 68
-            }
-            groupACorroborated && inVerificationWindow -> {
-                finalState = AccidentState.VERIFYING
-                finalClass = AccidentEventClass.SIGNIFICANT_IMPACT
-                confidence = 40
             }
             isHarshBrakingOnly || isVerticalRoadShock || groupACorroborated -> {
                 finalState = AccidentState.DRIVING_EVENT_ONLY
@@ -392,6 +414,8 @@ class AccidentConfidenceEvaluator {
             isFallbackWarning = severeFallbackQualified,
             recalibrationRecommended = likelyPhoneHandling || mountCalibrationStatus == MountCalibrationStatus.MOUNT_MOVEMENT_SUSPECTED,
             configVersion = cfg.configVersion,
+            roadClassification = roadResult.classification,
+            fiveSecondMotionObservation = observationText,
         )
     }
 }

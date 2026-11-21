@@ -6,7 +6,8 @@ package ke.co.kopilot.feature.sensors
 enum class AccidentState(val label: String) {
     NORMAL("Normal Monitoring"),
     SUSPICIOUS_EVENT("Suspicious Motion Detected"),
-    VERIFYING("Verifying Independent Evidence"),
+    VERIFYING("Verifying Independent Evidence (5s)"),
+    DISMISSED_ROAD_EVENT("Dismissed Road Event (Bump/Pothole/Rough Road)"),
     DRIVING_EVENT_ONLY("Driving Event Only (No SOS)"),
     POSSIBLE_ACCIDENT("Possible Accident Detected"),
     SEVERE_EVENT_FALLBACK("Severe Motion Fallback Warning"),
@@ -141,6 +142,10 @@ data class SafetyEventRecord(
     val smsResult: String = "Not attempted",
     val isSimulation: Boolean = false,
     val configVersion: String = AccidentThresholdConfig.DEFAULT_CONFIG_VERSION,
+    val roadClassification: String = "Smooth",
+    val fiveSecondMotionObservation: String = "",
+    val dismissalOrEscalationReason: String = "",
+    val markedFalseAlarm: Boolean = false,
 )
 
 data class SensorQualitySnapshot(
