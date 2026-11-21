@@ -103,6 +103,7 @@ data class KoPilotSettings(
     val maintenanceSchedulesJson: String = "",
     val serviceHistoryJson: String = "[]",
     val serviceReminderThresholdsCsv: String = "1000,500,100",
+    val ecuBaselineJson: String = "",
 ) {
     fun watchedPlatesList(): List<String> =
         watchedPlatesCsv.split(",").map { it.trim().uppercase() }.filter { it.isNotEmpty() }
@@ -188,6 +189,7 @@ class PreferencesRepository @Inject constructor(
             maintenanceSchedulesJson = prefs[KEY_MAINTENANCE_SCHEDULES] ?: "",
             serviceHistoryJson = prefs[KEY_SERVICE_HISTORY] ?: "[]",
             serviceReminderThresholdsCsv = prefs[KEY_SERVICE_THRESHOLDS] ?: "1000,500,100",
+            ecuBaselineJson = prefs[KEY_ECU_BASELINE] ?: "",
         )
     }
 
@@ -291,6 +293,7 @@ class PreferencesRepository @Inject constructor(
     suspend fun setMaintenanceSchedulesJson(json: String) = edit { it[KEY_MAINTENANCE_SCHEDULES] = json }
     suspend fun setServiceHistoryJson(json: String) = edit { it[KEY_SERVICE_HISTORY] = json }
     suspend fun setServiceReminderThresholdsCsv(csv: String) = edit { it[KEY_SERVICE_THRESHOLDS] = csv }
+    suspend fun setEcuBaselineJson(serialized: String) = edit { it[KEY_ECU_BASELINE] = serialized }
 
     suspend fun clearAll() {
         context.dataStore.edit { it.clear() }
@@ -367,5 +370,6 @@ class PreferencesRepository @Inject constructor(
         val KEY_MAINTENANCE_SCHEDULES = stringPreferencesKey("maintenance_schedules_json")
         val KEY_SERVICE_HISTORY = stringPreferencesKey("service_history_json")
         val KEY_SERVICE_THRESHOLDS = stringPreferencesKey("service_reminder_thresholds_csv")
+        val KEY_ECU_BASELINE = stringPreferencesKey("ecu_baseline_json")
     }
 }

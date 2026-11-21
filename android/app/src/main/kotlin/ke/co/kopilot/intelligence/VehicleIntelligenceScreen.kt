@@ -206,6 +206,7 @@ class VehicleIntelligenceViewModel @Inject constructor(
 fun VehicleIntelligenceScreen(
     onBack: () -> Unit,
     onExportReport: (String) -> Unit,
+    onOpenEcuPerformance: () -> Unit = {},
     viewModel: VehicleIntelligenceViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
@@ -303,10 +304,15 @@ fun VehicleIntelligenceScreen(
         }
 
         when (selectedTab) {
-            0 -> OverviewTab(ui = ui, onOpenAsk = { selectedTab = 2 }, onOpenReport = {
-                viewModel.generateHealthReport(speakSummary = false)
-                selectedTab = 4
-            })
+            0 -> OverviewTab(
+                ui = ui,
+                onOpenAsk = { selectedTab = 2 },
+                onOpenReport = {
+                    viewModel.generateHealthReport(speakSummary = false)
+                    selectedTab = 4
+                },
+                onOpenEcuPerformance = onOpenEcuPerformance,
+            )
             1 -> TripsContent(modifier = Modifier.fillMaxSize())
             2 -> AskKoPilotTab(
                 ui = ui,
@@ -331,6 +337,7 @@ private fun OverviewTab(
     ui: VehicleIntelligenceUiState,
     onOpenAsk: () -> Unit,
     onOpenReport: () -> Unit,
+    onOpenEcuPerformance: () -> Unit = {},
 ) {
     val snap = ui.snapshot
     Column(
@@ -357,6 +364,17 @@ private fun OverviewTab(
                 style = MaterialTheme.typography.bodySmall,
                 color = KoPilotClusterTokens.SecondaryText,
             )
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = onOpenEcuPerformance,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = KoPilotClusterTokens.PrimaryAccent,
+                    contentColor = Color.Black,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("ECU Performance Intelligence", fontWeight = FontWeight.SemiBold)
+            }
         }
 
         // Only show supported/valid measurements (never display unsupported as 0)

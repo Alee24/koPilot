@@ -30,6 +30,10 @@ import ke.co.kopilot.feature.camera.CameraStatusState
 import ke.co.kopilot.feature.dashboard.status.SystemStatusBriefingEngine
 import ke.co.kopilot.feature.dashboard.status.SystemStatusInput
 import ke.co.kopilot.feature.dashboard.status.SystemStatusReport
+import ke.co.kopilot.feature.diagnostics.EcuPerformanceAnalysis
+import ke.co.kopilot.feature.diagnostics.EcuPerformanceEngine
+import ke.co.kopilot.feature.diagnostics.EcuSample
+import ke.co.kopilot.feature.diagnostics.EcuVehicleBaseline
 import ke.co.kopilot.feature.diagnostics.ObdBluetoothManager
 import ke.co.kopilot.feature.location.LocationTracker
 import ke.co.kopilot.feature.location.LocationTrackingState
@@ -143,6 +147,9 @@ data class DashboardUiState(
     val obdTripDistanceKm: Double = 0.0,
     val tripFuelUsedLiters: Double? = null,
     val evaluatedServices: List<EvaluatedServiceItem> = emptyList(),
+    val ecuSamples: List<EcuSample> = emptyList(),
+    val ecuPerformanceAnalysis: EcuPerformanceAnalysis = EcuPerformanceEngine().analyze(emptyList(), 0.0),
+    val ecuBaseline: EcuVehicleBaseline = EcuVehicleBaseline(),
 )
 
 @HiltViewModel
@@ -275,6 +282,9 @@ class DashboardViewModel @Inject constructor(
     private var lastAnnouncedRoadName: String? = null
     private var twoMinuteRoadAnnounced = false
     private val obdTripDistanceFlow = MutableStateFlow(0.0)
+    private val ecuEngine = EcuPerformanceEngine()
+    private val ecuSamplesFlow = MutableStateFlow<List<EcuSample>>(emptyList())
+    private var lastEcuSampleMs = 0L
     private val tripFuelUsedFlow = MutableStateFlow<Double?>(null)
     private var lastObdSpeedIntegrateMs = 0L
     private var lastFuelIntegrateMs = 0L
@@ -316,6 +326,16 @@ class DashboardViewModel @Inject constructor(
         val trafficEval = trafficAdvisor.evaluate(
             activeRoute = sensor.navigation.activeRoute,
             alternatives = sensor.navigation.alternativeRoutes,
+        )
+        val ecuBaseline = EcuPerformanceEngine.parseBaseline(core.settings.ecuBaselineJson)
+        val ecuBestDistKm = (sensor.location.distanceTraveledMeters / 1000.0)
+            .let { if (it >= 0.02) it else obdTripDistanceFlow.value }
+        val ecuAnalysis = ecuEngine.analyze(
+            samples = ecuSamplesFlow.value,
+            distanceKm = ecuBestDistKm,
+            baseline = ecuBaseline,
+            isCvtVehicle = true,
+            speedLimitCapKmh = sensor.vision.lastObservation?.category?.speedLimitKmh ?: 100,
         )
         DashboardUiState(
             isDrivingSessionActive = core.driving,
@@ -359,6 +379,9 @@ class DashboardViewModel @Inject constructor(
             obdTripDistanceKm = obdTripDistanceFlow.value,
             tripFuelUsedLiters = tripFuelUsedFlow.value,
             evaluatedServices = evaluatedServices,
+            ecuSamples = ecuSamplesFlow.value,
+            ecuPerformanceAnalysis = ecuAnalysis,
+            ecuBaseline = ecuBaseline,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -520,6 +543,33 @@ class DashboardViewModel @Inject constructor(
                             tripFuelUsedFlow.value = (tripFuelUsedFlow.value ?: 0.0) + (lph * dtH)
                         }
                         lastFuelIntegrateMs = now
+                    }
+                    if ((now - lastEcuSampleMs) >= 1000L) {
+                        lastEcuSampleMs = now
+                        val monoNow = android.os.SystemClock.elapsedRealtime()
+                        val sample = EcuSample(
+                            monotonicMillis = monoNow,
+                            timestampMillis = now,
+                            rpm = tel.engineRpm,
+                            obdSpeedKmh = tel.vehicleSpeedKmh?.toFloat(),
+                            gpsSpeedKmh = fix?.speedKmh,
+                            coolantTempC = tel.coolantTempC,
+                            engineLoadPct = tel.engineLoadPct,
+                            throttlePct = tel.throttlePositionPct,
+                            mafGramsPerSec = tel.mafGramsPerSec,
+                            mapKpa = tel.mapKpa,
+                            intakeAirTempC = tel.intakeAirTempC,
+                            fuelLevelPct = tel.fuelLevelPct,
+                            ecuFuelRateLph = tel.engineFuelRateLph,
+                            stftPct = tel.shortTermFuelTrimPct,
+                            ltftPct = tel.longTermFuelTrimPct,
+                            o2VoltageV = tel.o2SensorVoltageV,
+                            voltageV = tel.controlModuleVoltageV ?: tel.adapterVoltageV,
+                            altitudeMeters = null,
+                            accelLongitudinalMps2 = hub.vehicleAxesSample.forwardMps2,
+                        )
+                        val cur = ecuSamplesFlow.value
+                        ecuSamplesFlow.value = if (cur.size >= 7200) cur.drop(1) + sample else cur + sample
                     }
                 }
                 val signLimit = visionPipeline.state.value.lastObservation?.category?.speedLimitKmh
@@ -1959,6 +2009,8 @@ class DashboardViewModel @Inject constructor(
         val s = uiState.value.settings
         locationTracker.resetTripDistance()
         obdTripDistanceFlow.value = 0.0
+        ecuSamplesFlow.value = emptyList()
+        lastEcuSampleMs = 0L
         tripFuelUsedFlow.value = null
         lastObdSpeedIntegrateMs = started
         lastFuelIntegrateMs = started
@@ -2100,8 +2152,20 @@ class DashboardViewModel @Inject constructor(
         if (started != null && uiState.value.settings.tripHistoryEnabled) {
             val gpsKm = locationTracker.state.value.distanceTraveledMeters / 1000.0
             val finalDistKm = if (gpsKm >= 0.02) gpsKm else obdTripDistanceFlow.value
+            val capturedEcuSamples = ecuSamplesFlow.value
+            val prevBaseline = EcuPerformanceEngine.parseBaseline(uiState.value.settings.ecuBaselineJson)
             viewModelScope.launch {
                 prefsRepo.setLastTripDistanceKm(finalDistKm)
+                if (capturedEcuSamples.size >= 5) {
+                    val finalEcuAnalysis = ecuEngine.analyze(
+                        samples = capturedEcuSamples,
+                        distanceKm = finalDistKm,
+                        baseline = prevBaseline,
+                        isCvtVehicle = true,
+                    )
+                    val updatedBaseline = EcuPerformanceEngine.mergeBaseline(prevBaseline, finalEcuAnalysis)
+                    prefsRepo.setEcuBaselineJson(EcuPerformanceEngine.serializeBaseline(updatedBaseline))
+                }
                 tripRepo.saveCompletedTrip(
                     tripId = tripId,
                     originLabel = "Current Location",

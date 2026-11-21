@@ -93,6 +93,9 @@ import ke.co.kopilot.feature.soundstudio.SoundStudioScreen
 import ke.co.kopilot.feature.soundstudio.SoundStudioViewModel
 import ke.co.kopilot.feature.trips.TripsScreen
 import ke.co.kopilot.intelligence.VehicleIntelligenceScreen
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import ke.co.kopilot.ecu.EcuPerformanceDashboardScreen
 import ke.co.kopilot.maintenance.VehicleMaintenanceScreen
 import ke.co.kopilot.safety.AccidentDiagnosticsScreen
 import ke.co.kopilot.safety.DrivingSafetyMonitoringService
@@ -539,6 +542,7 @@ class MainActivity : ComponentActivity() {
                                 composable("vehicle_intelligence") {
                                     VehicleIntelligenceScreen(
                                         onBack = { navController.popBackStack() },
+                                        onOpenEcuPerformance = { navController.navigate("ecu_performance") },
                                         onExportReport = { reportText ->
                                             val share = Intent(Intent.ACTION_SEND).apply {
                                                 type = "text/plain"
@@ -547,6 +551,26 @@ class MainActivity : ComponentActivity() {
                                             }
                                             startActivity(Intent.createChooser(share, "Export Vehicle Health Report"))
                                         },
+                                    )
+                                }
+                                composable("ecu_performance") {
+                                    val liveTel by dashboardViewModel.obdManager.liveTelemetry.collectAsStateWithLifecycle()
+                                    val pidCaps by dashboardViewModel.obdManager.capabilities.collectAsStateWithLifecycle()
+                                    val scope = rememberCoroutineScope()
+                                    EcuPerformanceDashboardScreen(
+                                        state = dashState,
+                                        liveTelemetry = liveTel,
+                                        pidCapabilities = pidCaps,
+                                        obdProtocol = dashState.diagnosticsState.protocolName ?: "Auto",
+                                        obdLatencyMs = liveTel.ecuLatencyMs,
+                                        dtcCodes = dashState.diagnosticsState.dtcCodes,
+                                        onScanDtc = {
+                                            scope.launch {
+                                                dashboardViewModel.obdManager.requestSafeDtcScan()
+                                            }
+                                        },
+                                        onOpenMaintenance = { navController.navigate("vehicle_maintenance") },
+                                        onBack = { navController.popBackStack() },
                                     )
                                 }
                                 composable("settings") {
